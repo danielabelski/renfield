@@ -535,8 +535,9 @@ class PresenceService:
         device_id: int,
         detection_method: str,
         db: AsyncSession,
+        mac_address: str | None = None,
     ):
-        """Update a device's detection method."""
+        """Update a device's detection method and/or MAC address."""
         from models.database import UserBleDevice
 
         result = await db.execute(
@@ -546,14 +547,24 @@ class PresenceService:
         if not device:
             return None
 
-        mac = device.mac_address.upper()
+        old_mac = device.mac_address.upper()
         device.detection_method = detection_method
+
+        if mac_address:
+            new_mac = mac_address.upper()
+            device.mac_address = new_mac
+            # Update MAC caches: remove old, add new
+            self._mac_to_user.pop(old_mac, None)
+            self._mac_to_method.pop(old_mac, None)
+            self._mac_to_user[new_mac] = device.user_id
+            self._mac_to_method[new_mac] = detection_method
+            logger.info(f"Presence: updated device {old_mac} -> {new_mac} ({detection_method})")
+        else:
+            self._mac_to_method[old_mac] = detection_method
+            logger.info(f"Presence: updated {old_mac} to {detection_method}")
+
         await db.commit()
         await db.refresh(device)
-
-        # Update cache
-        self._mac_to_method[mac] = detection_method
-        logger.info(f"Presence: updated {mac} to {detection_method}")
 
         # Push updated MACs to all connected satellites
         await self.push_macs_to_satellites()
