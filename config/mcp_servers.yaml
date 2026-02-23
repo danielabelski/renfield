@@ -115,6 +115,9 @@ servers:
       - list_artists
       - list_movies
       - list_series
+      - get_series_seasons
+      - get_season_episodes
+      - get_next_up
       - library_stats
     examples:
       de:
@@ -122,11 +125,15 @@ servers:
         - "Zeige meine Alben"
         - "Welche Filme habe ich?"
         - "Zeige meine Serien"
+        - "Spiel den Film Interstellar"
+        - "Naechste Folge Breaking Bad"
       en:
         - "Search music by Queen"
         - "Show my albums"
         - "What movies do I have?"
         - "Show my series"
+        - "Play the movie Interstellar"
+        - "Next episode of Breaking Bad"
 
   # --- TuneIn Radio MCP Server ---
   # Custom Python MCP server for TuneIn radio station search and streaming.

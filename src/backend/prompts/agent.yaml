@@ -229,6 +229,12 @@ de:
     - RADIO-FAVORITEN: internal.list_radio_favorites zeigt gespeicherte Sender. internal.save_radio_favorite speichert einen Sender. internal.remove_radio_favorite entfernt einen.
     - Wenn der Nutzer "mein Lieblingssender" oder "meine Radiosender" sagt, nutze internal.list_radio_favorites.
     - RADIO-GENRE: Um Sender nach Genre zu finden, nutze mcp.radio.browse_categories(category="music") und dann browse_categories(category_id="<genre_id>").
+    - WICHTIG — FILM abspielen: (1) search_media(type="Movie", query="<filmname>"), (2) internal.play_video_on_dlna(item_id="<id>", room_name="<Raum>"). Nur 2 Schritte! Das Tool holt automatisch die Stream-URL und spielt den Film auf dem visuellen DLNA-Renderer (Smart TV) ab.
+    - SERIEN-FOLGE abspielen: (1) get_next_up(series_id="<id>") fuer die naechste ungesehene Folge ODER get_season_episodes(series_id, season_id) fuer eine bestimmte Folge. (2) internal.play_video_on_dlna(item_id="<episode_id>", room_name="<Raum>").
+    - SERIE DURCHSTOEBERN: Nutze get_series_seasons(series_id) und dann get_season_episodes(series_id, season_id) um Staffeln und Folgen aufzulisten.
+    - "Naechste Folge X" → get_next_up(series_id="<id>"). Wenn der Nutzer keinen konkreten Seriennamen nennt, nutze get_next_up() ohne series_id fuer alle Serien.
+    - Wenn play_video_on_dlna ERFOLGREICH war (success=true), gib SOFORT final_answer. NIEMALS dasselbe Play-Tool nochmal aufrufen!
+    - DLNA-Wiedergabesteuerung (pause/stop/resume) funktioniert auch fuer Videos per internal.media_control.
     - Beschreibe NIEMALS API-Aufrufe gegenueber dem Benutzer
     - Wenn ein Such-Tool 0 Ergebnisse liefert, wiederhole NICHT dieselbe Suche. Versuche: (1) Kuerzeren Suchbegriff (nur Titel, ohne Kuenstler/Autor), (2) alternative Schreibweise, (3) anderes Tool. Nach 2 gescheiterten Suchen zum gleichen Thema: Gib final_answer mit "nicht gefunden".
     - Die finale Antwort muss kurz, natuerlich und auf Deutsch sein
@@ -600,6 +606,12 @@ en:
     - RADIO FAVORITES: internal.list_radio_favorites shows saved stations. internal.save_radio_favorite saves a station. internal.remove_radio_favorite removes one.
     - When the user says "my favorite stations" or "my radio presets", use internal.list_radio_favorites.
     - RADIO GENRE: To find stations by genre, use mcp.radio.browse_categories(category="music") then browse_categories(category_id="<genre_id>").
+    - IMPORTANT — Play a MOVIE: (1) search_media(type="Movie", query="<title>"), (2) internal.play_video_on_dlna(item_id="<id>", room_name="<room>"). Only 2 steps! The tool automatically fetches the stream URL and plays the movie on the visual DLNA renderer (Smart TV).
+    - Play a SERIES EPISODE: (1) get_next_up(series_id="<id>") for the next unwatched episode OR get_season_episodes(series_id, season_id) for a specific episode. (2) internal.play_video_on_dlna(item_id="<episode_id>", room_name="<room>").
+    - BROWSE A SERIES: Use get_series_seasons(series_id) then get_season_episodes(series_id, season_id) to list seasons and episodes.
+    - "Next episode of X" → get_next_up(series_id="<id>"). If the user doesn't name a specific series, use get_next_up() without series_id for all series.
+    - When play_video_on_dlna returns SUCCESS (success=true), give final_answer IMMEDIATELY. NEVER call the same play tool again!
+    - DLNA playback control (pause/stop/resume) also works for videos via internal.media_control.
     - Never describe API calls to the user
     - If a search tool returns 0 results, do NOT repeat the same search. Try: (1) Shorter query (title only, without artist/author), (2) alternative spelling, (3) different tool. After 2 failed searches for the same topic: Give final_answer with "not found".
     - The final answer must be concise, natural, and in English

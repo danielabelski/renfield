@@ -1895,6 +1895,234 @@ class TestPlayAlbumOnDlna:
             assert result["success"] is True
 
 
+class TestPlayVideoOnDlna:
+    """Test internal.play_video_on_dlna tool."""
+
+    @staticmethod
+    def _patch_main_app(mock_mcp_manager):
+        """Patch main.app without importing the real main module."""
+        mock_app = MagicMock()
+        mock_app.state.mcp_manager = mock_mcp_manager
+        fake_main = ModuleType("main")
+        fake_main.app = mock_app  # type: ignore
+        return patch.dict(sys.modules, {"main": fake_main})
+
+    @pytest.mark.unit
+    async def test_play_video_success(self, internal_tools):
+        """Video played successfully via Jellyfin get_stream_url + DLNA play_tracks."""
+        import json
+        stream_response = json.dumps({
+            "id": "movie1",
+            "name": "Interstellar",
+            "type": "Movie",
+            "video_stream": "http://jellyfin:8096/Videos/movie1/stream?static=true&api_key=k",
+        })
+        mock_mcp_manager = MagicMock()
+        mock_mcp_manager.execute_tool = AsyncMock(side_effect=[
+            {"success": True, "message": stream_response, "data": [{"type": "text", "text": stream_response}]},
+            {"success": True, "message": "Playing on Samsung TV"},
+        ])
+
+        with self._patch_main_app(mock_mcp_manager):
+            result = await internal_tools._play_video_on_dlna({
+                "item_id": "movie1",
+                "renderer_name": "Samsung TV",
+                "title": "Interstellar",
+            })
+
+        assert result["success"] is True
+        assert result["data"]["title"] == "Interstellar"
+        assert result["data"]["renderer"] == "Samsung TV"
+
+        # Verify correct MCP calls
+        calls = mock_mcp_manager.execute_tool.call_args_list
+        assert calls[0].args[0] == "mcp.jellyfin.get_stream_url"
+        assert calls[0].args[1] == {"item_id": "movie1"}
+        assert calls[1].args[0] == "mcp.dlna.play_tracks"
+        # Verify video media_type in the tracks JSON
+        tracks_json = json.loads(calls[1].args[1]["tracks"])
+        assert tracks_json[0]["media_type"] == "video"
+
+    @pytest.mark.unit
+    async def test_play_video_missing_item_id(self, internal_tools):
+        """Missing item_id returns error."""
+        result = await internal_tools._play_video_on_dlna({"renderer_name": "Samsung TV"})
+        assert result["success"] is False
+        assert "item_id" in result["message"]
+
+    @pytest.mark.unit
+    async def test_play_video_missing_renderer_and_room(self, internal_tools):
+        """Missing both renderer_name and room_name returns error."""
+        result = await internal_tools._play_video_on_dlna({"item_id": "movie1"})
+        assert result["success"] is False
+        assert "renderer_name" in result["message"] or "room_name" in result["message"]
+
+    @pytest.mark.unit
+    async def test_play_video_via_room_name(self, internal_tools):
+        """room_name resolves visual DLNA renderer from room config."""
+        import json
+        resolve_result = {
+            "success": True,
+            "message": "Found visual DLNA renderer",
+            "action_taken": True,
+            "data": {
+                "target_type": "dlna",
+                "dlna_renderer_name": "Samsung TV Wohnzimmer",
+                "room_name": "Wohnzimmer",
+                "device_name": "Samsung TV Wohnzimmer",
+            },
+        }
+
+        stream_response = json.dumps({
+            "id": "movie1",
+            "name": "Interstellar",
+            "video_stream": "http://jellyfin:8096/Videos/movie1/stream?static=true&api_key=k",
+        })
+        mock_mcp_manager = MagicMock()
+        mock_mcp_manager.execute_tool = AsyncMock(side_effect=[
+            {"success": True, "message": stream_response, "data": [{"type": "text", "text": stream_response}]},
+            {"success": True, "message": "Playing"},
+        ])
+
+        with patch.object(internal_tools, "_resolve_room_visual_player",
+                          new_callable=AsyncMock, return_value=resolve_result), \
+             self._patch_main_app(mock_mcp_manager):
+            result = await internal_tools._play_video_on_dlna({
+                "item_id": "movie1",
+                "room_name": "Wohnzimmer",
+            })
+
+        assert result["success"] is True
+        assert result["data"]["renderer"] == "Samsung TV Wohnzimmer"
+
+    @pytest.mark.unit
+    async def test_play_video_no_video_stream(self, internal_tools):
+        """Item without video_stream URL returns error."""
+        import json
+        stream_response = json.dumps({
+            "id": "audio1",
+            "name": "Song",
+            "type": "Audio",
+            "api_stream": "http://jellyfin:8096/Audio/audio1/stream",
+        })
+        mock_mcp_manager = MagicMock()
+        mock_mcp_manager.execute_tool = AsyncMock(return_value={
+            "success": True, "message": stream_response, "data": [{"type": "text", "text": stream_response}],
+        })
+
+        with self._patch_main_app(mock_mcp_manager):
+            result = await internal_tools._play_video_on_dlna({
+                "item_id": "audio1",
+                "renderer_name": "Samsung TV",
+            })
+
+        assert result["success"] is False
+        assert "No video stream URL" in result["message"]
+
+    @pytest.mark.unit
+    async def test_play_video_jellyfin_fails(self, internal_tools):
+        """Jellyfin get_stream_url failure returns error."""
+        mock_mcp_manager = MagicMock()
+        mock_mcp_manager.execute_tool = AsyncMock(return_value={
+            "success": False, "message": "Item not found",
+        })
+
+        with self._patch_main_app(mock_mcp_manager):
+            result = await internal_tools._play_video_on_dlna({
+                "item_id": "invalid",
+                "renderer_name": "Samsung TV",
+            })
+
+        assert result["success"] is False
+        assert "Failed to get stream URL" in result["message"]
+
+    @pytest.mark.unit
+    async def test_execute_routes_to_play_video(self, internal_tools):
+        """execute() routes internal.play_video_on_dlna correctly."""
+        with patch.object(internal_tools, "_play_video_on_dlna", new_callable=AsyncMock) as mock:
+            mock.return_value = {"success": True}
+            params = {"item_id": "movie1", "renderer_name": "Samsung TV"}
+            result = await internal_tools.execute("internal.play_video_on_dlna", params)
+            mock.assert_called_once_with(params)
+            assert result["success"] is True
+
+
+class TestResolveRoomVisualPlayer:
+    """Test _resolve_room_visual_player helper."""
+
+    @pytest.mark.unit
+    async def test_resolve_visual_dlna_success(self, internal_tools):
+        """Room with visual DLNA device resolves correctly."""
+        mock_room = MagicMock()
+        mock_room.id = 1
+        mock_room.name = "Wohnzimmer"
+
+        mock_room_service = MagicMock()
+        mock_room_service.get_room_by_name = AsyncMock(return_value=mock_room)
+        mock_room_service.get_room_by_alias = AsyncMock(return_value=None)
+
+        mock_output_device = MagicMock()
+        mock_output_device.dlna_renderer_name = "Samsung TV"
+        mock_output_device.device_name = "Samsung TV"
+
+        mock_decision = MagicMock()
+        mock_decision.reason = "ok"
+        mock_decision.output_device = mock_output_device
+        mock_decision.target_type = "dlna"
+
+        mock_routing_service = MagicMock()
+        mock_routing_service.get_visual_output_for_room = AsyncMock(return_value=mock_decision)
+
+        with _patch_resolve_deps(mock_room_service, mock_routing_service):
+            result = await internal_tools._resolve_room_visual_player({"room_name": "Wohnzimmer"})
+
+        assert result["success"] is True
+        assert result["data"]["target_type"] == "dlna"
+        assert result["data"]["dlna_renderer_name"] == "Samsung TV"
+
+    @pytest.mark.unit
+    async def test_resolve_visual_room_not_found(self, internal_tools):
+        """Unknown room returns error."""
+        mock_room_service = MagicMock()
+        mock_room_service.get_room_by_name = AsyncMock(return_value=None)
+        mock_room_service.get_room_by_alias = AsyncMock(return_value=None)
+
+        with _patch_resolve_deps(mock_room_service):
+            result = await internal_tools._resolve_room_visual_player({"room_name": "Narnia"})
+
+        assert result["success"] is False
+        assert "not found" in result["message"]
+
+    @pytest.mark.unit
+    async def test_resolve_visual_no_devices(self, internal_tools):
+        """Room with no visual devices returns error."""
+        mock_room = MagicMock()
+        mock_room.id = 1
+        mock_room.name = "Kueche"
+
+        mock_room_service = MagicMock()
+        mock_room_service.get_room_by_name = AsyncMock(return_value=mock_room)
+
+        mock_decision = MagicMock()
+        mock_decision.reason = "no_output_devices_configured"
+
+        mock_routing_service = MagicMock()
+        mock_routing_service.get_visual_output_for_room = AsyncMock(return_value=mock_decision)
+
+        with _patch_resolve_deps(mock_room_service, mock_routing_service):
+            result = await internal_tools._resolve_room_visual_player({"room_name": "Kueche"})
+
+        assert result["success"] is False
+        assert "No visual output device" in result["message"]
+
+    @pytest.mark.unit
+    async def test_resolve_visual_missing_room_name(self, internal_tools):
+        """Missing room_name returns error."""
+        result = await internal_tools._resolve_room_visual_player({})
+        assert result["success"] is False
+        assert "room_name" in result["message"]
+
+
 class TestFormatLastSeen:
     """Test relative time formatting."""
 
