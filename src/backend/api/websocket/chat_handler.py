@@ -386,10 +386,20 @@ async def _retrieve_memory_context(content: str, user_id: int | None, lang: str)
         try:
             async with AsyncSessionLocal() as db:
                 service = ConversationMemoryService(db)
-                memories = await service.retrieve(content, user_id=user_id)
-                if memories:
+                # Essential memories (always injected, similarity-independent)
+                essential = await service.retrieve_essential(user_id=user_id)
+                # Semantic memories (query-dependent)
+                semantic = await service.retrieve(content, user_id=user_id)
+                # Merge: essential first, then semantic (deduplicated)
+                seen_ids = {m["id"] for m in essential}
+                combined = list(essential)
+                for m in semantic:
+                    if m["id"] not in seen_ids:
+                        combined.append(m)
+
+                if combined:
                     lines = []
-                    for m in memories:
+                    for m in combined:
                         cat_label = m["category"].upper()
                         lines.append(f"- [{cat_label}] {m['content']}")
                     memories_str = "\n".join(lines)
