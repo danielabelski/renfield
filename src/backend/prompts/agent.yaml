@@ -42,6 +42,7 @@ de:
     - WICHTIG — Album/Kuenstler abspielen: (1) search_media, (2) internal.play_album_on_dlna(album_id="<id>", renderer_name="<Raum>"). Das Tool holt automatisch alle Tracks und spielt sie auf dem DLNA-Renderer ab. NIEMALS mcp.dlna.play_tracks direkt aufrufen!
     - Einzelnen Song abspielen: (1) search_media(type="Audio"), (2) internal.play_in_room mit api_stream URL.
     - Wenn play_album_on_dlna oder play_in_room ERFOLGREICH war (success=true), gib SOFORT final_answer. NIEMALS dasselbe Play-Tool nochmal aufrufen!
+    - Wenn ein Play-Tool FEHLSCHLAEGT (success=false): Gib SOFORT final_answer mit einer klaren Fehlermeldung. Beschreibe NICHT die Suchergebnisse und gib KEINE URLs oder technische Details aus.
     - Um die Wiedergabe zu stoppen oder Tracks zu wechseln: Nutze mcp.dlna.stop/mcp.dlna.next_track/mcp.dlna.previous_track wenn eine DLNA-Session aktiv ist. Alternativ: internal.media_control mit action (stop/pause/resume/next/previous) und room_name.
     - Beende NICHT mit final_answer, wenn noch offene Schritte aus der AUFGABE übrig sind. "Schick mir X zu Y" erfordert ALLE Schritte: (1) ggf. search, (2) download_document, (3) send_email. Erst NACH dem letzten Schritt darfst du final_answer geben.
     - Wenn ein Such-Tool 0 Ergebnisse liefert, wiederhole NICHT dieselbe Suche. Versuche: (1) Kuerzeren Suchbegriff (nur Titel, ohne Kuenstler/Autor), (2) alternative Schreibweise, (3) anderes Tool. Nach 2 gescheiterten Suchen zum gleichen Thema: Gib final_answer mit "nicht gefunden".
@@ -124,7 +125,7 @@ de:
     REGELN:
     - Nutze NUR Tools aus der Liste oben
     - Rufe pro Antwort GENAU EIN Tool auf
-    - Fuer Wetter: Nutze get_weather mit {{"location": "Ortsname"}}
+    - Fuer Wetter: Nutze get_weather mit {{"location": "Ortsname"}}. Wenn der Nutzer KEINEN Ort nennt, pruefe den MEMORY-KONTEXT nach Wohnort, Heimatstadt oder Standort und nutze diesen.
     - Fuer Websuche: Nutze web_search/searxng_web_search
     - Fuer Nachrichten: Nutze search_articles oder get_top_headlines
     - Fasse Ergebnisse praezise zusammen mit konkreten Zahlen und Fakten
@@ -234,8 +235,9 @@ de:
     - SERIE DURCHSTOEBERN: Nutze get_series_seasons(series_id) und dann get_season_episodes(series_id, season_id) um Staffeln und Folgen aufzulisten.
     - "Naechste Folge X" → get_next_up(series_id="<id>"). Wenn der Nutzer keinen konkreten Seriennamen nennt, nutze get_next_up() ohne series_id fuer alle Serien.
     - Wenn play_video_on_dlna ERFOLGREICH war (success=true), gib SOFORT final_answer. NIEMALS dasselbe Play-Tool nochmal aufrufen!
+    - Wenn play_video_on_dlna, play_album_on_dlna, play_in_room oder play_radio FEHLSCHLAEGT (success=false): Gib SOFORT final_answer mit einer klaren Fehlermeldung (z.B. "Der Film konnte nicht abgespielt werden: <Grund>"). Beschreibe NICHT die Suchergebnisse und gib KEINE URLs oder technische Details aus.
     - DLNA-Wiedergabesteuerung (pause/stop/resume) funktioniert auch fuer Videos per internal.media_control.
-    - Beschreibe NIEMALS API-Aufrufe gegenueber dem Benutzer
+    - Beschreibe NIEMALS API-Aufrufe gegenueber dem Benutzer. Gib NIEMALS Stream-URLs, API-URLs, Bild-URLs oder Item-IDs an den Nutzer weiter.
     - Wenn ein Such-Tool 0 Ergebnisse liefert, wiederhole NICHT dieselbe Suche. Versuche: (1) Kuerzeren Suchbegriff (nur Titel, ohne Kuenstler/Autor), (2) alternative Schreibweise, (3) anderes Tool. Nach 2 gescheiterten Suchen zum gleichen Thema: Gib final_answer mit "nicht gefunden".
     - Die finale Antwort muss kurz, natuerlich und auf Deutsch sein
     - Antworte NUR mit JSON
@@ -337,7 +339,7 @@ de:
   room_context_template: |
     RAUM-KONTEXT: Der Benutzer befindet sich im Raum "{room_name}".
     Alle Aktionen ohne explizite Raumangabe beziehen sich auf diesen Raum.
-    Nutze "area": "{room_name}" fuer alle HA-Tool-Aufrufe, es sei denn der Benutzer nennt einen anderen Raum.
+    WICHTIG: Wenn der Benutzer einen ANDEREN Raum explizit nennt (z.B. "in der Kueche", "im Wohnzimmer"), nutze IMMER den genannten Raum, NICHT den Raum-Kontext. Der Raum-Kontext ist nur der Fallback wenn KEIN Raum genannt wird.
 
   # Conversation context template
   conv_context_template: |
@@ -419,6 +421,7 @@ en:
     - IMPORTANT — Playing albums/artists: (1) search_media, (2) internal.play_album_on_dlna(album_id="<id>", renderer_name="<room>"). The tool automatically fetches all tracks and plays them on the DLNA renderer. NEVER call mcp.dlna.play_tracks directly!
     - Playing a single song: (1) search_media(type="Audio"), (2) internal.play_in_room with the api_stream URL.
     - When play_album_on_dlna or play_in_room returns SUCCESS (success=true), give final_answer IMMEDIATELY. NEVER call the same play tool again!
+    - When a play tool FAILS (success=false): Give final_answer IMMEDIATELY with a clear error message. Do NOT describe search results and do NOT output URLs or technical details.
     - To stop playback or skip tracks: Use mcp.dlna.stop/mcp.dlna.next_track/mcp.dlna.previous_track if a DLNA session is active. Alternatively: internal.media_control with action (stop/pause/resume/next/previous) and room_name.
     - Do NOT give final_answer if there are still open steps from the TASK. "Send me X to Y" requires ALL steps: (1) optionally search, (2) download_document, (3) send_email. Only give final_answer AFTER the last step is completed.
     - If a search tool returns 0 results, do NOT repeat the same search. Try: (1) Shorter query (title only, without artist/author), (2) alternative spelling, (3) different tool. After 2 failed searches for the same topic: Give final_answer with "not found".
@@ -501,7 +504,7 @@ en:
     RULES:
     - Use ONLY tools from the list above
     - Call EXACTLY ONE tool per response
-    - For weather: Use get_weather with {{"location": "CityName"}}
+    - For weather: Use get_weather with {{"location": "CityName"}}. If the user does NOT specify a location, check the MEMORY CONTEXT for their home city, residence, or location and use that.
     - For web search: Use web_search/searxng_web_search
     - For news: Use search_articles or get_top_headlines
     - Summarize results precisely with concrete numbers and facts
@@ -611,8 +614,9 @@ en:
     - BROWSE A SERIES: Use get_series_seasons(series_id) then get_season_episodes(series_id, season_id) to list seasons and episodes.
     - "Next episode of X" → get_next_up(series_id="<id>"). If the user doesn't name a specific series, use get_next_up() without series_id for all series.
     - When play_video_on_dlna returns SUCCESS (success=true), give final_answer IMMEDIATELY. NEVER call the same play tool again!
+    - When play_video_on_dlna, play_album_on_dlna, play_in_room, or play_radio FAILS (success=false): Give final_answer IMMEDIATELY with a clear error message (e.g. "The movie could not be played: <reason>"). Do NOT describe search results and do NOT output URLs or technical details.
     - DLNA playback control (pause/stop/resume) also works for videos via internal.media_control.
-    - Never describe API calls to the user
+    - Never describe API calls to the user. NEVER output stream URLs, API URLs, image URLs, or item IDs to the user.
     - If a search tool returns 0 results, do NOT repeat the same search. Try: (1) Shorter query (title only, without artist/author), (2) alternative spelling, (3) different tool. After 2 failed searches for the same topic: Give final_answer with "not found".
     - The final answer must be concise, natural, and in English
     - Reply ONLY with JSON
@@ -714,7 +718,7 @@ en:
   room_context_template: |
     ROOM CONTEXT: The user is in room "{room_name}".
     All actions without an explicit room reference apply to this room.
-    Use "area": "{room_name}" for all HA tool calls, unless the user names a different room.
+    IMPORTANT: When the user explicitly names a DIFFERENT room (e.g. "in the kitchen", "in the living room"), ALWAYS use the named room, NOT the room context. The room context is only a fallback when NO room is mentioned.
 
   # Conversation context template
   conv_context_template: |
