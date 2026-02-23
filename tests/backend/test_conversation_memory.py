@@ -1580,3 +1580,226 @@ class TestGetHistory:
         """get_history() returns empty list for unknown memory_id."""
         entries = await memory_service.get_history(99999)
         assert entries == []
+
+
+# ==========================================================================
+# Essential Memory Tests
+# ==========================================================================
+
+class TestEssentialMemoryConfig:
+    """Tests for memory_essential_threshold config setting."""
+
+    @pytest.mark.unit
+    def test_default_threshold(self):
+        """Default essential threshold is 0.9."""
+        from utils.config import Settings
+        s = Settings(database_url="sqlite:///:memory:")
+        assert s.memory_essential_threshold == 0.9
+
+    @pytest.mark.unit
+    def test_custom_threshold(self):
+        """Essential threshold can be customized."""
+        from utils.config import Settings
+        s = Settings(
+            database_url="sqlite:///:memory:",
+            memory_essential_threshold=0.8,
+        )
+        assert s.memory_essential_threshold == 0.8
+
+
+class TestRetrieveEssential:
+    """Tests for ConversationMemoryService.retrieve_essential()."""
+
+    @pytest.mark.unit
+    async def test_retrieve_essential_returns_high_importance(self, memory_service, db_session, test_user):
+        """retrieve_essential() returns memories with importance >= threshold."""
+        # High importance fact (should be returned)
+        m1 = ConversationMemory(
+            content="Ich wohne in Kleinenbroich",
+            category="fact",
+            user_id=test_user.id,
+            importance=1.0,
+        )
+        # Low importance fact (should NOT be returned)
+        m2 = ConversationMemory(
+            content="Hat letzte Woche Pizza gegessen",
+            category="fact",
+            user_id=test_user.id,
+            importance=0.3,
+        )
+        db_session.add_all([m1, m2])
+        await db_session.commit()
+
+        with patch('services.conversation_memory_service.settings') as mock_settings:
+            mock_settings.memory_essential_threshold = 0.9
+            mock_settings.memory_retrieval_limit = 10
+
+            results = await memory_service.retrieve_essential(user_id=test_user.id)
+
+        assert len(results) == 1
+        assert results[0]["content"] == "Ich wohne in Kleinenbroich"
+        assert results[0]["importance"] == 1.0
+        assert results[0]["similarity"] == 1.0
+
+    @pytest.mark.unit
+    async def test_retrieve_essential_excludes_context_category(self, memory_service, db_session, test_user):
+        """retrieve_essential() excludes context-category memories."""
+        # High importance context (should NOT be returned — context decays)
+        m1 = ConversationMemory(
+            content="Gerade Urlaub geplant",
+            category="context",
+            user_id=test_user.id,
+            importance=1.0,
+        )
+        # High importance fact (should be returned)
+        m2 = ConversationMemory(
+            content="Name ist Max",
+            category="fact",
+            user_id=test_user.id,
+            importance=0.95,
+        )
+        db_session.add_all([m1, m2])
+        await db_session.commit()
+
+        with patch('services.conversation_memory_service.settings') as mock_settings:
+            mock_settings.memory_essential_threshold = 0.9
+            mock_settings.memory_retrieval_limit = 10
+
+            results = await memory_service.retrieve_essential(user_id=test_user.id)
+
+        assert len(results) == 1
+        assert results[0]["content"] == "Name ist Max"
+
+    @pytest.mark.unit
+    async def test_retrieve_essential_excludes_inactive(self, memory_service, db_session, test_user):
+        """retrieve_essential() excludes inactive (deleted) memories."""
+        m = ConversationMemory(
+            content="Alte Info",
+            category="fact",
+            user_id=test_user.id,
+            importance=1.0,
+            is_active=False,
+        )
+        db_session.add(m)
+        await db_session.commit()
+
+        with patch('services.conversation_memory_service.settings') as mock_settings:
+            mock_settings.memory_essential_threshold = 0.9
+            mock_settings.memory_retrieval_limit = 10
+
+            results = await memory_service.retrieve_essential(user_id=test_user.id)
+
+        assert len(results) == 0
+
+    @pytest.mark.unit
+    async def test_retrieve_essential_sorted_by_importance(self, memory_service, db_session, test_user):
+        """retrieve_essential() returns memories sorted by importance DESC."""
+        m1 = ConversationMemory(
+            content="Less important",
+            category="preference",
+            user_id=test_user.id,
+            importance=0.91,
+        )
+        m2 = ConversationMemory(
+            content="Most important",
+            category="fact",
+            user_id=test_user.id,
+            importance=1.0,
+        )
+        db_session.add_all([m1, m2])
+        await db_session.commit()
+
+        with patch('services.conversation_memory_service.settings') as mock_settings:
+            mock_settings.memory_essential_threshold = 0.9
+            mock_settings.memory_retrieval_limit = 10
+
+            results = await memory_service.retrieve_essential(user_id=test_user.id)
+
+        assert len(results) == 2
+        assert results[0]["content"] == "Most important"
+        assert results[1]["content"] == "Less important"
+
+    @pytest.mark.unit
+    async def test_retrieve_essential_without_user_id(self, memory_service, db_session):
+        """retrieve_essential() without user_id returns all users' essential memories."""
+        m = ConversationMemory(
+            content="Global essential",
+            category="fact",
+            user_id=None,
+            importance=1.0,
+        )
+        db_session.add(m)
+        await db_session.commit()
+
+        with patch('services.conversation_memory_service.settings') as mock_settings:
+            mock_settings.memory_essential_threshold = 0.9
+            mock_settings.memory_retrieval_limit = 10
+
+            results = await memory_service.retrieve_essential()
+
+        assert len(results) == 1
+        assert results[0]["content"] == "Global essential"
+
+    @pytest.mark.unit
+    async def test_retrieve_essential_respects_limit(self, memory_service, db_session, test_user):
+        """retrieve_essential() respects the limit parameter."""
+        for i in range(5):
+            m = ConversationMemory(
+                content=f"Essential fact {i}",
+                category="fact",
+                user_id=test_user.id,
+                importance=0.95 + i * 0.01,
+            )
+            db_session.add(m)
+        await db_session.commit()
+
+        with patch('services.conversation_memory_service.settings') as mock_settings:
+            mock_settings.memory_essential_threshold = 0.9
+            mock_settings.memory_retrieval_limit = 3
+
+            results = await memory_service.retrieve_essential(user_id=test_user.id, limit=2)
+
+        assert len(results) == 2
+
+    @pytest.mark.unit
+    async def test_retrieve_essential_empty_when_none_qualify(self, memory_service, db_session, test_user):
+        """retrieve_essential() returns empty list when no memories meet threshold."""
+        m = ConversationMemory(
+            content="Low importance",
+            category="fact",
+            user_id=test_user.id,
+            importance=0.5,
+        )
+        db_session.add(m)
+        await db_session.commit()
+
+        with patch('services.conversation_memory_service.settings') as mock_settings:
+            mock_settings.memory_essential_threshold = 0.9
+            mock_settings.memory_retrieval_limit = 10
+
+            results = await memory_service.retrieve_essential(user_id=test_user.id)
+
+        assert len(results) == 0
+
+    @pytest.mark.unit
+    async def test_retrieve_essential_includes_all_non_context_categories(self, memory_service, db_session, test_user):
+        """retrieve_essential() includes fact, preference, and instruction categories."""
+        for cat in ("fact", "preference", "instruction"):
+            m = ConversationMemory(
+                content=f"Essential {cat}",
+                category=cat,
+                user_id=test_user.id,
+                importance=1.0,
+            )
+            db_session.add(m)
+        await db_session.commit()
+
+        with patch('services.conversation_memory_service.settings') as mock_settings:
+            mock_settings.memory_essential_threshold = 0.9
+            mock_settings.memory_retrieval_limit = 10
+
+            results = await memory_service.retrieve_essential(user_id=test_user.id)
+
+        assert len(results) == 3
+        categories = {r["category"] for r in results}
+        assert categories == {"fact", "preference", "instruction"}
