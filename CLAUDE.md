@@ -4,28 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Renfield is a fully offline-capable, self-hosted **digital assistant** — a personal AI hub that consolidates knowledge, information retrieval, and multi-channel queries into one interface. It serves multiple users in parallel, primarily within the household. Core capabilities include a queryable knowledge base (RAG), bundled tool access (web search, weather, news, etc.), and smart home control as a complementary feature. It informs, assists, and entertains.
+Renfield is a fully offline-capable, self-hosted **digital assistant** — a personal AI hub for knowledge retrieval, tool access, and smart home control. Serves multiple household users in parallel.
 
-**LLM:** Local LLMs via Ollama (configurable per role). See `docs/LLM_MODEL_GUIDE.md` for model recommendations. The system supports structured JSON output, function calling, and chain-of-thought reasoning — enabling multi-step agent workflows.
+**Tech Stack:** Python 3.11 + FastAPI + SQLAlchemy | React 18 + TypeScript + Vite + Tailwind CSS + PWA | Docker Compose, PostgreSQL 16, Redis 7, Ollama | Satellites: Pi Zero 2 W + ReSpeaker + OpenWakeWord
 
-**Tech Stack:**
-- Backend: Python 3.11 + FastAPI + SQLAlchemy
-- Frontend: React 18 + TypeScript + Vite + Tailwind CSS + PWA
-- Infrastructure: Docker Compose, PostgreSQL 16, Redis 7, Ollama
-- LLM: Local models via Ollama (multi-model: chat, intent, RAG, agent, embeddings)
-- Integrations: Home Assistant, Frigate (camera NVR), n8n (workflows), SearXNG (web search), Jellyfin (media), DLNA (renderer control), Paperless, Email (IMAP/SMTP)
-- Satellites: Raspberry Pi Zero 2 W + ReSpeaker 2-Mics Pi HAT + OpenWakeWord
+**LLM:** Local models via Ollama (multi-model: chat, intent, RAG, agent, embeddings). See `docs/LLM_MODEL_GUIDE.md`.
+
+**Integrations:** Home Assistant, Frigate, n8n, SearXNG, Jellyfin, DLNA, Paperless, Email, Calendar — all via MCP servers.
 
 ## KRITISCHE REGELN - IMMER BEACHTEN
 
-### Git Push Verbot
-
-**NIEMALS `git push` ohne explizite Erlaubnis des Benutzers ausführen!**
-
-- Nach jedem Commit MUSS gefragt werden: "Soll ich pushen?"
-- Erst nach ausdrücklicher Bestätigung ("ja", "push", etc.) darf gepusht werden
-- Diese Regel gilt auch nach Session-Komprimierung (Compact)
-- Bei Unsicherheit: IMMER fragen, NIEMALS automatisch pushen
+**NIEMALS `git push` ohne explizite Erlaubnis des Benutzers ausfuehren!** Nach jedem Commit fragen: "Soll ich pushen?" Diese Regel gilt auch nach Session-Komprimierung. Details: `/git-workflow` Skill.
 
 ---
 
@@ -33,629 +22,63 @@ Renfield is a fully offline-capable, self-hosted **digital assistant** — a per
 
 ### Test-Driven Development (TDD)
 
-**WICHTIG: Bei jeder Code-Änderung müssen passende Tests mitgeliefert werden.**
+**WICHTIG: Bei jeder Code-Aenderung muessen passende Tests mitgeliefert werden.**
 
 1. **Neue API-Endpoints**: Tests in `tests/backend/test_<route>.py` — HTTP status codes, schemas, error handling, edge cases
 2. **Neue Services**: Tests in `tests/backend/test_services.py` — unit tests with mocks, `@pytest.mark.unit`
-3. **Datenbank-Änderungen**: Tests in `tests/backend/test_models.py` — model creation, constraints, `@pytest.mark.database`
+3. **Datenbank-Aenderungen**: Tests in `tests/backend/test_models.py` — model creation, constraints, `@pytest.mark.database`
 4. **Frontend-Komponenten**: Tests in `tests/frontend/react/` — RTL rendering, user interactions, MSW API mocks
 
-Follow existing test patterns in the respective test files. See `tests/` directory structure for conventions.
+### Frontend Rules
 
-### Git Workflow
-
-**⚠️ KRITISCH: Diese Regeln gelten für ALLE Git-Operationen:**
-
-1. **NIEMALS ohne Erlaubnis pushen** ⛔
-   - `git push` NUR ausführen, wenn der Benutzer EXPLIZIT die Erlaubnis erteilt
-   - Nach JEDEM Commit MUSS gefragt werden: "Soll ich pushen?"
-   - Auf Bestätigung warten ("ja", "push", "ok") bevor git push ausgeführt wird
-   - Diese Regel überlebt Session-Komprimierung und MUSS immer beachtet werden
-
-2. **Issue-Nummer bei jedem Commit**
-   - Vor jedem Commit nach der Issue-Nummer fragen
-   - Format: `fix/feat/docs(scope): Beschreibung (#123)`
-   - Beispiel: `feat(satellites): Add monitoring dashboard (#25)`
-
-3. **Commit-Message Format**
-   ```
-   type(scope): Kurze Beschreibung (#issue)
-
-   Längere Beschreibung falls nötig.
-
-   Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
-   ```
-
-4. **Dokumentation vor Push aktualisieren**
-   - Vor jedem Push MUSS die entsprechende Dokumentation aktualisiert werden
-   - CLAUDE.md, docs/, README etc. müssen die Änderungen widerspiegeln
-   - Keine Code-Änderungen ohne passende Dokumentations-Updates pushen
-
-5. **Typische Commit-Types**
-   - `feat`: Neues Feature
-   - `fix`: Bugfix
-   - `docs`: Dokumentation
-   - `refactor`: Code-Refactoring
-   - `test`: Tests hinzufügen/ändern
-   - `chore`: Wartung, Dependencies
+- **Dark Mode**: ALL components must use Tailwind `dark:` variants. Never hardcode colors.
+- **i18n**: ALL user-facing strings must use `useTranslation()`. Never hardcode text.
+- **Translations**: Add to BOTH `src/frontend/src/i18n/locales/de.json` and `en.json`.
+- **Component classes** (in `index.css`): `.card`, `.input`, `.btn-primary`, `.btn-secondary`
 
 ## Development Commands
 
-### Quick Start
 ```bash
-./bin/start.sh              # Start entire stack
-./bin/update.sh             # Update system
-./bin/debug.sh              # Debug mode
-./bin/quick-update.sh       # Quick backend restart
-./bin/deploy-satellite.sh [hostname] [user]  # Deploy satellite
+./bin/start.sh                  # Start entire stack
+./bin/update.sh                 # Update system
+./bin/debug.sh                  # Debug mode
+./bin/quick-update.sh           # Quick backend restart
 ```
 
-### Docker Compose Variants
 ```bash
-docker compose -f docker-compose.dev.yml up -d   # Development (Mac, no GPU)
-docker compose -f docker-compose.prod.yml up -d   # Production (NVIDIA GPU, SSL)
-docker compose up -d                               # Standard (CPU only)
+make lint                       # Lint all (ruff + eslint)
+make format-backend             # Format + auto-fix with ruff
+make test                       # Run all tests
+make test-backend               # Backend tests only
+make test-frontend-react        # React component tests (Vitest)
+make test-coverage              # Coverage report (fail-under=50%)
 ```
 
-### Database
 ```bash
 docker exec -it renfield-backend alembic revision --autogenerate -m "description"
 docker exec -it renfield-backend alembic upgrade head
 docker exec -it renfield-backend alembic downgrade -1
 ```
 
-### Linting & Formatting
-```bash
-make lint                    # Lint all code (ruff + eslint)
-make lint-backend            # Lint backend with ruff
-make format-backend          # Format + auto-fix with ruff
-```
-
-**Configuration:** `pyproject.toml` — contains ruff, pytest, and coverage config. No separate `pytest.ini`, `.flake8`, etc.
-
-### Testing
-```bash
-make test                    # Run all tests
-make test-backend            # Backend tests only
-make test-frontend-react     # React component tests (Vitest)
-make test-coverage           # Tests with coverage report (fail-under=50%)
-```
-
-### Monitoring
-```bash
-# Enable Prometheus metrics endpoint (opt-in)
-METRICS_ENABLED=true
-curl http://localhost:8000/metrics  # Prometheus exposition format
-```
+**Configuration:** `pyproject.toml` — contains ruff, pytest, and coverage config.
 
 ## Architecture
 
-### Request Flow
-```
-User Input → Frontend (React)
-  ↓
-WebSocket/REST → Backend (FastAPI)
-  ↓
-Intent Recognition → OllamaService.extract_intent()
-  ↓
-Action Execution → ActionExecutor.execute()
-  ↓
-Integration → MCPManager (HA, n8n, weather, search, etc.) / RAGService (knowledge)
-  ↓
-Response → Frontend (streaming or JSON)
-```
+**Request Flow:** User → React Frontend → WebSocket/REST → FastAPI Backend → Intent Recognition → Action Execution → MCP/RAG → Streaming Response
 
-### Satellite Request Flow
-```
-Wake Word → Satellite (Pi Zero 2 W)
-  ↓
-Audio Streaming → Backend (WebSocket /ws/satellite)
-  ↓
-Whisper STT → Transcription
-  ↓
-Intent Recognition → OllamaService.extract_intent()
-  ↓
-Action Execution → ActionExecutor.execute()
-  ↓
-Response Generation → OllamaService.generate()
-  ↓
-Piper TTS → Audio Response
-  ↓
-Audio Playback → Satellite Speaker
-```
+**Subsystems:** Intent Recognition, Agent Loop (ReAct), MCP Integration (8+ servers), RAG/Knowledge Base, Conversation Persistence, Hook System (plugin API), Auth/RPBAC, Presence Detection, Media Follow Me, Speaker Recognition, Knowledge Graph, Paperless Audit, Audio Output Routing, Notification Privacy, Device Management
 
-### Agent Loop (ReAct — Multi-Step Tool Chaining)
+**Key config:** All via `.env` loaded by `utils/config.py` (Pydantic Settings). Full list: `docs/ENVIRONMENT_VARIABLES.md`.
 
-For complex queries requiring multiple steps or conditional logic, Renfield uses a ReAct (Reason + Act) Agent Loop:
-
-```
-User → ComplexityDetector → simple? → Single-Intent (as before)
-                          → complex? → Agent Loop:
-                                        ├─ LLM: Plan → Tool Call 1
-                                        ├─ User sees: "🔍 Hole Wetterdaten..."
-                                        ├─ Tool Result → back to LLM
-                                        ├─ LLM: Reasoning → Tool Call 2
-                                        ├─ User sees: "🔍 Suche Hotels..."
-                                        └─ LLM: Final Answer → Stream
-```
-
-**Key Components:**
-- `services/complexity_detector.py` — Regex-based detection (zero-cost, no LLM call)
-- `services/agent_tools.py` — Wraps MCP tools as descriptions for the LLM prompt
-- `services/agent_service.py` — Core loop: LLM → Tool → LLM → ... → Answer (AsyncGenerator)
-
-**Configuration** (all opt-in, disabled by default):
-```bash
-AGENT_ENABLED=false          # Enable agent loop
-AGENT_MAX_STEPS=8            # Max reasoning steps
-AGENT_STEP_TIMEOUT=30.0      # Per-step LLM timeout (seconds)
-AGENT_TOTAL_TIMEOUT=120.0    # Total timeout
-AGENT_MODEL=                 # Optional: separate model for agent
-```
-
-**WebSocket Message Types** (Server → Client):
-- `agent_thinking` — Agent is analyzing the query
-- `agent_tool_call` — Agent is calling a tool (with tool name, parameters, reason)
-- `agent_tool_result` — Tool result (success/failure, data)
-- `stream` — Final answer (same as single-intent path)
-- `done` with `agent_steps` count
-
-### Hook System (Extension API)
-
-Minimal async hook system for the Open-Core plugin architecture. External packages (e.g. `renfield-twin`) register async callbacks at well-defined lifecycle points — renfield never crashes due to a plugin error (each hook is wrapped in `try/except`).
-
-**Key file:** `utils/hooks.py`
-
-**Hook Events:**
-
-| Event | kwargs | Purpose |
-|-------|--------|---------|
-| `startup` | `app` | Initialize extension services |
-| `shutdown` | `app` | Clean up extension resources |
-| `register_routes` | `app` | Mount additional FastAPI routes |
-| `register_tools` | `registry` (AgentToolRegistry) | Add custom agent tools |
-| `post_message` | `user_msg`, `assistant_msg`, `user_id`, `session_id` | Post-processing (e.g. graph extraction) |
-| `post_document_ingest` | `chunks`, `document_id`, `user_id` | KG extraction from ingested document chunks |
-| `retrieve_context` | `query`, `user_id`, `lang` | Inject additional LLM context (return `str`) |
-| `presence_enter_room` | `user_id`, `user_name`, `room_id`, `room_name`, `confidence` | User entered a room |
-| `presence_leave_room` | `user_id`, `user_name`, `room_id`, `room_name` | User left a room |
-| `presence_first_arrived` | `user_id`, `user_name`, `room_id`, `room_name` | First user detected (house was empty) |
-| `presence_last_left` | `room_id`, `room_name` | Last occupant left a room |
-
-**Insertion Points:**
-
-| File | Hook Event | Execution |
-|------|-----------|-----------|
-| `api/lifecycle.py` | `startup`, `register_routes` | Awaited during startup (after all core services) |
-| `api/lifecycle.py` | `shutdown` | Awaited before MCP shutdown |
-| `api/websocket/chat_handler.py` | `post_message` | Fire-and-forget background task |
-| `api/websocket/chat_handler.py` | `retrieve_context` | Awaited, results appended to memory context |
-| `services/rag_service.py` | `post_document_ingest` | Fire-and-forget after RAG ingest |
-| `api/routes/chat_upload.py` | `post_document_ingest` | Fire-and-forget after text extraction |
-| `services/agent_tools.py` | `register_tools` | Background task via `create_task` |
-
-**Plugin Loading:** Set `PLUGIN_MODULE=package.module:callable` — the callable is invoked at startup and should call `register_hook()`. Format: `module:function` (function receives no args). See `api/lifecycle.py:_load_plugin_module()`.
-
-### LLM Client Factory
-
-All services obtain their `ollama.AsyncClient` through a central factory in `utils/llm_client.py` instead of instantiating clients directly. The factory provides URL-based caching (same URL → same client instance) and a `LLMClient` Protocol that `ollama.AsyncClient` satisfies via structural typing.
-
-```python
-from utils.llm_client import get_default_client, get_agent_client, create_llm_client
-
-client = get_default_client()                          # settings.ollama_url
-client, url = get_agent_client(role_url, fallback_url) # role → fallback → default
-client = create_llm_client("http://custom:11434")      # arbitrary URL
-```
-
-**Key files:** `utils/llm_client.py` (Protocol + Factory), `tests/backend/test_llm_client.py`
-
-**Consumers:** `OllamaService`, `AgentService`, `AgentRouter`, `RAGService`, `IntentFeedbackService`
-
-### Intent Recognition System
-
-The core of Renfield is the intent recognition system in `src/backend/services/ollama_service.py`:
-
-1. **extract_intent()**: Uses Ollama LLM to parse natural language into structured intents (returns top intent)
-2. **extract_ranked_intents()**: Returns ranked list of 1-3 intents sorted by confidence (for fallback chain)
-3. **Dynamic Keyword Matching**: Fetches device names from Home Assistant to improve accuracy
-4. **Intent Types**:
-   - `mcp.*` - All external integrations via MCP servers (Home Assistant, n8n, weather, search, news, etc.)
-   - `knowledge.*` - Knowledge base / RAG queries (only for user's own documents)
-   - `general.conversation` - Normal chat, general knowledge, smalltalk (no action needed)
-
-**Ranked Intents & Fallback Chain:** The LLM returns up to 3 weighted intents. The chat handler tries them in order — if one fails (e.g., RAG returns 0 results), it falls through to the next. If all fail and Agent Loop is enabled, it kicks in as final fallback.
-
-**MCP Tool Prompt Filtering**: With 100+ MCP tools across 8 servers, the intent prompt uses `prompt_tools` (from `mcp_servers.yaml`) to show only the most relevant tools per server. This reduces the prompt to ~20 tools while keeping all tools available for execution. See `IntentRegistry.build_intent_prompt()`.
-
-### Intent Feedback Learning (Semantic Correction)
-
-Renfield learns from user corrections using a 3-scope feedback system with pgvector semantic matching. Scopes: `intent` (wrong classification), `agent_tool` (wrong tool choice), `complexity` (wrong simple/complex). Corrections are stored with 768-dim embeddings and injected as few-shot examples on future similar queries (cosine similarity threshold: 0.75).
-
-**Key files:** `services/intent_feedback_service.py`, `api/routes/feedback.py`, `models/database.py` (IntentCorrection model), `components/IntentCorrectionButton.jsx`
-
-### Conversation Persistence
-
-Full conversation persistence with PostgreSQL across Chat, WebSocket, and Satellite channels. Supports follow-up questions ("Mach es aus" after "Schalte das Licht an"), full-text search, and automatic cleanup.
-
-**Documentation:** See `src/backend/CONVERSATION_API.md` for API endpoints and usage.
-
-### Paperless Document Audit
-
-Automated metadata auditing for Paperless-NGX documents using local LLMs. Opt-in via `PAPERLESS_AUDIT_ENABLED=true`. Requires Paperless MCP server to be configured and connected.
-
-- **Architecture:** All Paperless interactions via MCPManager → MCP stdio server (no direct API access)
-- **Dynamic Provisioning:** Routes, service, and imports only loaded when `PAPERLESS_AUDIT_ENABLED=true` AND Paperless MCP connected. Zero footprint otherwise.
-- **Audit Process:** For each document: fetch via MCP → heuristic OCR quality check (1-5) → LLM metadata analysis → store results in `paperless_audit_results` table
-- **Fix Modes:** `review` (manual approval in admin UI), `auto_threshold` (apply if confidence ≥ threshold), `auto_all` (apply all suggestions)
-- **OCR Quality:** Heuristic scoring (no LLM) — checks for garbled text, repeated chars, high special-char ratio
-- **Admin UI:** `/admin/paperless-audit` with 4 tabs: Audit Control, Review Queue, OCR Issues, Statistics
-- **API:** `POST /api/admin/paperless-audit/start`, `GET /status`, `GET /results`, `POST /apply`, `POST /skip`, `GET /stats`, `POST /re-ocr`
-- **Scheduled:** Optional daily run at configurable time (default: 02:00)
-
-**Key files:** `services/paperless_audit_service.py`, `api/routes/paperless_audit.py`, `models/database.py` (PaperlessAuditResult), `prompts/paperless_audit.yaml`, `pages/PaperlessAuditPage.jsx`
-
-**Configuration:**
-```bash
-PAPERLESS_AUDIT_ENABLED=false              # Master switch (default: off)
-PAPERLESS_AUDIT_MODEL=                     # Empty = use default model
-PAPERLESS_AUDIT_SCHEDULE=02:00             # Daily run time (HH:MM)
-PAPERLESS_AUDIT_FIX_MODE=review            # review | auto_threshold | auto_all
-PAPERLESS_AUDIT_CONFIDENCE_THRESHOLD=0.9   # For auto_threshold mode
-PAPERLESS_AUDIT_OCR_THRESHOLD=2            # OCR score ≤ this → offer re-OCR
-PAPERLESS_AUDIT_BATCH_DELAY=2.0            # Seconds between documents
-```
-
-### Knowledge Graph
-
-Entity-Relation triples extracted from conversations and documents via LLM, stored with pgvector embeddings for semantic entity resolution. Opt-in via `KNOWLEDGE_GRAPH_ENABLED=true`.
-
-- **Chat Extraction:** `post_message` hook sends user+assistant messages to LLM, parses JSON response into entities + relations
-- **Document Extraction:** `post_document_ingest` hook processes RAG document chunks and chat-uploaded text through KG extraction (fire-and-forget, sequential per chunk)
-- **Post-Extraction Validation:** `_is_valid_entity()` filters OCR garbage, URLs, emails, IDs, dates, phone numbers, IBANs, generic roles, and spaced-out characters BEFORE entity resolution. Compiled regex patterns at module level for performance.
-- **Entity Resolution:** Exact name match → embedding similarity → create new (checks personal scope first, then accessible custom scopes)
-- **Entity Scoping:** Flexible YAML-based scopes (`config/kg_scopes.yaml`):
-  - `personal` (built-in): Only visible to the owner (default)
-  - Custom scopes (e.g., `family`, `public`): Defined in YAML with role-based access control
-  - Each scope specifies which roles can access entities with that scope
-  - Resolution priority: custom scopes checked before creating new personal entities to prevent duplication
-- **Context Injection:** `retrieve_context` hook embeds query, finds similar entities based on user's accessible scopes
-- **Entity Types:** `person`, `place`, `organization`, `thing`, `event`, `concept`
-- **Admin Controls:** Change entity scope via `/admin/knowledge-graph`, define custom scopes in YAML
-- **Bulk Cleanup (admin):**
-  - `POST /api/knowledge-graph/cleanup/invalid` — Scan + soft-delete entities failing validation rules (`dry_run=true` default)
-  - `GET /api/knowledge-graph/cleanup/duplicates` — Find duplicate clusters via string similarity (difflib SequenceMatcher). Name normalization strips titles (Herr/Frau/Dr.) and org suffixes (GmbH/AG). Default threshold: 0.82.
-  - `POST /api/knowledge-graph/cleanup/merge-duplicates` — Auto-merge duplicate clusters (`dry_run=true` default). Threshold 0.93+ recommended for safe auto-merge.
-- **Frontend:** Admin dashboard at `/admin/knowledge-graph` with Entities, Relations, Stats tabs
-- **Extensible:** Add new scopes by editing `config/kg_scopes.yaml` without code changes
-
-**Key files:** `services/knowledge_graph_service.py`, `services/kg_scope_loader.py`, `services/kg_cleanup_service.py`, `api/routes/knowledge_graph.py`, `models/database.py` (KGEntity, KGRelation), `prompts/knowledge_graph.yaml`, `config/kg_scopes.yaml`
-
-**Configuration:**
-```bash
-KNOWLEDGE_GRAPH_ENABLED=false     # Master switch (default: off)
-KG_EXTRACTION_MODEL=              # Empty = use default model
-KG_SIMILARITY_THRESHOLD=0.85     # Entity dedup threshold (0.85 merges OCR variants)
-KG_RETRIEVAL_THRESHOLD=0.70      # Context retrieval threshold
-KG_MAX_ENTITIES_PER_USER=5000    # Per-user personal entity limit (custom scopes don't count)
-KG_MAX_CONTEXT_TRIPLES=15        # Max triples injected into prompt
-```
-
-### Speaker Recognition
-
-Automatic speaker identification using SpeechBrain ECAPA-TDNN. 192-dim voice embeddings stored in PostgreSQL, cosine similarity matching (threshold: 0.25). Auto-discovery of unknown speakers, continuous learning. **Documentation:** See `SPEAKER_RECOGNITION.md`.
-
-### Presence Detection
-
-Room-level presence detection using multiple sources:
-
-1. **BLE Scanning** — Satellites scan for known BLE devices (phones, watches) via `bleak`, report RSSI over WebSocket. Uses "strongest RSSI wins" + hysteresis (N consecutive scans) to prevent room flicker.
-2. **Voice Presence** — When Speaker Recognition identifies a user on a satellite, `register_voice_presence()` immediately updates their room. Bypasses hysteresis (voice = certain presence).
-3. **Web Auth Presence** — When an authenticated user interacts via the web interface from a room-assigned device, their location is updated via the same `register_voice_presence()` path.
-
-Voice/auth presence bypasses BLE hysteresis — a single interaction moves the user's room immediately and fires enter/leave hooks.
-
-**Key files:** `services/presence_service.py`, `api/routes/presence.py`, `models/database.py` (UserBleDevice), `api/websocket/satellite_handler.py` (voice presence trigger), `api/websocket/chat_handler.py` (auth presence trigger)
-
-**Satellite side:** `ble/scanner.py` (BLEScanner), config `ble.enabled`, env var `RENFIELD_BLE_ENABLED`
-
-**API:** `GET /api/presence/rooms` (all rooms with occupants), `GET /api/presence/user/{id}` (user location + alone?), `POST /api/presence/devices` (admin: register BLE device). MAC whitelist pushed to satellites after registration.
-
-**Privacy-Aware TTS Delivery:** Notifications carry `privacy` and `target_user_id` metadata. The privacy gate (`services/notification_privacy.py`) checks room occupancy before allowing TTS:
-- `public` — TTS always plays
-- `personal` — TTS only when all room occupants have household roles (`PRESENCE_HOUSEHOLD_ROLES`)
-- `confidential` — TTS only when the target user is completely alone in the room
-
-When `PRESENCE_ENABLED=false`, only `public` notifications get TTS. Web notifications are always delivered regardless of privacy level. Calendar MCP derives privacy from `visibility: owner` → `confidential`, `visibility: shared` → `personal`.
-
-### Media Follow Me
-
-Opt-in feature (`MEDIA_FOLLOW_ENABLED=true`, requires `PRESENCE_ENABLED=true`) that makes media playback follow users between rooms. When a user leaves a room with active playback, the music suspends and resumes in the new room after a configurable delay.
-
-- **Session Tracking:** In-memory `MediaFollowService` singleton tracks `MediaSession` per user (type, URL, station, album, room)
-- **Media Types:** `single_url` (HA play_media), `dlna_album` (DLNA queue), `radio` (TuneIn stream)
-- **Conflict Resolution:** Room owner > Role priority (`Role.priority`, lower=higher) > First-come
-- **Per-User Opt-out:** `User.media_follow_enabled` (default: true)
-- **Room Owner:** `Room.owner_id` (nullable FK → users) — set via `PATCH /api/rooms/{id}/owner`
-- **Hooks:** `presence_leave_room` (suspend), `presence_enter_room` (resume), `presence_last_left` (safety stop)
-- **Playback Registration:** `InternalToolService._play_in_room`, `_play_radio`, `_play_album_on_dlna` register sessions; `_media_control(stop)` clears them.
-
-**Key files:** `services/media_follow_service.py`, `services/internal_tools.py` (registration), `api/lifecycle.py` (hook setup), `api/routes/rooms.py` (owner endpoint)
-
-**Configuration:**
-```bash
-MEDIA_FOLLOW_ENABLED=false               # Master switch (requires PRESENCE_ENABLED=true)
-MEDIA_FOLLOW_SUSPEND_TIMEOUT=600.0       # Seconds before suspended session expires
-MEDIA_FOLLOW_RESUME_DELAY=2.0            # Delay before resuming in new room
-```
-
-### Device Management
-
-Multiple device types (satellite, web_panel, web_tablet, web_browser, web_kiosk) connect via `/ws/device`. IP-based room detection for stationary devices provides automatic room context:
-```python
-room_context = await room_service.get_room_context_by_ip(ip_address)
-# Returns: {"room_name": "Kitchen", "room_id": 1, "device_id": "...", "auto_detected": True}
-```
-
-### Audio Output Routing
-
-Intelligent TTS routing to best available output device per room (priority-ordered, availability-checked). Supports three device types: Renfield devices, HA Media Players, and DLNA renderers. `done` message includes `tts_handled` flag. DLNA renderers are discovered via SSDP multicast through the DLNA MCP server (runs on host, not in Docker — requires LAN access for multicast). **Documentation:** See `OUTPUT_ROUTING.md`.
-
-### Authentication & Authorization (RPBAC)
-
-Optional (`AUTH_ENABLED=true`). JWT-based auth with role-permission system.
-
-**Permission Hierarchy:**
-```
-kb.all > kb.shared > kb.own > kb.none
-ha.full > ha.control > ha.read > ha.none
-cam.full > cam.view > cam.none
-mcp.* > mcp.<server>.* > mcp.<server>.<tool>
-```
-
-**MCP Permissions:** Dynamic permission strings for MCP tool access control. Hybrid system:
-- **Convention-based:** Server `weather` auto-requires `mcp.weather` (no YAML config needed)
-- **YAML granular:** `permissions` (server-level) and `tool_permissions` (per-tool) in `mcp_servers.yaml`
-- **Wildcards:** `mcp.*` (all MCP tools), `mcp.calendar.*` (all calendar tools)
-- **Backwards-compatible:** `AUTH_ENABLED=false` or `user_permissions=None` → all tools allowed
-
-```yaml
-# mcp_servers.yaml — optional permission fields
-servers:
-  - name: calendar
-    permissions: ["mcp.calendar.read", "mcp.calendar.manage"]
-    tool_permissions:
-      list_events: "mcp.calendar.read"
-      create_event: "mcp.calendar.manage"
-```
-
-**Permission resolution order:** (1) None → allow, (2) `mcp.*` → allow, (3) tool_permissions match, (4) server permissions match, (5) convention `mcp.<server>` match, (6) deny.
-
-**Default Roles:** Admin (`mcp.*`, full access), Familie (`mcp.*`, ha.full, kb.shared, cam.view), Gast (no MCP, ha.read, kb.none, cam.none)
-
-**User-ID Propagation:** `user_id` flows through the entire execution chain for per-user filtering:
-- `chat_handler.py` → extracts `user_id` from JWT auth
-- `satellite_handler.py` → extracts `user_id` from Speaker→User FK lookup
-- `ActionExecutor.execute(intent_data, user_permissions=..., user_id=...)` → injects `user_id` into MCP tool parameters
-- `AgentService.run(..., user_id=...)` → passes through to executor
-- `MCPManager.execute_tool(..., user_id=...)` → debug logging with user context
-
-MCP servers receive `user_id` in their tool parameters and can use it for per-user filtering (e.g. calendar visibility). When `user_id` is `None` (no auth / unauthenticated), `user_id` is not injected.
-
-**Calendar Visibility:** Per-user calendar filtering via `visibility`/`owner_id` fields in `config/calendar_accounts.yaml`. `visibility: shared` (default) = all users see it. `visibility: owner` + `owner_id: N` = only user N sees it. `user_id=None` (no auth / notification poller) = all calendars visible. Filtering happens in the calendar MCP server, not in Renfield backend. See `docs/ACCESS_CONTROL.md`.
-
-**Key files:** `models/permissions.py`, `services/auth_service.py`, `api/routes/auth.py`, `api/routes/roles.py`, `services/mcp_client.py`
-
-**Documentation:** See `ACCESS_CONTROL.md`.
-
-### Frontend Connection Architecture
-
-The frontend uses **two independent WebSocket connections**:
-
-| Connection | Endpoint | Purpose |
-|------------|----------|---------|
-| **Chat WS** | `/ws` | Send/receive chat messages, conversation persistence via `session_id` |
-| **Device WS** | `/ws/device` | Device registration, room assignment, capabilities |
-
-These are completely independent — chat works without device registration, but room context requires it.
-
-### WebSocket Protocol — Chat (`/ws`)
-
-**Client → Server:**
-```json
-{
-  "type": "text",
-  "content": "Schalte das Licht im Wohnzimmer ein",
-  "session_id": "session-1234567890-abc123def",
-  "use_rag": false,
-  "knowledge_base_id": null
-}
-```
-
-**Server → Client (streaming):**
-```json
-{"type": "action", "intent": {...}, "result": {...}}
-{"type": "stream", "content": "Ich habe..."}
-{"type": "done", "tts_handled": false}
-```
-
-When `session_id` is provided, history is loaded from DB (up to 10 messages) and each exchange is saved.
-
-For Device (`/ws/device`) and Satellite (`/ws/satellite`) protocol details, see the source code in `src/backend/main.py`.
-
-### Key Configuration
-
-All configuration via `.env`, loaded by `src/backend/utils/config.py` (Pydantic Settings). For the full list, see `docs/ENVIRONMENT_VARIABLES.md`.
-
-**Key non-obvious settings:**
-- `ADVERTISE_HOST` / `ADVERTISE_PORT` — Hostname for Zeroconf and TTS URL (required for HA media player output)
-- `RAG_HYBRID_ENABLED` — Enable Hybrid Search: Dense + BM25 via RRF (default: `true`)
-- `RAG_CONTEXT_WINDOW` — Adjacent chunks per direction for context expansion (default: `1`)
-- `MCP_ENABLED` — Master switch for MCP server integration (default: `false`)
-- Per-server toggles: `WEATHER_ENABLED`, `SEARCH_ENABLED`, `NEWS_ENABLED`, `JELLYFIN_ENABLED`, `RADIO_ENABLED`, `DLNA_MCP_ENABLED`, `N8N_MCP_ENABLED`, `HA_MCP_ENABLED`, `PAPERLESS_ENABLED`, `EMAIL_MCP_ENABLED`, `CALENDAR_ENABLED`
-- `MEMORY_CONTRADICTION_RESOLUTION` — LLM-based contradiction detection for memories (default: `false`, opt-in)
-- `NOTIFICATION_POLLER_ENABLED` — Generic MCP notification polling for proactive alerts (default: `false`, opt-in)
-- `PRESENCE_ENABLED` — BLE-based room-level presence detection (default: `false`, opt-in)
-- `PRESENCE_STALE_TIMEOUT` — Seconds before user marked absent (default: `120`)
-- `PRESENCE_HYSTERESIS_SCANS` — Consecutive scans before room change (default: `2`)
-- `PRESENCE_RSSI_THRESHOLD` — RSSI threshold in dBm; signals weaker than this are ignored for room assignment (default: `-80`)
-- `PRESENCE_HOUSEHOLD_ROLES` — Comma-separated role names considered household members for privacy TTS (default: `"Admin,Familie"`)
-- `PRESENCE_WEBHOOK_URL` — URL to POST presence events to (empty = disabled). Supports n8n webhook triggers (default: `""`)
-- `PRESENCE_WEBHOOK_SECRET` — Shared secret sent as X-Webhook-Secret header for webhook authentication (default: `""`)
-- `MEDIA_FOLLOW_ENABLED` — Media playback follows user between rooms (default: `false`, opt-in). Requires `PRESENCE_ENABLED=true`.
-- `MEDIA_FOLLOW_SUSPEND_TIMEOUT` — Seconds before suspended media session expires (default: `600.0`)
-- `MEDIA_FOLLOW_RESUME_DELAY` — Delay before resuming playback in new room (default: `2.0`)
-- `PAPERLESS_AUDIT_ENABLED` — Automated document metadata audit using local LLMs (default: `false`, opt-in). Requires `PAPERLESS_ENABLED=true`.
-- `KNOWLEDGE_GRAPH_ENABLED` — Entity-relation triples extracted from conversations via LLM (default: `false`, opt-in)
-- `METRICS_ENABLED` — Prometheus `/metrics` endpoint (default: `false`, opt-in)
-- `PLUGIN_MODULE` — Hook-based extension entry point (default: `""`, e.g. `"renfield_twin.hooks:register"`)
-
-## Common Development Patterns
-
-### Adding a New Integration
-
-All external integrations run via MCP servers. To add a new one:
-
-1. Deploy an MCP server for the service (HTTP/SSE or stdio transport)
-
-2. Add the server to `config/mcp_servers.yaml`:
-   ```yaml
-   servers:
-     - name: your_service
-       url: "${YOUR_SERVICE_MCP_URL:-http://localhost:9090/mcp}"
-       transport: streamable_http
-       enabled: "${YOUR_SERVICE_ENABLED:-true}"
-       refresh_interval: 300
-       example_intent: mcp.your_service.main_tool
-       prompt_tools:
-         - main_tool
-         - secondary_tool
-       examples:
-         de: ["Beispiel-Anfrage auf Deutsch"]
-         en: ["Example query in English"]
-   ```
-
-   **YAML fields:**
-   | Field | Required | Description |
-   |-------|----------|-------------|
-   | `name` | Yes | Server identifier, used in `mcp.<name>.<tool>` namespace |
-   | `transport` | Yes | `streamable_http`, `sse`, or `stdio` |
-   | `enabled` | Yes | Env-var toggle (e.g. `"${MY_ENABLED:-false}"`) |
-   | `prompt_tools` | No | Tool base names to include in LLM intent prompt. Omit = show all. All tools remain executable. |
-   | `example_intent` | No | Override intent name in prompt examples. Defaults to first tool. |
-   | `examples` | No | Bilingual example queries (`de`/`en`) for LLM prompt |
-   | `permissions` | No | Server-level permission strings (e.g. `["mcp.calendar.read", "mcp.calendar.manage"]`). User needs at least one. |
-   | `tool_permissions` | No | Per-tool permission mapping (e.g. `{list_events: "mcp.calendar.read"}`). Takes priority over server-level. |
-   | `notifications` | No | Proactive notification polling config: `{enabled: true, poll_interval: 900, tool: "get_pending_notifications"}`. Requires `NOTIFICATION_POLLER_ENABLED=true`. |
-
-3. Tools are auto-discovered as `mcp.your_service.<tool_name>` intents. `ActionExecutor` routes `mcp.*` intents to `MCPManager.execute_tool()` automatically — no code changes needed.
-
-### Extending via Hooks
-
-For extensions that need deeper integration than MCP (e.g. injecting LLM context, post-processing messages, adding routes):
-
-1. Create a Python package with a registration function:
-   ```python
-   # renfield_twin/hooks.py
-   from utils.hooks import register_hook
-
-   async def _on_post_message(user_msg, assistant_msg, user_id, session_id, **kw):
-       # Extract knowledge graph triples from the exchange
-       ...
-
-   async def _on_retrieve_context(query, user_id, lang, **kw):
-       # Return additional context from the knowledge graph
-       return "## Graph Context\n- ..."
-
-   def register():
-       register_hook("post_message", _on_post_message)
-       register_hook("retrieve_context", _on_retrieve_context)
-   ```
-
-2. Set the environment variable:
-   ```bash
-   PLUGIN_MODULE=renfield_twin.hooks:register
-   ```
-
-3. Hooks are called automatically at the defined insertion points. Errors in hooks are logged but never crash renfield.
-
-**Key rules:**
-- Hook functions must be `async`
-- `retrieve_context` hooks should return a `str` (or `None` to skip)
-- `post_message` runs as fire-and-forget — don't block on it
-- Use `register_tools` to add custom tools to the Agent Loop
-- Use `register_routes` to mount additional FastAPI routers
-- All hook events are whitelisted in `HOOK_EVENTS` — typos raise `ValueError`
-
-### Adding a New Frontend Page
-
-1. Create page component in `src/frontend/src/pages/YourPage.jsx`
-2. Add route in `src/frontend/src/App.jsx`
-3. Add navigation link in `src/frontend/src/components/Layout.jsx`
-
-### Dark Mode Styling
-
-All components must support light and dark mode using Tailwind `dark:` variants:
-```jsx
-className="bg-gray-50 dark:bg-gray-900"       // Page backgrounds
-className="bg-white dark:bg-gray-800"         // Cards, modals
-className="text-gray-900 dark:text-white"     // Primary text
-className="text-gray-600 dark:text-gray-300"  // Secondary text
-className="border-gray-200 dark:border-gray-700"  // Borders
-```
-
-**Component classes** (in `src/frontend/src/index.css`): `.card`, `.input`, `.btn-primary`, `.btn-secondary`
-
-**Theme Context** (`ThemeContext.jsx`): `useTheme()` → `theme`, `isDark`, `setTheme`, `toggleTheme`. Persisted in localStorage as `renfield_theme`. Values: `'light'`, `'dark'`, `'system'`.
-
-### Internationalization (i18n)
-
-All frontend text must use react-i18next. **Never hardcode user-facing strings.**
-
-```jsx
-import { useTranslation } from 'react-i18next';
-const { t } = useTranslation();
-// Usage: {t('myFeature.title')}, t('users.deleteConfirm', { name })
-```
-
-Add translations to both `src/frontend/src/i18n/locales/de.json` and `en.json`. See `docs/MULTILANGUAGE.md`.
-
-### Debugging Intent Recognition
-
-```bash
-curl -X POST "http://localhost:8000/debug/intent?message=Schalte das Licht ein"
-```
-
-### Refreshing Home Assistant Keywords
-
-```bash
-curl -X POST "http://localhost:8000/admin/refresh-keywords"
-```
-
-### Re-Embedding All Vectors
-
-After changing the embedding model (`OLLAMA_EMBED_MODEL`), all existing vectors must be recalculated:
-
-```bash
-curl -X POST "http://localhost:8000/admin/reembed"
-```
-
-This re-embeds RAG chunks, conversation memories, intent corrections, and notification suppressions in the background.
+For architecture questions, use the `architecture-guide` agent.
 
 ## Testing
 
-Tests are in `tests/` at project root. Backend: 1,300+ tests across all API routes and services.
+Tests in `tests/` at project root. Backend: 1,300+ tests.
 
-```bash
-make test                # All tests
-make test-backend        # Backend only
-make test-frontend-react # React component tests (Vitest)
-make test-coverage       # With coverage report
-```
+**Markers:** `@pytest.mark.unit`, `@pytest.mark.database`, `@pytest.mark.integration`, `@pytest.mark.e2e`, `@pytest.mark.backend`, `@pytest.mark.frontend`, `@pytest.mark.satellite`
 
-**Test markers:** `@pytest.mark.unit`, `@pytest.mark.database`, `@pytest.mark.integration`, `@pytest.mark.e2e`, `@pytest.mark.backend`, `@pytest.mark.frontend`, `@pytest.mark.satellite`
-
-**React tests** use Vitest + RTL + MSW in `tests/frontend/react/` (separate `package.json` for security isolation).
+**React tests:** Vitest + RTL + MSW in `tests/frontend/react/` (separate `package.json`).
 
 ## CI/CD Pipeline
 
@@ -669,72 +92,16 @@ make test-coverage       # With coverage report
 make release    # Create and push version tag
 ```
 
-## Deployment
+## Skills & Agents
 
-- Fully offline once models are downloaded. First startup: 5-10 min for model download.
-- GPU: Install NVIDIA Container Toolkit, use `docker-compose.prod.yml`
-- `Dockerfile.gpu` includes Node.js 20 for MCP stdio servers (`npx`)
-
-### Production Secrets
-
-Production uses Docker Compose file-based secrets (`/run/secrets/`) instead of `.env` for sensitive values. Secret files are in `/opt/renfield/secrets/` on the production server.
-
-**Key rule:** Sensitive values (passwords, tokens, API keys) must NEVER appear in `.env` on production.
-
-**How secrets reach MCP servers:** Pydantic `secrets_dir="/run/secrets"` loads into Settings. `mcp_client.py` additionally injects `/run/secrets/*` into `os.environ` for YAML `${VAR}` substitution and stdio subprocesses.
-
-```bash
-# Deploy workflow
-rsync -av --exclude='.env' --exclude='secrets/' ./ renfield.local:/opt/renfield/
-ssh renfield.local 'cd /opt/renfield && docker compose -f docker-compose.prod.yml up -d --build'
-```
-
-**Documentation:** See `docs/SECRETS_MANAGEMENT.md`.
-
-## Common Issues
-
-### Intent Recognition Problems
-
-1. Check if Home Assistant keywords are loaded:
-   ```bash
-   curl http://localhost:8000/admin/refresh-keywords
-   ```
-
-2. Test intent extraction directly:
-   ```bash
-   curl -X POST "http://localhost:8000/debug/intent?message=YOUR_MESSAGE"
-   ```
-
-3. Verify Ollama model is loaded:
-   ```bash
-   docker exec -it renfield-ollama ollama list
-   ```
-
-### WebSocket Connection Failures
-
-- Check CORS settings in `src/backend/main.py`
-- Verify frontend `VITE_WS_URL` matches backend WebSocket endpoint
-- Check backend logs: `docker compose logs -f backend`
-
-### Voice Input Not Working
-
-- Whisper model loads lazily on first use (check logs)
-- Ensure audio file format is supported (WAV, MP3, OGG)
-- Check backend logs for transcription errors
-
-### Home Assistant Integration
-
-- Verify token is valid (test in HA Developer Tools → Services)
-- Check network connectivity between containers
-- Ensure HA URL is accessible from Docker network
-- Use `http://homeassistant.local:8123` or IP address, not `localhost`
-
-### Satellite Issues
-
-- **Satellite not finding backend**: Check Zeroconf advertisement with `docker compose logs backend | grep zeroconf`
-- **ReSpeaker not detected**: Check for GPIO4 conflict with `w1-gpio` overlay (disable it in `/boot/firmware/config.txt`)
-- **Wrong microphone**: Ensure `.asoundrc` is configured for ReSpeaker — copy from `src/satellite/config/asoundrc`
-- **Garbled transcription**: PyAudio must be installed (not soundcard) for ALSA support
-- **GPIO errors**: Add user to gpio group with `sudo usermod -aG gpio $USER`
-- **lgpio build fails**: Install `swig` and `liblgpio-dev` system packages
-- **openwakeword on Python 3.13+**: Install with `--no-deps` (tflite-runtime has no Python 3.13 wheels)
+| Skill/Agent | Trigger | Purpose |
+|-------------|---------|---------|
+| `/git-workflow` | commit, push, PR, branch | Commit format, issue numbers, PR workflow |
+| `/add-integration` | neue Integration, MCP server | Add MCP server to `mcp_servers.yaml` |
+| `/add-hook` | Hook, Plugin, extend | Async hook system for plugins |
+| `/add-frontend-page` | neue Seite, add page | Page creation, routing, navigation |
+| `/deploy-production` | deploy, production, rsync | Docker deploy, secrets, satellites |
+| `/debug-renfield` | debug, Fehler, broken | Troubleshooting all subsystems |
+| `architecture-guide` | Architektur, how does X work | Read-only architecture Q&A (agent) |
+| `satellite-deploy` | satellite deploy, provision Pi | Satellite deployment with safety rules (agent) |
+| `test-runner` | run tests, pytest, vitest | Test execution and failure diagnosis (agent) |
