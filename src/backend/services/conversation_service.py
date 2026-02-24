@@ -69,10 +69,19 @@ class ConversationService:
             messages = result.scalars().all()
 
             # Konvertiere zu Chat-Format (älteste zuerst)
-            context = [
-                {"role": msg.role, "content": msg.content}
-                for msg in reversed(messages)
-            ]
+            # Reconstruct action summary prefix for LLM context (kept out of DB content for clean UI)
+            context = []
+            for msg in reversed(messages):
+                content = msg.content
+                if (msg.role == "assistant"
+                        and msg.message_metadata
+                        and msg.message_metadata.get("action_summary")):
+                    summary = msg.message_metadata["action_summary"]
+                    content = (
+                        f"[Aktionsergebnis — Verwende diese Daten für "
+                        f"Folgeanfragen (IDs, Titel, etc.):\n{summary}]\n\n{content}"
+                    )
+                context.append({"role": msg.role, "content": content})
 
             logger.info(f"Geladen: {len(context)} Nachrichten für Session {session_id}")
             return context

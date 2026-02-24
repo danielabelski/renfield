@@ -884,6 +884,7 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
             # Update conversation history with this exchange (in-memory)
             # Enrich assistant message with action result context for follow-up resolution.
             # Action summary goes FIRST so it survives truncation in conv_context (500-2000 chars).
+            action_summary = None
             history_content = full_response
             if action_result and action_result.get("success") and action_result.get("data"):
                 # Use agent's tool name if available (from _build_agent_action_result)
@@ -912,13 +913,17 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                             msg_session_id, "user", content, db_session,
                             metadata=user_metadata if user_metadata else None
                         )
-                        # Save assistant response (with action context for follow-ups)
+                        # Save assistant response (clean content for UI display)
+                        # action_summary stored in metadata for LLM context reconstruction
+                        assistant_metadata = {
+                            "intent": intent.get("intent") if intent else None,
+                            "action_success": action_result.get("success") if action_result else None,
+                        }
+                        if action_summary:
+                            assistant_metadata["action_summary"] = action_summary
                         await ollama.save_message(
-                            msg_session_id, "assistant", history_content, db_session,
-                            metadata={
-                                "intent": intent.get("intent") if intent else None,
-                                "action_success": action_result.get("success") if action_result else None
-                            }
+                            msg_session_id, "assistant", full_response, db_session,
+                            metadata=assistant_metadata
                         )
                         logger.debug(f"💾 Messages saved to DB: session_id={msg_session_id}")
                 except Exception as e:
