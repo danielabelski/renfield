@@ -9,7 +9,9 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import Task
+from models.database import Task, User
+from models.permissions import Permission
+from services.auth_service import require_permission
 from services.database import get_db
 
 router = APIRouter()
@@ -29,7 +31,8 @@ class TaskUpdate(BaseModel):
 @router.post("/create")
 async def create_task(
     task: TaskCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.TASKS_MANAGE)),
 ):
     """Neue Aufgabe erstellen"""
     try:
@@ -61,7 +64,8 @@ async def list_tasks(
     status: str | None = None,
     task_type: str | None = None,
     limit: int = 50,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.TASKS_VIEW)),
 ):
     """Aufgaben auflisten"""
     try:
@@ -97,7 +101,8 @@ async def list_tasks(
 @router.get("/{task_id}")
 async def get_task(
     task_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.TASKS_VIEW)),
 ):
     """Einzelne Aufgabe abrufen"""
     try:
@@ -131,7 +136,8 @@ async def get_task(
 async def update_task(
     task_id: int,
     update: TaskUpdate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.TASKS_MANAGE)),
 ):
     """Task aktualisieren"""
     try:
@@ -166,7 +172,8 @@ async def update_task(
 @router.delete("/{task_id}")
 async def delete_task(
     task_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.TASKS_MANAGE)),
 ):
     """Task löschen"""
     try:

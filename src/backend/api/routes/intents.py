@@ -4,9 +4,12 @@ Intent Registry API Routes
 Provides endpoints for viewing available intents and integration status.
 Admin-only endpoints for system monitoring and debugging.
 """
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
+from models.database import User
+from models.permissions import Permission
+from services.auth_service import require_permission
 from services.intent_registry import CORE_INTEGRATIONS, intent_registry
 from utils.config import settings
 
@@ -71,7 +74,8 @@ class IntentPromptResponse(BaseModel):
 
 @router.get("/status", response_model=IntentRegistryStatusResponse)
 async def get_intent_status(
-    lang: str = Query("de", description="Language for descriptions (de/en)")
+    lang: str = Query("de", description="Language for descriptions (de/en)"),
+    _user: User = Depends(require_permission(Permission.ADMIN)),
 ):
     """
     Get full status of the intent registry.
@@ -144,7 +148,8 @@ async def get_intent_status(
 
 @router.get("/prompt", response_model=IntentPromptResponse)
 async def get_intent_prompt(
-    lang: str = Query("de", description="Language for prompt (de/en)")
+    lang: str = Query("de", description="Language for prompt (de/en)"),
+    _user: User = Depends(require_permission(Permission.ADMIN)),
 ):
     """
     Get the generated intent prompt for debugging.
@@ -162,7 +167,7 @@ async def get_intent_prompt(
 
 
 @router.get("/check/{intent_name}")
-async def check_intent_available(intent_name: str):
+async def check_intent_available(intent_name: str, _user: User = Depends(require_permission(Permission.ADMIN))):
     """
     Check if a specific intent is available.
 
@@ -192,7 +197,7 @@ async def check_intent_available(intent_name: str):
 
 
 @router.get("/integrations/summary")
-async def get_integrations_summary():
+async def get_integrations_summary(_user: User = Depends(require_permission(Permission.ADMIN))):
     """
     Get a quick summary of integration status.
 

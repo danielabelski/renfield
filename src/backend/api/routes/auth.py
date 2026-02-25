@@ -28,6 +28,7 @@ from services.auth_service import (
     get_current_user,
     get_role_by_name,
     get_user_by_id,
+    oauth2_scheme,
     require_auth,
     validate_password,
 )
@@ -330,6 +331,34 @@ async def change_password(
     logger.info(f"Password changed for user: {user.username}")
 
     return {"message": "Password changed successfully"}
+
+
+@router.post("/logout")
+async def logout(
+    user: User = Depends(require_auth),
+    token: str = Depends(oauth2_scheme),
+):
+    """
+    Logout the current user by revoking their access token.
+
+    The token's JTI is added to a Redis blacklist with TTL matching
+    the token's remaining lifetime.
+    """
+    from services.token_blacklist import token_blacklist
+
+    if token:
+        payload = decode_token(token)
+        if payload:
+            jti = payload.get("jti")
+            exp = payload.get("exp")
+            if jti and exp:
+                import time
+                ttl = int(exp - time.time())
+                if ttl > 0:
+                    await token_blacklist.add(jti, ttl)
+
+    logger.info(f"User logged out: {user.username}")
+    return {"message": "Successfully logged out"}
 
 
 @router.get("/status", response_model=AuthStatusResponse)

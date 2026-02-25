@@ -10,6 +10,9 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from integrations.homeassistant import HomeAssistantClient
+from models.database import User
+from models.permissions import Permission
+from services.auth_service import require_permission
 from services.database import get_db
 from services.room_service import RoomService
 
@@ -42,7 +45,8 @@ router = APIRouter()
 @router.post("", response_model=RoomResponse)
 async def create_room(
     room: RoomCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.ROOMS_MANAGE)),
 ):
     """Create a new room"""
     service = RoomService(db)
@@ -66,7 +70,7 @@ async def create_room(
 
 
 @router.get("", response_model=list[RoomResponse])
-async def list_rooms(db: AsyncSession = Depends(get_db)):
+async def list_rooms(db: AsyncSession = Depends(get_db), _user: User = Depends(require_permission(Permission.ROOMS_READ))):
     """List all rooms with their satellites"""
     service = RoomService(db)
     rooms = await service.get_all_rooms()
@@ -76,7 +80,8 @@ async def list_rooms(db: AsyncSession = Depends(get_db)):
 @router.get("/{room_id}", response_model=RoomResponse)
 async def get_room(
     room_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.ROOMS_READ)),
 ):
     """Get a specific room with its satellites"""
     service = RoomService(db)
@@ -92,7 +97,8 @@ async def get_room(
 async def update_room(
     room_id: int,
     update: RoomUpdate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.ROOMS_MANAGE)),
 ):
     """Update room details"""
     service = RoomService(db)
@@ -123,6 +129,7 @@ async def set_room_owner(
     room_id: int,
     owner_id: int | None = None,
     db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.ROOMS_MANAGE)),
 ):
     """Set or clear the owner of a room (for Media Follow Me conflict resolution)."""
     from models.database import Room, User
@@ -144,7 +151,8 @@ async def set_room_owner(
 @router.delete("/{room_id}")
 async def delete_room(
     room_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.ROOMS_MANAGE)),
 ):
     """Delete a room and all satellite assignments"""
     service = RoomService(db)
@@ -165,7 +173,7 @@ async def delete_room(
 # --- Home Assistant Sync Endpoints ---
 
 @router.get("/ha/areas", response_model=list[HAAreaResponse])
-async def list_ha_areas(db: AsyncSession = Depends(get_db)):
+async def list_ha_areas(db: AsyncSession = Depends(get_db), _user: User = Depends(require_permission(Permission.ROOMS_READ))):
     """
     List all Home Assistant areas with their link status.
 
@@ -207,7 +215,8 @@ async def list_ha_areas(db: AsyncSession = Depends(get_db)):
 @router.post("/ha/import", response_model=HAImportResponse)
 async def import_ha_areas(
     request: HAImportRequest,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.ROOMS_MANAGE)),
 ):
     """
     Import areas from Home Assistant into Renfield.
@@ -238,7 +247,7 @@ async def import_ha_areas(
 
 
 @router.post("/ha/export", response_model=HAExportResponse)
-async def export_rooms_to_ha(db: AsyncSession = Depends(get_db)):
+async def export_rooms_to_ha(db: AsyncSession = Depends(get_db), _user: User = Depends(require_permission(Permission.ROOMS_MANAGE))):
     """
     Export Renfield rooms to Home Assistant as areas.
 
@@ -305,7 +314,8 @@ async def export_rooms_to_ha(db: AsyncSession = Depends(get_db)):
 @router.post("/ha/sync", response_model=SyncResponse)
 async def sync_with_ha(
     conflict_resolution: str = "link",
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.ROOMS_MANAGE)),
 ):
     """
     Bidirectional sync with Home Assistant.
@@ -369,7 +379,8 @@ async def sync_with_ha(
 async def link_room_to_ha_area(
     room_id: int,
     ha_area_id: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.ROOMS_MANAGE)),
 ):
     """Link a room to a specific Home Assistant area"""
     service = RoomService(db)
@@ -393,7 +404,8 @@ async def link_room_to_ha_area(
 @router.delete("/{room_id}/link", response_model=RoomResponse)
 async def unlink_room_from_ha(
     room_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.ROOMS_MANAGE)),
 ):
     """Remove Home Assistant area link from a room"""
     service = RoomService(db)
@@ -411,7 +423,8 @@ async def unlink_room_from_ha(
 @router.get("/{room_id}/satellites")
 async def get_room_satellites(
     room_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.ROOMS_READ)),
 ):
     """Get all satellites assigned to a room"""
     service = RoomService(db)
@@ -438,7 +451,8 @@ async def get_room_satellites(
 async def assign_satellite_to_room(
     room_id: int,
     request: SatelliteAssignRequest,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.ROOMS_MANAGE)),
 ):
     """Manually assign a satellite to a room"""
     service = RoomService(db)
@@ -459,7 +473,8 @@ async def assign_satellite_to_room(
 async def unassign_satellite(
     room_id: int,
     satellite_id: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.ROOMS_MANAGE)),
 ):
     """Remove a satellite from a room"""
     service = RoomService(db)
@@ -484,7 +499,7 @@ async def unassign_satellite(
 # --- Device Endpoints ---
 
 @router.get("/devices/connected", response_model=list[ConnectedDeviceResponse])
-async def get_connected_devices():
+async def get_connected_devices(_user: User = Depends(require_permission(Permission.ROOMS_READ))):
     """
     Get all currently connected devices (via WebSocket).
 
@@ -499,7 +514,7 @@ async def get_connected_devices():
 
 
 @router.get("/devices/connected/{room_id}", response_model=list[ConnectedDeviceResponse])
-async def get_connected_devices_in_room(room_id: int):
+async def get_connected_devices_in_room(room_id: int, _user: User = Depends(require_permission(Permission.ROOMS_READ))):
     """Get all connected devices in a specific room"""
     from services.device_manager import get_device_manager
 
@@ -527,7 +542,8 @@ async def get_connected_devices_in_room(room_id: int):
 @router.get("/{room_id}/devices", response_model=list[DeviceResponse])
 async def get_room_devices(
     room_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.ROOMS_READ)),
 ):
     """
     Get all devices registered in a room (from database).
@@ -566,7 +582,8 @@ async def get_room_devices(
 async def register_device(
     room_id: int,
     request: DeviceRegisterRequest,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.ROOMS_MANAGE)),
 ):
     """
     Manually register a device to a room.
@@ -616,7 +633,8 @@ async def register_device(
 @router.get("/devices/{device_id}", response_model=DeviceResponse)
 async def get_device(
     device_id: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.ROOMS_READ)),
 ):
     """Get a specific device by ID"""
     service = RoomService(db)
@@ -644,7 +662,8 @@ async def get_device(
 @router.delete("/devices/{device_id}")
 async def delete_device(
     device_id: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.ROOMS_MANAGE)),
 ):
     """Delete a device from the system"""
     service = RoomService(db)
@@ -662,7 +681,8 @@ async def delete_device(
 async def move_device_to_room(
     device_id: str,
     room_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.ROOMS_MANAGE)),
 ):
     """Move a device to a different room"""
     service = RoomService(db)
@@ -709,7 +729,8 @@ def _output_device_to_response(device) -> OutputDeviceResponse:
 @router.get("/{room_id}/output-devices", response_model=list[OutputDeviceResponse])
 async def get_room_output_devices(
     room_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.ROOMS_READ)),
 ):
     """Get all output devices configured for a room"""
     from services.output_routing_service import OutputRoutingService
@@ -729,7 +750,8 @@ async def get_room_output_devices(
 async def add_output_device(
     room_id: int,
     request: OutputDeviceCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.ROOMS_MANAGE)),
 ):
     """Add an output device to a room"""
     from services.output_routing_service import OutputRoutingService
@@ -784,7 +806,8 @@ async def add_output_device(
 async def update_output_device(
     device_id: int,
     request: OutputDeviceUpdate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.ROOMS_MANAGE)),
 ):
     """Update an output device"""
     from services.output_routing_service import OutputRoutingService
@@ -809,7 +832,8 @@ async def update_output_device(
 @router.delete("/output-devices/{device_id}")
 async def delete_output_device(
     device_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.ROOMS_MANAGE)),
 ):
     """Delete an output device"""
     from services.output_routing_service import OutputRoutingService
@@ -828,7 +852,8 @@ async def reorder_output_devices(
     room_id: int,
     request: OutputDeviceReorderRequest,
     output_type: str = "audio",
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.ROOMS_MANAGE)),
 ):
     """
     Reorder output devices by setting new priorities.
@@ -862,7 +887,8 @@ async def reorder_output_devices(
 @router.get("/{room_id}/available-outputs", response_model=AvailableOutputResponse)
 async def get_available_outputs(
     room_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.ROOMS_READ)),
 ):
     """
     Get all available output devices for a room.

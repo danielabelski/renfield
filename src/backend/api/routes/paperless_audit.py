@@ -7,8 +7,12 @@ Paperless MCP server is configured. See lifecycle.py.
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
+
+from models.database import User
+from models.permissions import Permission
+from services.auth_service import require_permission
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +56,7 @@ def _get_service(request: Request):
 # --- Endpoints ---
 
 @router.post("/start")
-async def start_audit(body: AuditStartRequest, request: Request):
+async def start_audit(body: AuditStartRequest, request: Request, _user: User = Depends(require_permission(Permission.ADMIN))):
     """Start a new audit run."""
     service = _get_service(request)
 
@@ -71,14 +75,14 @@ async def start_audit(body: AuditStartRequest, request: Request):
 
 
 @router.get("/status")
-async def get_status(request: Request):
+async def get_status(request: Request, _user: User = Depends(require_permission(Permission.ADMIN))):
     """Get current audit status."""
     service = _get_service(request)
     return service.get_status()
 
 
 @router.post("/stop")
-async def stop_audit(request: Request):
+async def stop_audit(request: Request, _user: User = Depends(require_permission(Permission.ADMIN))):
     """Cancel running audit."""
     service = _get_service(request)
     await service.stop()
@@ -100,6 +104,7 @@ async def get_results(
     sort_by: str | None = None,
     sort_order: str = "desc",
     search: str | None = None,
+    _user: User = Depends(require_permission(Permission.ADMIN)),
 ):
     """Get paginated audit results with optional filters, sorting, and search."""
     service = _get_service(request)
@@ -120,7 +125,7 @@ async def get_results(
 
 
 @router.get("/results/{result_id}")
-async def get_result(result_id: int, request: Request):
+async def get_result(result_id: int, request: Request, _user: User = Depends(require_permission(Permission.ADMIN))):
     """Get a single audit result."""
     service = _get_service(request)
     result = await service.get_result_by_id(result_id)
@@ -130,35 +135,35 @@ async def get_result(result_id: int, request: Request):
 
 
 @router.post("/apply")
-async def apply_results(body: ApplyRequest, request: Request):
+async def apply_results(body: ApplyRequest, request: Request, _user: User = Depends(require_permission(Permission.ADMIN))):
     """Apply fixes for selected results."""
     service = _get_service(request)
     return await service.apply_results(body.result_ids)
 
 
 @router.post("/skip")
-async def skip_results(body: SkipRequest, request: Request):
+async def skip_results(body: SkipRequest, request: Request, _user: User = Depends(require_permission(Permission.ADMIN))):
     """Skip selected results."""
     service = _get_service(request)
     return await service.skip_results(body.result_ids)
 
 
 @router.get("/stats")
-async def get_stats(request: Request):
+async def get_stats(request: Request, _user: User = Depends(require_permission(Permission.ADMIN))):
     """Get aggregated audit statistics."""
     service = _get_service(request)
     return await service.get_stats()
 
 
 @router.post("/re-ocr")
-async def trigger_reocr(body: ReOcrRequest, request: Request):
+async def trigger_reocr(body: ReOcrRequest, request: Request, _user: User = Depends(require_permission(Permission.ADMIN))):
     """Trigger re-OCR for selected results."""
     service = _get_service(request)
     return await service.reprocess_documents(body.result_ids)
 
 
 @router.post("/detect-duplicates")
-async def detect_duplicates(request: Request):
+async def detect_duplicates(request: Request, _user: User = Depends(require_permission(Permission.ADMIN))):
     """Run duplicate detection post-audit pass."""
     service = _get_service(request)
 
@@ -169,7 +174,7 @@ async def detect_duplicates(request: Request):
 
 
 @router.get("/duplicate-groups")
-async def get_duplicate_groups(request: Request):
+async def get_duplicate_groups(request: Request, _user: User = Depends(require_permission(Permission.ADMIN))):
     """Get all duplicate groups with their documents."""
     service = _get_service(request)
     return await service.get_duplicate_groups()
@@ -179,6 +184,7 @@ async def get_duplicate_groups(request: Request):
 async def correspondent_normalization(
     request: Request,
     threshold: float = Query(0.82, ge=0.5, le=1.0),
+    _user: User = Depends(require_permission(Permission.ADMIN)),
 ):
     """Scan for similar correspondent names that may be duplicates."""
     service = _get_service(request)
