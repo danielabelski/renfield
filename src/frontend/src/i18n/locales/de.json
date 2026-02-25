@@ -474,7 +474,16 @@
     "firstName": "Vorname",
     "lastName": "Nachname",
     "firstNamePlaceholder": "z.B. Max",
-    "lastNamePlaceholder": "z.B. Mustermann"
+    "lastNamePlaceholder": "z.B. Mustermann",
+    "personalityStyle": "Kommunikationsstil",
+    "personalityPrompt": "Persoenlichkeits-Feintuning",
+    "personalityPromptPlaceholder": "z.B. Verwende Emojis, antworte immer mit einem Witz...",
+    "styles": {
+      "freundlich": "Freundlich",
+      "direkt": "Direkt",
+      "formell": "Formell",
+      "casual": "Casual"
+    }
   },
   "roles": {
     "title": "Rollenverwaltung",

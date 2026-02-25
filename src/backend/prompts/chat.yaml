@@ -62,6 +62,17 @@ de:
 
   document_separator: "--- DOKUMENT: {filename} ({file_size}) ---\n{document_text}"
 
+  personality_context: |
+    KOMMUNIKATIONSSTIL:
+    {personality_instructions}
+    Halte dich an diesen Stil in allen Antworten.
+
+  personality_styles:
+    freundlich: "Antworte warmherzig, hilfsbereit und ausfuehrlich. Zeige Empathie und Interesse."
+    direkt: "Antworte kurz, praezise und ohne Floskeln. Komm direkt zum Punkt."
+    formell: "Antworte hoeflich und professionell. Verwende Siezen."
+    casual: "Antworte locker und ungezwungen, wie unter Freunden."
+
   error_fallback: "Entschuldigung, es gab einen Fehler: {error}"
   error_service_unavailable: "Der Dienst ist vorübergehend nicht verfügbar. Bitte versuche es später erneut."
 
@@ -124,6 +135,17 @@ en:
     IMPORTANT: The user has uploaded these documents. Answer questions based on the document contents. Cite relevant passages and name the respective document.
 
   document_separator: "--- DOCUMENT: {filename} ({file_size}) ---\n{document_text}"
+
+  personality_context: |
+    COMMUNICATION STYLE:
+    {personality_instructions}
+    Maintain this style in all responses.
+
+  personality_styles:
+    freundlich: "Respond warmly, helpfully and in detail. Show empathy and interest."
+    direkt: "Respond briefly, precisely and without filler. Get straight to the point."
+    formell: "Respond politely and professionally. Use formal language."
+    casual: "Respond casually and informally, like among friends."
 
   error_fallback: "Sorry, there was an error: {error}"
   error_service_unavailable: "The service is temporarily unavailable. Please try again later."

@@ -641,6 +641,8 @@ class User(Base):
     # User preferences
     preferred_language = Column(String(10), default="de", nullable=False)
     media_follow_enabled = Column(Boolean, default=True, nullable=False, server_default="true")
+    personality_style = Column(String(20), default="freundlich", nullable=False, server_default="freundlich")
+    personality_prompt = Column(Text, nullable=True)  # Free-text personality fine-tuning
 
     # Optional link to Speaker for voice authentication
     speaker_id = Column(Integer, ForeignKey("speakers.id"), nullable=True, unique=True)

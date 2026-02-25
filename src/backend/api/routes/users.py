@@ -52,6 +52,8 @@ class UserResponse(BaseModel):
     role_name: str
     permissions: list[str]
     is_active: bool
+    personality_style: str = "freundlich"
+    personality_prompt: str | None = None
     speaker_id: int | None
     speaker_name: str | None
     created_at: datetime
@@ -79,6 +81,8 @@ class CreateUserRequest(BaseModel):
     last_name: str | None = Field(None, max_length=100)
     role_id: int
     is_active: bool = True
+    personality_style: str = Field("freundlich", max_length=20)
+    personality_prompt: str | None = None
 
 
 class UpdateUserRequest(BaseModel):
@@ -89,6 +93,8 @@ class UpdateUserRequest(BaseModel):
     last_name: str | None = None
     role_id: int | None = None
     is_active: bool | None = None
+    personality_style: str | None = Field(None, max_length=20)
+    personality_prompt: str | None = None
 
 
 class ResetPasswordRequest(BaseModel):
@@ -159,6 +165,8 @@ async def list_users(
                 role_name=user.role.name if user.role else "Unknown",
                 permissions=user.get_permissions(),
                 is_active=user.is_active,
+                personality_style=user.personality_style,
+                personality_prompt=user.personality_prompt,
                 speaker_id=user.speaker_id,
                 speaker_name=user.speaker.name if user.speaker else None,
                 created_at=user.created_at,
@@ -207,6 +215,8 @@ async def get_user(
         role_name=user.role.name if user.role else "Unknown",
         permissions=user.get_permissions(),
         is_active=user.is_active,
+        personality_style=user.personality_style,
+        personality_prompt=user.personality_prompt,
         speaker_id=user.speaker_id,
         speaker_name=user.speaker.name if user.speaker else None,
         created_at=user.created_at,
@@ -267,7 +277,9 @@ async def create_user(
         email=request.email,
         password_hash=get_password_hash(request.password),
         role_id=request.role_id,
-        is_active=request.is_active
+        is_active=request.is_active,
+        personality_style=request.personality_style,
+        personality_prompt=request.personality_prompt,
     )
 
     db.add(user)
@@ -286,6 +298,8 @@ async def create_user(
         role_name=role.name,
         permissions=user.get_permissions(),
         is_active=user.is_active,
+        personality_style=user.personality_style,
+        personality_prompt=user.personality_prompt,
         speaker_id=user.speaker_id,
         speaker_name=None,
         created_at=user.created_at,
@@ -366,6 +380,12 @@ async def update_user(
             )
         user.is_active = request.is_active
 
+    # Update personality fields
+    if request.personality_style is not None:
+        user.personality_style = request.personality_style
+    if request.personality_prompt is not None:
+        user.personality_prompt = request.personality_prompt or None
+
     await db.commit()
     await db.refresh(user, ["role", "speaker"])
 
@@ -381,6 +401,8 @@ async def update_user(
         role_name=user.role.name if user.role else "Unknown",
         permissions=user.get_permissions(),
         is_active=user.is_active,
+        personality_style=user.personality_style,
+        personality_prompt=user.personality_prompt,
         speaker_id=user.speaker_id,
         speaker_name=user.speaker.name if user.speaker else None,
         created_at=user.created_at,
@@ -528,6 +550,8 @@ async def link_speaker(
         role_name=user.role.name if user.role else "Unknown",
         permissions=user.get_permissions(),
         is_active=user.is_active,
+        personality_style=user.personality_style,
+        personality_prompt=user.personality_prompt,
         speaker_id=user.speaker_id,
         speaker_name=speaker.name,
         created_at=user.created_at,
@@ -581,6 +605,8 @@ async def unlink_speaker(
         role_name=user.role.name if user.role else "Unknown",
         permissions=user.get_permissions(),
         is_active=user.is_active,
+        personality_style=user.personality_style,
+        personality_prompt=user.personality_prompt,
         speaker_id=None,
         speaker_name=None,
         created_at=user.created_at,

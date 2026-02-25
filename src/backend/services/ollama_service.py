@@ -37,6 +37,33 @@ def _sanitize_user_input(text: str) -> str:
     return text.strip()
 
 
+_VALID_PERSONALITY_STYLES = {"freundlich", "direkt", "formell", "casual"}
+
+
+def _build_personality_context(personality_style: str, personality_prompt: str | None, lang: str) -> str:
+    """Build the personality context section for injection into system/agent prompts."""
+    if personality_style not in _VALID_PERSONALITY_STYLES:
+        return ""
+
+    # Access the raw YAML dict directly (prompt_manager.get returns str for dicts)
+    chat_data = prompt_manager._cache.get("chat", {})
+    lang_data = chat_data.get(lang, {})
+    styles_dict = lang_data.get("personality_styles", {})
+
+    instructions = styles_dict.get(personality_style, "") if isinstance(styles_dict, dict) else ""
+
+    if personality_prompt:
+        instructions += f"\n{personality_prompt}"
+
+    if not instructions:
+        return ""
+
+    return prompt_manager.get(
+        "chat", "personality_context", lang=lang,
+        personality_instructions=instructions,
+    )
+
+
 class OllamaService:
     """Service für Ollama LLM Interaktion mit Mehrsprachigkeit."""
 
@@ -54,10 +81,23 @@ class OllamaService:
         # Default language from settings
         self.default_lang = settings.default_language
 
-    def get_system_prompt(self, lang: str | None = None, memory_context: str | None = None) -> str:
-        """Get system prompt for the specified language, optionally with memory context."""
+    def get_system_prompt(
+        self,
+        lang: str | None = None,
+        memory_context: str | None = None,
+        personality_style: str | None = None,
+        personality_prompt: str | None = None,
+    ) -> str:
+        """Get system prompt for the specified language, optionally with memory and personality context."""
         lang = lang or self.default_lang
         base = prompt_manager.get("chat", "system_prompt", lang=lang, default=self._default_system_prompt(lang))
+
+        # Personality injection
+        if personality_style:
+            personality_section = _build_personality_context(personality_style, personality_prompt, lang)
+            if personality_section:
+                base += f"\n\n{personality_section}"
+
         if memory_context:
             base += f"\n\n{memory_context}"
         return base
@@ -153,7 +193,16 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             logger.error(f"Chat Fehler: {e}")
             return prompt_manager.get("chat", "error_fallback", lang=lang, default=f"Entschuldigung, es gab einen Fehler: {e!s}", error=str(e))
 
-    async def chat_stream(self, message: str, history: list[dict] = None, lang: str | None = None, memory_context: str | None = None, document_context: str | None = None) -> AsyncGenerator[str, None]:
+    async def chat_stream(
+        self,
+        message: str,
+        history: list[dict] = None,
+        lang: str | None = None,
+        memory_context: str | None = None,
+        document_context: str | None = None,
+        personality_style: str | None = None,
+        personality_prompt: str | None = None,
+    ) -> AsyncGenerator[str, None]:
         """
         Streaming Chat with optional conversation history.
 
@@ -163,6 +212,8 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             lang: Sprache für die Antwort (de/en). None = default_lang
             memory_context: Optional formatted memory section for the system prompt
             document_context: Optional formatted document section for the system prompt
+            personality_style: Optional personality style (freundlich/direkt/formell/casual)
+            personality_prompt: Optional free-text personality fine-tuning
         """
         lang = lang or self.default_lang
 
@@ -174,7 +225,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
 
         try:
             message = _sanitize_user_input(message)
-            system_prompt = self.get_system_prompt(lang, memory_context=memory_context)
+            system_prompt = self.get_system_prompt(lang, memory_context=memory_context, personality_style=personality_style, personality_prompt=personality_prompt)
             if document_context:
                 system_prompt += f"\n\n{document_context}"
             messages = [{"role": "system", "content": system_prompt}]
@@ -945,6 +996,8 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         lang: str | None = None,
         memory_context: str | None = None,
         document_context: str | None = None,
+        personality_style: str | None = None,
+        personality_prompt: str | None = None,
     ) -> AsyncGenerator[str, None]:
         """
         Streaming Chat mit optionalem RAG-Kontext.
@@ -958,6 +1011,8 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             lang: Sprache für die Antwort (de/en). None = default_lang
             memory_context: Optional formatted memory section for the system prompt
             document_context: Optional formatted document section for the system prompt
+            personality_style: Optional personality style (freundlich/direkt/formell/casual)
+            personality_prompt: Optional free-text personality fine-tuning
 
         Yields:
             Text-Chunks der Antwort
@@ -968,7 +1023,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             model = self.rag_model if rag_context else self.chat_model
 
             # Baue System-Prompt mit RAG-Kontext
-            system_prompt = self._build_rag_system_prompt(rag_context, lang=lang, memory_context=memory_context, document_context=document_context)
+            system_prompt = self._build_rag_system_prompt(rag_context, lang=lang, memory_context=memory_context, document_context=document_context, personality_style=personality_style, personality_prompt=personality_prompt)
 
             messages = [{"role": "system", "content": system_prompt}]
 
@@ -995,7 +1050,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             logger.error(f"RAG Streaming Fehler: {e}")
             yield prompt_manager.get("chat", "error_fallback", lang=lang, default=f"Error: {e!s}", error=str(e))
 
-    def _build_rag_system_prompt(self, context: str | None = None, lang: str | None = None, memory_context: str | None = None, document_context: str | None = None) -> str:
+    def _build_rag_system_prompt(self, context: str | None = None, lang: str | None = None, memory_context: str | None = None, document_context: str | None = None, personality_style: str | None = None, personality_prompt: str | None = None) -> str:
         """
         Erstellt System-Prompt mit optionalem RAG-Kontext.
 
@@ -1004,6 +1059,8 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             lang: Sprache für den Prompt (de/en). None = default_lang
             memory_context: Optional formatted memory section
             document_context: Optional formatted document section
+            personality_style: Optional personality style
+            personality_prompt: Optional free-text personality fine-tuning
 
         Returns:
             System-Prompt für das LLM
@@ -1012,6 +1069,12 @@ WICHTIGE REGELN FÜR ANTWORTEN:
 
         # Base RAG system prompt from externalized prompts
         base_prompt = prompt_manager.get("chat", "rag_system_prompt", lang=lang)
+
+        # Personality injection
+        if personality_style:
+            personality_section = _build_personality_context(personality_style, personality_prompt, lang)
+            if personality_section:
+                base_prompt += f"\n\n{personality_section}"
 
         # Append memory context if available
         if memory_context:

@@ -474,7 +474,16 @@
     "firstName": "First Name",
     "lastName": "Last Name",
     "firstNamePlaceholder": "e.g. John",
-    "lastNamePlaceholder": "e.g. Doe"
+    "lastNamePlaceholder": "e.g. Doe",
+    "personalityStyle": "Communication Style",
+    "personalityPrompt": "Personality Fine-tuning",
+    "personalityPromptPlaceholder": "e.g. Use emojis, always respond with a joke...",
+    "styles": {
+      "freundlich": "Friendly",
+      "direkt": "Direct",
+      "formell": "Formal",
+      "casual": "Casual"
+    }
   },
   "roles": {
     "title": "Role Management",

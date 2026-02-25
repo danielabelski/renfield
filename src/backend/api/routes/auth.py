@@ -72,6 +72,8 @@ class UserResponse(BaseModel):
     role_id: int
     permissions: list[str]
     is_active: bool
+    personality_style: str = "freundlich"
+    personality_prompt: str | None = None
     created_at: datetime
     last_login: datetime | None
     speaker_id: int | None
@@ -260,6 +262,8 @@ async def register(
         role_id=user.role_id,
         permissions=user.get_permissions(),
         is_active=user.is_active,
+        personality_style=user.personality_style,
+        personality_prompt=user.personality_prompt,
         created_at=user.created_at,
         last_login=user.last_login,
         speaker_id=user.speaker_id
@@ -283,6 +287,8 @@ async def get_current_user_info(
         role_id=user.role_id,
         permissions=user.get_permissions(),
         is_active=user.is_active,
+        personality_style=user.personality_style,
+        personality_prompt=user.personality_prompt,
         created_at=user.created_at,
         last_login=user.last_login,
         speaker_id=user.speaker_id
