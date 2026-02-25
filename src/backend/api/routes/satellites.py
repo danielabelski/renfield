@@ -7,10 +7,13 @@ Includes live status, metrics, session history, and error logs.
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from loguru import logger
 from pydantic import BaseModel, Field
 
+from models.database import User
+from models.permissions import Permission
+from services.auth_service import require_permission
 from services.satellite_manager import get_satellite_manager
 from utils.config import settings
 
@@ -191,7 +194,7 @@ def _satellite_to_response(sat_id: str, sat_data: dict[str, Any]) -> SatelliteRe
 # =============================================================================
 
 @router.get("", response_model=SatelliteListResponse)
-async def list_satellites():
+async def list_satellites(_user: User = Depends(require_permission(Permission.ADMIN))):
     """
     List all connected satellites with their current status.
 
@@ -248,7 +251,7 @@ class UpdateStatusResponse(BaseModel):
 
 
 @router.get("/versions", response_model=VersionInfoResponse)
-async def get_versions():
+async def get_versions(_user: User = Depends(require_permission(Permission.ADMIN))):
     """
     Get version information for all satellites.
 
@@ -278,7 +281,7 @@ async def get_versions():
 
 
 @router.get("/update-package")
-async def get_update_package():
+async def get_update_package(_user: User = Depends(require_permission(Permission.ADMIN))):
     """
     Download the satellite update package.
 
@@ -317,7 +320,7 @@ async def get_update_package():
 # =============================================================================
 
 @router.get("/{satellite_id}", response_model=SatelliteResponse)
-async def get_satellite(satellite_id: str):
+async def get_satellite(satellite_id: str, _user: User = Depends(require_permission(Permission.ADMIN))):
     """
     Get detailed status for a specific satellite.
 
@@ -346,7 +349,7 @@ async def get_satellite(satellite_id: str):
 
 
 @router.get("/{satellite_id}/metrics", response_model=SatelliteMetricsResponse)
-async def get_satellite_metrics(satellite_id: str):
+async def get_satellite_metrics(satellite_id: str, _user: User = Depends(require_permission(Permission.ADMIN))):
     """
     Get live metrics for a specific satellite.
 
@@ -368,7 +371,7 @@ async def get_satellite_metrics(satellite_id: str):
 
 
 @router.get("/{satellite_id}/session", response_model=SatelliteSessionResponse)
-async def get_satellite_session(satellite_id: str):
+async def get_satellite_session(satellite_id: str, _user: User = Depends(require_permission(Permission.ADMIN))):
     """
     Get current active session for a satellite.
 
@@ -412,7 +415,7 @@ async def get_satellite_session(satellite_id: str):
 
 
 @router.get("/{satellite_id}/history", response_model=SatelliteHistoryResponse)
-async def get_satellite_history(satellite_id: str, limit: int = 50):
+async def get_satellite_history(satellite_id: str, limit: int = 50, _user: User = Depends(require_permission(Permission.ADMIN))):
     """
     Get event history for a satellite.
 
@@ -445,7 +448,7 @@ async def get_satellite_history(satellite_id: str, limit: int = 50):
 
 
 @router.post("/{satellite_id}/ping")
-async def ping_satellite(satellite_id: str):
+async def ping_satellite(satellite_id: str, _user: User = Depends(require_permission(Permission.ADMIN))):
     """
     Send a ping to a satellite to check connectivity.
 
@@ -475,7 +478,7 @@ async def ping_satellite(satellite_id: str):
 
 
 @router.post("/{satellite_id}/update", response_model=UpdateInitiateResponse)
-async def initiate_update(satellite_id: str):
+async def initiate_update(satellite_id: str, _user: User = Depends(require_permission(Permission.ADMIN))):
     """
     Initiate an OTA update for a specific satellite.
 
@@ -501,7 +504,7 @@ async def initiate_update(satellite_id: str):
 
 
 @router.get("/{satellite_id}/update-status", response_model=UpdateStatusResponse)
-async def get_update_status(satellite_id: str):
+async def get_update_status(satellite_id: str, _user: User = Depends(require_permission(Permission.ADMIN))):
     """
     Get the current update status for a satellite.
 

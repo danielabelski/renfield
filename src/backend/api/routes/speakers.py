@@ -13,7 +13,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from models.database import Speaker, SpeakerEmbedding
+from models.database import Speaker, SpeakerEmbedding, User
+from models.permissions import Permission
+from services.auth_service import require_permission
 from services.database import get_db
 from services.speaker_service import SPEECHBRAIN_ERROR, get_speaker_service
 
@@ -128,7 +130,7 @@ async def get_speaker_embeddings_averaged(
 # --- Endpoints ---
 
 @router.get("/status", response_model=ServiceStatusResponse)
-async def get_service_status():
+async def get_service_status(_user: User = Depends(require_permission(Permission.SPEAKERS_ALL))):
     """Check if speaker recognition service is available"""
     service = get_speaker_service()
 
@@ -149,7 +151,8 @@ async def get_service_status():
 @router.post("", response_model=SpeakerResponse)
 async def create_speaker(
     speaker: SpeakerCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.SPEAKERS_ALL)),
 ):
     """Create a new speaker profile"""
     # Check if alias already exists
@@ -186,7 +189,7 @@ async def create_speaker(
 
 
 @router.get("", response_model=list[SpeakerResponse])
-async def list_speakers(db: AsyncSession = Depends(get_db)):
+async def list_speakers(db: AsyncSession = Depends(get_db), _user: User = Depends(require_permission(Permission.SPEAKERS_ALL))):
     """List all registered speakers"""
     # Use selectinload to eagerly load embeddings (avoids lazy-load in async context)
     result = await db.execute(
@@ -209,7 +212,8 @@ async def list_speakers(db: AsyncSession = Depends(get_db)):
 @router.get("/{speaker_id}", response_model=SpeakerResponse)
 async def get_speaker(
     speaker_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.SPEAKERS_ALL)),
 ):
     """Get a specific speaker"""
     result = await db.execute(
@@ -235,7 +239,8 @@ async def get_speaker(
 async def update_speaker(
     speaker_id: int,
     update: SpeakerUpdate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.SPEAKERS_ALL)),
 ):
     """Update a speaker's information"""
     result = await db.execute(
@@ -288,7 +293,8 @@ async def update_speaker(
 @router.delete("/{speaker_id}")
 async def delete_speaker(
     speaker_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.SPEAKERS_ALL)),
 ):
     """Delete a speaker and all their embeddings"""
     result = await db.execute(
@@ -311,7 +317,8 @@ async def delete_speaker(
 @router.post("/merge", response_model=MergeSpeakersResponse)
 async def merge_speakers(
     request: MergeSpeakersRequest,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.SPEAKERS_ALL)),
 ):
     """
     Merge two speakers into one.
@@ -406,7 +413,8 @@ async def merge_speakers(
 async def enroll_speaker(
     speaker_id: int,
     audio: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.SPEAKERS_ALL)),
 ):
     """
     Enroll a speaker with a voice sample.
@@ -484,7 +492,8 @@ async def enroll_speaker(
 @router.post("/identify", response_model=IdentifyResponse)
 async def identify_speaker(
     audio: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.SPEAKERS_ALL)),
 ):
     """
     Identify speaker from audio.
@@ -561,7 +570,8 @@ async def identify_speaker(
 async def verify_speaker(
     speaker_id: int,
     audio: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.SPEAKERS_ALL)),
 ):
     """
     Verify if audio matches a specific speaker.
@@ -630,7 +640,8 @@ async def verify_speaker(
 async def delete_embedding(
     speaker_id: int,
     embedding_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.SPEAKERS_ALL)),
 ):
     """Delete a specific voice embedding"""
     result = await db.execute(

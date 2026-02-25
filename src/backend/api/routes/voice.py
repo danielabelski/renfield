@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.api_rate_limiter import limiter
+from services.auth_service import get_current_user
 from services.database import get_db
 from services.piper_service import PiperService
 from services.whisper_service import WhisperService
@@ -36,7 +37,8 @@ async def speech_to_text(
     request: Request,
     audio: UploadFile = File(...),
     language: str | None = Query(None, description="Language code (e.g., 'de', 'en'). Falls back to default."),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user=Depends(get_current_user)
 ):
     """
     Speech-to-Text: Audio zu Text konvertieren mit optionaler Sprechererkennung.
@@ -111,7 +113,7 @@ async def speech_to_text(
 
 @router.post("/tts")
 @limiter.limit(settings.api_rate_limit_voice)
-async def text_to_speech(request: Request, tts_request: TTSRequest):
+async def text_to_speech(request: Request, tts_request: TTSRequest, _user=Depends(get_current_user)):
     """
     Text-to-Speech: Text zu Audio konvertieren.
 
@@ -146,7 +148,7 @@ async def text_to_speech(request: Request, tts_request: TTSRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/tts-cache/{audio_id}")
-async def get_tts_cache(audio_id: str):
+async def get_tts_cache(audio_id: str, _user=Depends(get_current_user)):
     """
     Serve cached TTS audio files.
 
@@ -179,7 +181,8 @@ async def voice_chat(
     request: Request,
     audio: UploadFile = File(...),
     language: str | None = Query(None, description="Language code (e.g., 'de', 'en'). Falls back to default."),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user=Depends(get_current_user)
 ):
     """
     Kompletter Voice-Chat Flow:

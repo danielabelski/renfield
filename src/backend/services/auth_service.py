@@ -6,6 +6,7 @@ Provides JWT-based authentication, password hashing, and permission checks.
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Union
+from uuid import uuid4
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -85,7 +86,8 @@ def create_access_token(
 
     to_encode.update({
         "exp": expire,
-        "type": "access"
+        "type": "access",
+        "jti": str(uuid4()),
     })
 
     encoded_jwt = jwt.encode(to_encode, settings.secret_key.get_secret_value(), algorithm=ALGORITHM)
@@ -103,7 +105,8 @@ def create_refresh_token(user_id: int) -> str:
     to_encode = {
         "sub": str(user_id),
         "exp": expire,
-        "type": "refresh"
+        "type": "refresh",
+        "jti": str(uuid4()),
     }
 
     encoded_jwt = jwt.encode(to_encode, settings.secret_key.get_secret_value(), algorithm=ALGORITHM)
@@ -224,6 +227,17 @@ async def get_current_user(
             detail="Invalid token type",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    # Check if token has been revoked (logout)
+    jti = payload.get("jti")
+    if jti:
+        from services.token_blacklist import token_blacklist
+        if await token_blacklist.is_blacklisted(jti):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token has been revoked",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
     user_id = payload.get("sub")
     if not user_id:
@@ -431,9 +445,11 @@ async def ensure_admin_user(db: AsyncSession) -> User | None:
     if configured_password == "changeme":
         password = secrets.token_urlsafe(16)
         must_change = True
+        # Print to stdout only (not captured by file-based loggers)
+        print(f"ADMIN_PASSWORD={password}")
         logger.warning(
-            f"Generated random admin password: {password} — "
-            f"CHANGE IT IMMEDIATELY via the admin UI!"
+            "Random admin password generated. "
+            "Retrieve via: docker logs renfield-backend 2>&1 | grep ADMIN_PASSWORD"
         )
     else:
         password = configured_password
