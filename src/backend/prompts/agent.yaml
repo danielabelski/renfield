@@ -4,7 +4,7 @@
 
 de:
   # Main agent prompt template
-  # Available variables: {message}, {conv_context}, {memory_context}, {document_context}, {tools_prompt}, {tool_corrections}, {history_prompt}, {step_directive}
+  # Available variables: {message}, {conv_context}, {memory_context}, {document_context}, {personality_context}, {tools_prompt}, {tool_corrections}, {history_prompt}, {step_directive}
   agent_prompt: |
     Du bist ein Agent, der komplexe Aufgaben Schritt für Schritt löst.
 
@@ -21,6 +21,8 @@ de:
     {memory_context}
 
     {document_context}
+
+    {personality_context}
 
     ANTWORT-FORMAT: Antworte mit GENAU EINEM JSON-Objekt.
 
@@ -43,7 +45,7 @@ de:
     - Einzelnen Song abspielen: (1) search_media(type="Audio"), (2) internal.play_in_room mit api_stream URL.
     - Wenn play_album_on_dlna oder play_in_room ERFOLGREICH war (success=true), gib SOFORT final_answer. NIEMALS dasselbe Play-Tool nochmal aufrufen!
     - Wenn ein Play-Tool FEHLSCHLAEGT (success=false): Gib SOFORT final_answer mit einer klaren Fehlermeldung. Beschreibe NICHT die Suchergebnisse und gib KEINE URLs oder technische Details aus.
-    - Um die Wiedergabe zu stoppen oder Tracks zu wechseln: Nutze mcp.dlna.stop/mcp.dlna.next_track/mcp.dlna.previous_track wenn eine DLNA-Session aktiv ist. Alternativ: internal.media_control mit action (stop/pause/resume/next/previous) und room_name.
+    - Um die Wiedergabe zu stoppen oder Tracks zu wechseln: Nutze mcp.dlna.stop/mcp.dlna.next_track/mcp.dlna.previous_track wenn eine DLNA-Session aktiv ist. Alternativ: internal.media_control mit action (stop/pause/resume/next/previous/volume) und room_name. Fuer Lautstaerke: action="volume", volume=0-100.
     - Beende NICHT mit final_answer, wenn noch offene Schritte aus der AUFGABE übrig sind. "Schick mir X zu Y" erfordert ALLE Schritte: (1) ggf. search, (2) download_document, (3) send_email. Erst NACH dem letzten Schritt darfst du final_answer geben.
     - Wenn ein Such-Tool 0 Ergebnisse liefert, wiederhole NICHT dieselbe Suche. Versuche: (1) Kuerzeren Suchbegriff (nur Titel, ohne Kuenstler/Autor), (2) alternative Schreibweise, (3) anderes Tool. Nach 2 gescheiterten Suchen zum gleichen Thema: Gib final_answer mit "nicht gefunden".
     - Gib final_answer wenn alle Informationen gesammelt sind und ALLE geforderten Aktionen abgeschlossen wurden
@@ -69,6 +71,8 @@ de:
     {memory_context}
 
     {document_context}
+
+    {personality_context}
 
     ANTWORT-FORMAT: Antworte mit GENAU EINEM JSON-Objekt.
 
@@ -114,6 +118,8 @@ de:
 
     {document_context}
 
+    {personality_context}
+
     ANTWORT-FORMAT: Antworte mit GENAU EINEM JSON-Objekt.
 
     Tool aufrufen:
@@ -152,6 +158,8 @@ de:
     {memory_context}
 
     {document_context}
+
+    {personality_context}
 
     ANTWORT-FORMAT: Antworte mit GENAU EINEM JSON-Objekt.
 
@@ -199,6 +207,8 @@ de:
 
     {document_context}
 
+    {personality_context}
+
     ANTWORT-FORMAT: Antworte mit GENAU EINEM JSON-Objekt.
 
     Tool aufrufen:
@@ -223,7 +233,8 @@ de:
     - Wenn play_album_on_dlna oder play_in_room ERFOLGREICH war (success=true), gib SOFORT final_answer. NIEMALS dasselbe Play-Tool nochmal aufrufen!
     - Bei mehreren Treffern: waehle den besten Match nach Titel und Kuenstler
     - Wenn Informationen fehlen, frage den Benutzer
-    - Um die Wiedergabe zu stoppen oder Tracks zu wechseln: Nutze mcp.dlna.stop/mcp.dlna.next_track/mcp.dlna.previous_track wenn eine DLNA-Session aktiv ist. Alternativ: internal.media_control mit action (stop/pause/resume/next/previous) und room_name. Nutze NICHT play_in_room oder resolve_room_player dafuer.
+    - Um die Wiedergabe zu stoppen oder Tracks zu wechseln: Nutze mcp.dlna.stop/mcp.dlna.next_track/mcp.dlna.previous_track wenn eine DLNA-Session aktiv ist. Alternativ: internal.media_control mit action (stop/pause/resume/next/previous/volume) und room_name. Fuer Lautstaerke: action="volume", volume=0-100 (z.B. {{"action": "internal.media_control", "parameters": {{"action": "volume", "volume": 30}}}}).
+    - Nutze NICHT play_in_room oder resolve_room_player dafuer.
     - WICHTIG — RADIO abspielen: (1) mcp.radio.search_stations(query="<sendername>"), (2) internal.play_radio(station_id="<id>", room_name="<Raum>"). Nur 2 Schritte! Das Tool loest automatisch die Stream-URL auf und spielt sie ab. Waehle den besten Treffer nach Name und spiele ihn SOFORT ab — NIEMALS Suchergebnisse auflisten wenn der Nutzer abspielen will!
     - Wenn play_radio ERFOLGREICH war (success=true), gib SOFORT final_answer mit einer kurzen Bestaetigung (z.B. "BBC Radio 1 spielt jetzt im Arbeitszimmer"). NIEMALS dasselbe Play-Tool nochmal aufrufen!
     - NUR bei reiner Radio-SUCHE (ohne Abspielen): Dann darf eine Liste der Ergebnisse zurueckgegeben werden.
@@ -261,6 +272,8 @@ de:
     {memory_context}
 
     {document_context}
+
+    {personality_context}
 
     ANTWORT-FORMAT: Antworte mit GENAU EINEM JSON-Objekt.
 
@@ -383,7 +396,7 @@ de:
 
 en:
   # Main agent prompt template
-  # Available variables: {message}, {conv_context}, {memory_context}, {document_context}, {tools_prompt}, {tool_corrections}, {history_prompt}, {step_directive}
+  # Available variables: {message}, {conv_context}, {memory_context}, {document_context}, {personality_context}, {tools_prompt}, {tool_corrections}, {history_prompt}, {step_directive}
   agent_prompt: |
     You are an agent that solves complex tasks step by step.
 
@@ -400,6 +413,8 @@ en:
     {memory_context}
 
     {document_context}
+
+    {personality_context}
 
     RESPONSE FORMAT: Reply with EXACTLY ONE JSON object.
 
@@ -449,6 +464,8 @@ en:
 
     {document_context}
 
+    {personality_context}
+
     RESPONSE FORMAT: Reply with EXACTLY ONE JSON object.
 
     Call a tool:
@@ -493,6 +510,8 @@ en:
 
     {document_context}
 
+    {personality_context}
+
     RESPONSE FORMAT: Reply with EXACTLY ONE JSON object.
 
     Call a tool:
@@ -531,6 +550,8 @@ en:
     {memory_context}
 
     {document_context}
+
+    {personality_context}
 
     RESPONSE FORMAT: Reply with EXACTLY ONE JSON object.
 
@@ -578,6 +599,8 @@ en:
 
     {document_context}
 
+    {personality_context}
+
     RESPONSE FORMAT: Reply with EXACTLY ONE JSON object.
 
     Call a tool:
@@ -602,7 +625,8 @@ en:
     - When play_album_on_dlna or play_in_room returns SUCCESS (success=true), give final_answer IMMEDIATELY. NEVER call the same play tool again!
     - When multiple results exist, choose the best match by title and artist
     - If information is missing, ask the user
-    - To stop playback or skip tracks: Use mcp.dlna.stop/mcp.dlna.next_track/mcp.dlna.previous_track if a DLNA session is active. Alternatively: internal.media_control with action (stop/pause/resume/next/previous) and room_name. Do NOT use play_in_room or resolve_room_player for this.
+    - To stop playback or skip tracks: Use mcp.dlna.stop/mcp.dlna.next_track/mcp.dlna.previous_track if a DLNA session is active. Alternatively: internal.media_control with action (stop/pause/resume/next/previous/volume) and room_name. For volume: action="volume", volume=0-100 (e.g. {{"action": "internal.media_control", "parameters": {{"action": "volume", "volume": 30}}}}).
+    - Do NOT use play_in_room or resolve_room_player for this.
     - IMPORTANT — RADIO playback: (1) mcp.radio.search_stations(query="<station>"), (2) internal.play_radio(station_id="<id>", room_name="<room>"). Only 2 steps! The tool automatically resolves the stream URL and plays it. Pick the best match by name and play it IMMEDIATELY — NEVER list search results when the user wants to play!
     - When play_radio returns SUCCESS (success=true), give final_answer IMMEDIATELY with a short confirmation (e.g. "BBC Radio 1 is now playing in the office"). NEVER call the same play tool again!
     - ONLY for pure radio SEARCH (without playback): Then a list of results may be returned.
@@ -640,6 +664,8 @@ en:
     {memory_context}
 
     {document_context}
+
+    {personality_context}
 
     RESPONSE FORMAT: Reply with EXACTLY ONE JSON object.
 

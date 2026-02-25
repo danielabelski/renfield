@@ -43,7 +43,9 @@ export default function UsersPage() {
     email: '',
     password: '',
     role_id: '',
-    is_active: true
+    is_active: true,
+    personality_style: 'freundlich',
+    personality_prompt: ''
   });
   const [showPassword, setShowPassword] = useState(false);
   const [formLoading, setFormLoading] = useState(false);
@@ -98,7 +100,9 @@ export default function UsersPage() {
       email: '',
       password: '',
       role_id: roles.find(r => r.name === 'Gast')?.id || roles[0]?.id || '',
-      is_active: true
+      is_active: true,
+      personality_style: 'freundlich',
+      personality_prompt: ''
     });
     setShowPassword(false);
     setShowModal(true);
@@ -114,7 +118,9 @@ export default function UsersPage() {
       email: user.email || '',
       password: '',
       role_id: user.role_id,
-      is_active: user.is_active
+      is_active: user.is_active,
+      personality_style: user.personality_style || 'freundlich',
+      personality_prompt: user.personality_prompt || ''
     });
     setShowPassword(false);
     setShowModal(true);
@@ -137,7 +143,9 @@ export default function UsersPage() {
           last_name: formData.last_name || null,
           email: formData.email || null,
           role_id: parseInt(formData.role_id),
-          is_active: formData.is_active
+          is_active: formData.is_active,
+          personality_style: formData.personality_style,
+          personality_prompt: formData.personality_prompt || null
         };
 
         await apiClient.patch(`/api/users/${editingUser.id}`, updateData, { headers });
@@ -159,7 +167,9 @@ export default function UsersPage() {
           email: formData.email || null,
           password: formData.password,
           role_id: parseInt(formData.role_id),
-          is_active: formData.is_active
+          is_active: formData.is_active,
+          personality_style: formData.personality_style,
+          personality_prompt: formData.personality_prompt || null
         }, { headers });
         setSuccess(t('users.userCreated'));
       }
@@ -527,6 +537,40 @@ export default function UsersPage() {
             <label htmlFor="is_active" className="text-sm text-gray-700 dark:text-gray-300">
               {t('users.accountActive')}
             </label>
+          </div>
+
+          {/* Personality Style */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              {t('users.personalityStyle')}
+            </label>
+            <select
+              value={formData.personality_style}
+              onChange={(e) => setFormData({ ...formData, personality_style: e.target.value })}
+              className="input w-full"
+              disabled={formLoading}
+            >
+              <option value="freundlich">{t('users.styles.freundlich')}</option>
+              <option value="direkt">{t('users.styles.direkt')}</option>
+              <option value="formell">{t('users.styles.formell')}</option>
+              <option value="casual">{t('users.styles.casual')}</option>
+            </select>
+          </div>
+
+          {/* Personality Prompt */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              {t('users.personalityPrompt')}
+              <span className="text-gray-400 dark:text-gray-500 font-normal ml-1">({t('common.optional')})</span>
+            </label>
+            <textarea
+              value={formData.personality_prompt}
+              onChange={(e) => setFormData({ ...formData, personality_prompt: e.target.value })}
+              className="input w-full"
+              rows={3}
+              placeholder={t('users.personalityPromptPlaceholder')}
+              disabled={formLoading}
+            />
           </div>
 
           {/* Actions */}

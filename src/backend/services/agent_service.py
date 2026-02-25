@@ -430,6 +430,7 @@ class AgentService:
         lang: str = "de",
         memory_context: str = "",
         document_context: str = "",
+        personality_context: str = "",
     ) -> str:
         """Build the prompt for the Agent LLM call."""
         tools_prompt = self.tool_registry.build_tools_prompt()
@@ -488,6 +489,7 @@ class AgentService:
             conv_context=conv_context,
             memory_context=memory_context,
             document_context=document_context,
+            personality_context=personality_context,
             tools_prompt=tools_prompt,
             tool_corrections=tool_corrections,
             history_prompt=history_prompt,
@@ -504,6 +506,7 @@ class AgentService:
                 conv_context=conv_context,
                 memory_context=memory_context,
                 document_context=document_context,
+                personality_context=personality_context,
                 tools_prompt=tools_prompt,
                 tool_corrections=tool_corrections,
                 history_prompt=history_prompt,
@@ -522,6 +525,7 @@ class AgentService:
         lang: str | None = None,
         memory_context: str = "",
         document_context: str = "",
+        personality_context: str = "",
         user_permissions: list[str] | None = None,
         user_id: int | None = None,
     ) -> AsyncGenerator[AgentStep, None]:
@@ -537,6 +541,7 @@ class AgentService:
             lang: Language for prompts and responses (de/en). None = default_lang
             memory_context: Formatted memory section for the agent prompt
             document_context: Formatted document section for the agent prompt
+            personality_context: Formatted personality section for the agent prompt
             user_permissions: User's permission strings for MCP access control.
                 None means no auth / allow all (backwards-compatible).
             user_id: Authenticated user ID for per-user tool filtering.
@@ -587,7 +592,7 @@ class AgentService:
                 return
 
             # Build prompt with all available tools (32k context fits all tools)
-            prompt = await self._build_agent_prompt(message, context, conversation_history, room_context=room_context, lang=lang, memory_context=memory_context, document_context=document_context)
+            prompt = await self._build_agent_prompt(message, context, conversation_history, room_context=room_context, lang=lang, memory_context=memory_context, document_context=document_context, personality_context=personality_context)
             logger.info(f"🤖 Agent step {step_num} prompt ({len(prompt)} chars, {total_tools} tools)")
 
             # Check circuit breaker before LLM call

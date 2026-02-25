@@ -433,6 +433,8 @@ async def _stream_rag_response(
     websocket: WebSocket,
     memory_context: str = "",
     document_context: str = "",
+    personality_style: str | None = None,
+    personality_prompt: str | None = None,
 ) -> str:
     """Stream a RAG-enhanced or plain conversation response.
 
@@ -489,6 +491,8 @@ async def _stream_rag_response(
                     history=session_state.conversation_history if is_followup else None,
                     memory_context=memory_context,
                     document_context=document_context,
+                    personality_style=personality_style,
+                    personality_prompt=personality_prompt,
                 ):
                     full_response += chunk
                     await websocket.send_json({"type": "stream", "content": chunk})
@@ -509,7 +513,7 @@ async def _stream_rag_response(
             logger.error(traceback.format_exc())
 
     # Fallback: plain conversation
-    async for chunk in ollama.chat_stream(content, history=session_state.conversation_history, memory_context=memory_context, document_context=document_context):
+    async for chunk in ollama.chat_stream(content, history=session_state.conversation_history, memory_context=memory_context, document_context=document_context, personality_style=personality_style, personality_prompt=personality_prompt):
         full_response += chunk
         await websocket.send_json({"type": "stream", "content": chunk})
 
@@ -607,6 +611,8 @@ async def websocket_endpoint(
             # Retrieve user info and permissions
             user_id = auth_result.get("user_id") if isinstance(auth_result, dict) else None
             user_permissions = None
+            user_personality_style = None
+            user_personality_prompt = None
             if user_id is not None:
                 try:
                     from sqlalchemy import select
@@ -619,6 +625,8 @@ async def websocket_endpoint(
                         user_obj = result.scalar_one_or_none()
                         if user_obj:
                             user_permissions = user_obj.get_permissions()
+                            user_personality_style = user_obj.personality_style
+                            user_personality_prompt = user_obj.personality_prompt
                 except Exception as e:
                     logger.warning(f"⚠️ Failed to load user permissions: {e}")
 
@@ -687,6 +695,14 @@ async def websocket_endpoint(
                         attachment_ids, lang=ollama.default_lang
                     )
 
+            # Build personality context for agent prompts
+            personality_context = ""
+            if user_personality_style:
+                from services.ollama_service import _build_personality_context
+                personality_context = _build_personality_context(
+                    user_personality_style, user_personality_prompt, ollama.default_lang
+                )
+
             # Get router from app state (initialized at startup if agent_enabled)
             agent_router = getattr(app.state, 'agent_router', None)
 
@@ -716,9 +732,11 @@ async def websocket_endpoint(
                             content, knowledge_base_id, ollama, session_state, websocket,
                             memory_context=memory_context,
                             document_context=document_context,
+                            personality_style=user_personality_style,
+                            personality_prompt=user_personality_prompt,
                         )
                     else:
-                        async for chunk in ollama.chat_stream(content, history=session_state.conversation_history, memory_context=memory_context, document_context=document_context):
+                        async for chunk in ollama.chat_stream(content, history=session_state.conversation_history, memory_context=memory_context, document_context=document_context, personality_style=user_personality_style, personality_prompt=user_personality_prompt):
                             full_response += chunk
                             await websocket.send_json({"type": "stream", "content": chunk})
 
@@ -730,6 +748,8 @@ async def websocket_endpoint(
                         content, knowledge_base_id, ollama, session_state, websocket,
                         memory_context=memory_context,
                         document_context=document_context,
+                        personality_style=user_personality_style,
+                        personality_prompt=user_personality_prompt,
                     )
 
                 else:
@@ -752,6 +772,7 @@ async def websocket_endpoint(
                         room_context=room_context,
                         memory_context=memory_context,
                         document_context=document_context,
+                        personality_context=personality_context,
                         user_permissions=user_permissions,
                         user_id=user_id,
                     ):
@@ -861,7 +882,7 @@ Die Aktion wurde ausgeführt:
 Gib eine kurze, natürliche Antwort basierend auf den Daten.
 WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON!"""
 
-                        async for chunk in ollama.chat_stream(enhanced_prompt, history=session_state.conversation_history, memory_context=memory_context, document_context=document_context):
+                        async for chunk in ollama.chat_stream(enhanced_prompt, history=session_state.conversation_history, memory_context=memory_context, document_context=document_context, personality_style=user_personality_style, personality_prompt=user_personality_prompt):
                             full_response += chunk
                             await websocket.send_json({"type": "stream", "content": chunk})
 
@@ -875,9 +896,11 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                                 content, knowledge_base_id, ollama, session_state, websocket,
                                 memory_context=memory_context,
                                 document_context=document_context,
+                                personality_style=user_personality_style,
+                                personality_prompt=user_personality_prompt,
                             )
                         else:
-                            async for chunk in ollama.chat_stream(content, history=session_state.conversation_history, memory_context=memory_context, document_context=document_context):
+                            async for chunk in ollama.chat_stream(content, history=session_state.conversation_history, memory_context=memory_context, document_context=document_context, personality_style=user_personality_style, personality_prompt=user_personality_prompt):
                                 full_response += chunk
                                 await websocket.send_json({"type": "stream", "content": chunk})
 
