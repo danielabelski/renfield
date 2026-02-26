@@ -24,6 +24,7 @@ from .audio.vad import VoiceActivityDetector, VADBackend
 from .wakeword.detector import WakeWordDetector, Detection
 from .hardware.led import LEDController, GPIOLEDController, LEDPattern
 from .hardware.button import ButtonHandler
+from .hardware.camera import CameraController
 from .hardware.display import DisplayController
 from .network.websocket_client import WebSocketClient, ServerConfig
 from .network.discovery import ServiceDiscovery
@@ -78,6 +79,7 @@ class Satellite:
         self._processing_timeout: float = 30.0  # Max time to wait for server response
         self._reconnecting: bool = False  # Prevent duplicate reconnection attempts
         self._wakeword_pending: bool = False  # Prevent duplicate wakeword processing
+        self._pending_snapshot: Optional[asyncio.Task] = None  # Background camera capture
 
         # Metrics tracking
         self._last_wakeword: Optional[Dict[str, Any]] = None
@@ -172,6 +174,14 @@ class Satellite:
                 room=self.config.satellite.room,
             )
 
+        # Camera controller (optional, for visual queries)
+        self.camera: Optional[CameraController] = None
+        if self.config.camera.enabled:
+            self.camera = CameraController(
+                resolution=self.config.camera.resolution,
+                quality=self.config.camera.quality,
+            )
+
         # Button handler
         self.button = ButtonHandler(
             gpio_pin=self.config.button.gpio_pin,
@@ -264,6 +274,10 @@ class Satellite:
             print("Warning: Display not available")
             self.display = None
 
+        if self.camera and not self.camera.open():
+            print("Warning: Camera not available")
+            self.camera = None
+
         if not self.button.setup():
             print("Warning: Button control not available")
 
@@ -332,6 +346,9 @@ class Satellite:
         # Turn off LEDs and display
         self.leds.set_pattern(LEDPattern.OFF)
         self.leds.close()
+
+        if self.camera:
+            self.camera.close()
 
         if self.display:
             self.display.close()
@@ -582,6 +599,10 @@ class Satellite:
             self.leds.set_pattern(LEDPattern.IDLE)
             return
 
+        # Trigger camera snapshot in background (ready before user finishes speaking)
+        if self.camera and self.camera.available:
+            self._pending_snapshot = asyncio.create_task(self.camera.capture())
+
         # Start listening - flag will be cleared in _reset_session when done
         self._set_state(SatelliteState.LISTENING)
         self._audio_buffer.clear()
@@ -604,9 +625,23 @@ class Satellite:
         self._set_state(SatelliteState.PROCESSING)
         self._processing_start = time.time()  # Start timeout countdown
 
+        # Collect camera snapshot if available
+        import base64
+        image_b64 = None
+        if self._pending_snapshot and not self._pending_snapshot.cancelled():
+            try:
+                jpeg_bytes = await asyncio.wait_for(self._pending_snapshot, timeout=3.0)
+                if jpeg_bytes:
+                    image_b64 = base64.b64encode(jpeg_bytes).decode("utf-8")
+                    print(f"Snapshot attached ({len(jpeg_bytes)} bytes)")
+            except (asyncio.TimeoutError, Exception) as e:
+                print(f"Snapshot collection failed: {e}")
+            finally:
+                self._pending_snapshot = None
+
         # Notify server
         if self._session_id:
-            await self.ws_client.send_audio_end(self._session_id, reason)
+            await self.ws_client.send_audio_end(self._session_id, reason, image_b64=image_b64)
 
     async def _reset_session(self, reason: str = "reset"):
         """Reset session state and return to idle"""
@@ -615,6 +650,11 @@ class Satellite:
             return
 
         print(f"Resetting session: {reason}")
+
+        # Cancel pending camera snapshot
+        if self._pending_snapshot and not self._pending_snapshot.done():
+            self._pending_snapshot.cancel()
+        self._pending_snapshot = None
 
         # Clear session data
         self._session_id = None

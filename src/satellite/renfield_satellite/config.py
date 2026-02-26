@@ -112,6 +112,14 @@ class DisplayConfig:
 
 
 @dataclass
+class CameraConfig:
+    """Camera settings for visual queries"""
+    enabled: bool = False
+    resolution: str = "1280x720"
+    quality: int = 85
+
+
+@dataclass
 class BLEConfig:
     """BLE presence detection settings"""
     enabled: bool = False
@@ -132,6 +140,7 @@ class Config:
     led: LEDConfig = field(default_factory=LEDConfig)
     button: ButtonConfig = field(default_factory=ButtonConfig)
     display: DisplayConfig = field(default_factory=DisplayConfig)
+    camera: CameraConfig = field(default_factory=CameraConfig)
     ble: BLEConfig = field(default_factory=BLEConfig)
 
 
@@ -248,6 +257,12 @@ def load_config(config_path: Optional[str] = None) -> Config:
         config.display.enabled = disp.get("enabled", config.display.enabled)
         config.display.width = disp.get("width", config.display.width)
         config.display.height = disp.get("height", config.display.height)
+
+    if "camera" in config_data:
+        cam = config_data["camera"]
+        config.camera.enabled = cam.get("enabled", config.camera.enabled)
+        config.camera.resolution = cam.get("resolution", config.camera.resolution)
+        config.camera.quality = cam.get("quality", config.camera.quality)
 
     if "ble" in config_data:
         ble = config_data["ble"]

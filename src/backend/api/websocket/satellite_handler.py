@@ -298,10 +298,13 @@ async def satellite_websocket(
             elif msg_type == "audio_end":
                 session_id = data.get("session_id")
                 reason = data.get("reason", "unknown")
+                image_b64 = data.get("image")  # Optional camera snapshot for visual queries
 
                 if not session_id:
                     continue
 
+                if image_b64:
+                    logger.info(f"📸 Image received with audio_end ({len(image_b64)} chars base64)")
                 logger.info(f"🔚 Audio ended for session {session_id} (reason: {reason})")
 
                 # Update state to processing
@@ -495,6 +498,11 @@ async def satellite_websocket(
                         intent = {"intent": "general.conversation", "parameters": {}, "confidence": 1.0}
 
                     # Generate response (with conversation history for context)
+                    # Use vision model if image is present and vision model is configured
+                    use_vision = bool(image_b64 and settings.ollama_vision_model)
+                    if use_vision:
+                        logger.info(f"👁️ Using vision model: {settings.ollama_vision_model}")
+
                     response_text = ""
                     if action_result and action_result.get("success"):
                         result_info = action_result.get("message", "")
@@ -506,6 +514,13 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                             response_text += chunk
                     elif action_result and not action_result.get("success"):
                         response_text = f"Entschuldigung, das konnte ich nicht ausführen: {action_result.get('message')}"
+                    elif use_vision:
+                        # Visual query: use vision model with image
+                        async for chunk in ollama.chat_stream_with_image(
+                            text, image_b64, history=satellite_conversation_history,
+                            lang=satellite_language
+                        ):
+                            response_text += chunk
                     else:
                         # Normal conversation (with history for follow-up questions)
                         async for chunk in ollama.chat_stream(text, history=satellite_conversation_history):
