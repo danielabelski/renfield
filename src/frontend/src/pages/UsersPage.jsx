@@ -140,11 +140,29 @@ export default function UsersPage() {
   // Submit form
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    // Client-side validation (replaces native HTML5 validation disabled by noValidate)
+    const errors = {};
+    if (!formData.username || formData.username.length < 3) {
+      errors.username = t('users.validationUsernameMin', { defaultValue: 'Mindestens 3 Zeichen' });
+    }
+    if (!editingUser && (!formData.password || formData.password.length < 8)) {
+      errors.password = t('users.validationPasswordMin', { defaultValue: 'Mindestens 8 Zeichen' });
+    }
+    if (!formData.role_id) {
+      errors.role_id = t('users.validationRoleRequired', { defaultValue: 'Rolle ist erforderlich' });
+    }
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
+      return;
+    }
+
     setFormLoading(true);
 
     try {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
+      const roleId = parseInt(formData.role_id, 10);
 
       if (editingUser) {
         // Update user
@@ -153,7 +171,7 @@ export default function UsersPage() {
           first_name: formData.first_name || null,
           last_name: formData.last_name || null,
           email: formData.email || null,
-          role_id: parseInt(formData.role_id),
+          role_id: roleId,
           is_active: formData.is_active,
           personality_style: formData.personality_style,
           personality_prompt: formData.personality_prompt || null
@@ -177,7 +195,7 @@ export default function UsersPage() {
           last_name: formData.last_name || null,
           email: formData.email || null,
           password: formData.password,
-          role_id: parseInt(formData.role_id),
+          role_id: roleId,
           is_active: formData.is_active,
           personality_style: formData.personality_style,
           personality_prompt: formData.personality_prompt || null
@@ -427,7 +445,7 @@ export default function UsersPage() {
         onClose={() => setShowModal(false)}
         title={editingUser ? t('users.editUser') : t('users.createUser')}
       >
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} noValidate className="space-y-4">
           {/* Username */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
