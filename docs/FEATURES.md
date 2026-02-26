@@ -48,6 +48,15 @@ Renfield ist ein vollständig offline-fähiger, selbst-gehosteter **digitaler As
 
 Siehe [SPEAKER_RECOGNITION.md](SPEAKER_RECOGNITION.md) für Details.
 
+### Visual Queries (Satellite Camera)
+- **Kamera-Snapshot bei Wakeword**: Satellites mit Kamera (z.B. IMX219) fotografieren automatisch bei Wakeword-Erkennung
+- **Vision-LLM**: Bild + Transkription werden an ein Vision-fähiges Modell (z.B. `qwen3-vl`) geschickt
+- **Anwendungsbeispiele**: "Was steht auf diesem Zettel?", "Was siehst du?", "Welche Farbe hat das?"
+- **Graceful Degradation**: Satellites ohne Kamera sind nicht betroffen; ohne Vision-Modell wird das Bild ignoriert
+- **Audio-Ausgabe**: Antwort wird per TTS über DLNA-Renderer oder Satellite-Speaker abgespielt
+
+Siehe [SATELLITE_CAMERA.md](SATELLITE_CAMERA.md) für Details.
+
 ## Konversations-Gedächtnis (Langzeit)
 
 Renfield kann sich Dinge über Nutzer langfristig merken — Präferenzen, Fakten und Anweisungen werden als semantische Embeddings gespeichert und bei relevanten zukünftigen Gesprächen automatisch eingeblendet.

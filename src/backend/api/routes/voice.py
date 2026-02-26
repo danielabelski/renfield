@@ -148,7 +148,7 @@ async def text_to_speech(request: Request, tts_request: TTSRequest, _user=Depend
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/tts-cache/{audio_id}")
-async def get_tts_cache(audio_id: str, _user=Depends(get_current_user)):
+async def get_tts_cache(audio_id: str):
     """
     Serve cached TTS audio files.
 

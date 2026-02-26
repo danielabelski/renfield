@@ -54,18 +54,26 @@ Requires `rpicam-still` to be available on the Pi (standard with Raspberry Pi OS
 Set in `.env`:
 
 ```bash
-OLLAMA_VISION_MODEL=minicpm-v
+# Vision model (must support Ollama's images parameter)
+OLLAMA_VISION_MODEL=qwen3-vl
+
+# Optional: dedicated Ollama instance for vision (e.g. GPU server)
+OLLAMA_VISION_URL=http://host.docker.internal:11434
 ```
 
 Then pull the model:
 
 ```bash
-ollama pull minicpm-v
+ollama pull qwen3-vl
 ```
 
 If `OLLAMA_VISION_MODEL` is empty (default), visual queries are disabled and the
 image is silently ignored — the satellite still captures but the backend uses the
 standard text-only chat model.
+
+**Important:** The TTS cache endpoint (`/api/voice/tts-cache/`) must be reachable
+by DLNA renderers over plain HTTP. See [OUTPUT_ROUTING.md](OUTPUT_ROUTING.md) for
+`ADVERTISE_HOST` / `ADVERTISE_PORT` configuration.
 
 ### 3. Provisioning
 
@@ -114,11 +122,17 @@ No new message types are introduced. Satellites without cameras simply omit the 
 
 Tested models:
 
-| Model | Size | Speed | Quality |
-|-------|------|-------|---------|
-| `minicpm-v` | 5.5GB | ~10s | Good for text reading, scene description |
-| `llava:7b` | 4.7GB | ~8s | Good general vision |
-| `llava:13b` | 8.0GB | ~15s | Better quality, slower |
+| Model | Size | VRAM | Speed (GPU) | Quality |
+|-------|------|------|-------------|---------|
+| **`qwen3-vl`** | 6.0GB | ~12GB | ~30s | Excellent scene description, good German |
+| `qwen2.5vl` | 5.0GB | ~10GB | ~25s | Good vision, slightly older |
+| `minicpm-v` | 5.5GB | ~19GB | ~50s (partial offload on 16GB) | Good for text reading |
+| `llava:7b` | 4.7GB | ~6GB | ~8s | Good general vision |
+| `llava:13b` | 8.0GB | ~12GB | ~15s | Better quality, slower |
 
-Choose based on your hardware. On `cuda.local` with GPU, `minicpm-v` provides a good
-balance of speed and quality.
+**Recommendation:** `qwen3-vl` fits entirely in 16GB VRAM and delivers excellent results
+in German. `minicpm-v` requires 19GB and partially offloads to CPU on 16GB cards, causing
+~50s latency.
+
+**Production (renfield.local):** `qwen3-vl` on RTX 5060 Ti (16GB), ~30s per query
+(including ~25s prompt evaluation for image tokens).
