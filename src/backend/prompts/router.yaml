@@ -18,6 +18,10 @@ de:
     (z.B. Kueche, Wohnzimmer, Buero, Schlafzimmer), ist das IMMER smart_home (nicht research).
     research ist NUR fuer Aussenwetter und Wettervorhersagen.
 
+    ROUTINEN: "Gute Nacht", "Guten Morgen", "Ich gehe schlafen", "Schlaf gut", "Good night",
+    "Good morning", "Ich bin wach", "Aufgestanden" → routine (mehrstufige Ablauefe).
+    ACHTUNG: Ein beilaeufiges "Morgen!" oder "Moin!" ohne weiteren Kontext ist Smalltalk (conversation), NICHT routine.
+
     Antworte NUR mit JSON: {{"role": "<kategorie>", "reason": "..."}}
 
   # Conversation history context template
@@ -41,6 +45,10 @@ en:
     IMPORTANT: When asking about temperature, humidity or sensor values in a ROOM
     (e.g. kitchen, living room, office, bedroom), this is ALWAYS smart_home (not research).
     research is ONLY for outdoor weather and weather forecasts.
+
+    ROUTINES: "Gute Nacht", "Guten Morgen", "Ich gehe schlafen", "Schlaf gut", "Good night",
+    "Good morning", "Ich bin wach", "Aufgestanden" → routine (multi-step sequences).
+    NOTE: A casual "Morgen!" or "Moin!" without further context is smalltalk (conversation), NOT routine.
 
     Reply ONLY with JSON: {{"role": "<category>", "reason": "..."}}
 

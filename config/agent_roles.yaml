@@ -67,6 +67,15 @@ roles:
     max_steps: 2
     prompt_key: agent_prompt
 
+  routine:
+    description:
+      de: "Routinen: Gute-Nacht-Routine, Guten-Morgen-Routine, Schlafenszeit, Aufstehen — mehrstufige Smart-Home-Ablaeufe mit Statusbericht"
+      en: "Routines: good-night routine, good-morning routine, bedtime, waking up — multi-step smart home sequences with status briefing"
+    mcp_servers: [homeassistant, calendar, weather, jellyfin, dlna, radio]
+    internal_tools: [internal.get_all_presence, internal.get_user_location, internal.resolve_room_player, internal.media_control, internal.play_in_room, internal.play_radio]
+    max_steps: 15
+    prompt_key: agent_prompt_routine
+
   knowledge:
     description:
       de: "Wissensdatenbank: Suche in eigenen hochgeladenen Dokumenten"

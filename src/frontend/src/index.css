@@ -115,6 +115,11 @@
            dark:bg-gray-800 dark:border-gray-700;
 }
 
+@utility input-error {
+  @apply border-red-500 focus:ring-red-500
+         dark:border-red-500 dark:focus:ring-red-500;
+}
+
 @utility input {
   @apply w-full px-4 py-2 bg-white border border-gray-300 rounded-lg
            text-gray-900 placeholder-gray-500
