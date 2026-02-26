@@ -251,6 +251,38 @@ services:
       retries: 3
       start_period: 10s
 
+  # Evolution API (WhatsApp via self-hosted API)
+  # Aktiviere mit: docker compose --profile whatsapp up -d evolution-api
+  evolution-api:
+    image: atendai/evolution-api:v2.1.1
+    container_name: renfield-evolution-api
+    environment:
+      SERVER_TYPE: http
+      SERVER_PORT: 8080
+      SERVER_URL: http://evolution-api:8080
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:-changeme}
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://renfield:${POSTGRES_PASSWORD:-changeme}@postgres:5432/evolution
+      CACHE_REDIS_ENABLED: "true"
+      CACHE_REDIS_URI: redis://redis:6379/3
+      CACHE_REDIS_PREFIX_KEY: evolution
+      CACHE_LOCAL_ENABLED: "false"
+      LOG_LEVEL: WARN
+    volumes:
+      - evolution_instances:/evolution/instances
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - renfield-network
+    ports:
+      - "127.0.0.1:8080:8080"
+    restart: unless-stopped
+    profiles:
+      - whatsapp
+
 networks:
   renfield-network:
     driver: bridge
@@ -264,6 +296,7 @@ volumes:
   huggingface_cache:
   rag_uploads:        # RAG document uploads
   calendar_tokens:    # Google Calendar OAuth2 token persistence
+  evolution_instances: # WhatsApp session data (Evolution API)
 
 secrets:
   postgres_password:
