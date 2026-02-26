@@ -937,6 +937,59 @@ PAPERLESS_API_URL=http://paperless.local:8000
 
 ---
 
+## Evolution API (WhatsApp)
+
+Self-hosted WhatsApp API via [Evolution API](https://github.com/EvolutionAPI/evolution-api). Laeuft als Docker-Service mit Profile `whatsapp`.
+
+```bash
+# Evolution API Auth Key (starker zufaelliger Wert)
+EVOLUTION_API_KEY=changeme
+
+# Docker-interne URL (n8n → Evolution API)
+EVOLUTION_API_URL=http://evolution-api:8080
+```
+
+**Defaults:**
+- `EVOLUTION_API_KEY`: `changeme` (MUSS in Produktion geaendert werden!)
+- `EVOLUTION_API_URL`: `http://evolution-api:8080`
+
+**Setup:**
+1. `CREATE DATABASE evolution OWNER renfield;` in PostgreSQL
+2. `docker compose --profile whatsapp up -d evolution-api`
+3. WhatsApp-Instanz erstellen + QR-Code scannen
+4. Test-Nachricht senden zur Verifikation
+
+**Infrastruktur:**
+- Nutzt bestehende PostgreSQL (separate DB `evolution`) und Redis (Index 3)
+- Nur lokal erreichbar (127.0.0.1:8080), n8n greift via Docker-Netzwerk zu
+- Volume `evolution_instances` fuer WhatsApp-Session-Daten
+
+---
+
+### Gaststaette Schellen (Reservierung → WhatsApp)
+
+n8n-Workflow fuer automatische Reservierungserkennung per E-Mail mit WhatsApp-Benachrichtigung.
+
+```bash
+# IMAP/SMTP Passwort fuer info@gaststaette-schellen.de (Regfish)
+MAIL_SCHELLEN_PASSWORD=
+
+# WhatsApp-Nummer der Empfaengerin (Format: 49XXXXXXXXX, ohne +)
+WHATSAPP_RAMONA_NUMBER=
+```
+
+**E-Mail-Konto:** Konfiguriert in `config/mail_accounts.yaml` (Name: `schellen`).
+
+**n8n-Workflow:** `docs/n8n-workflows/schellen-reservation-whatsapp.json` — importieren und IMAP/SMTP Credentials anlegen.
+
+**Ablauf:**
+1. IMAP Trigger pollt `info@gaststaette-schellen.de` auf neue E-Mails
+2. Ollama klassifiziert: Reservierung oder nicht?
+3. Bei Reservierung: WhatsApp an Ramona mit extrahierten Details
+4. Wenn keine Telefonnummer: automatische Rueckfrage-Mail an Absender
+
+---
+
 ## Hook / Extension System
 
 Das Hook-System ermöglicht externen Paketen (z.B. `renfield-twin`) sich an definierten Lifecycle-Stellen einzuhängen, ohne dass renfield eine Abhängigkeit zum Plugin hat.
