@@ -856,7 +856,15 @@ class Satellite:
                     threshold=config.threshold,
                     cooldown_ms=config.cooldown_ms,
                 )
-                if not success:
+                # Check which keywords actually loaded vs just downloaded
+                actually_active = self.wakeword.active_keywords
+                load_failed = [kw for kw in active_keywords if kw not in actually_active]
+                if load_failed:
+                    failed_keywords.extend(load_failed)
+                    active_keywords = actually_active
+                    if not error_msg:
+                        error_msg = f"Models downloaded but failed to load: {load_failed}"
+                if not success and not active_keywords:
                     error_msg = "Failed to load wake word models"
             else:
                 # No keywords available - this is an error

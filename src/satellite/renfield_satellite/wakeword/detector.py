@@ -191,27 +191,29 @@ class WakeWordDetector:
                 print(f"Failed to load config {json_file}: {e}")
 
         # Look for standalone TFLite models (without JSON config)
-        for tflite_file in self.models_path.glob("**/*.tflite"):
-            # Skip preprocessing models
-            if tflite_file.stem in ["melspectrogram", "embedding_model"]:
-                continue
+        # Only include if a TFLite-capable framework is available
+        if MICRO_WAKEWORD_AVAILABLE or OPEN_WAKEWORD_AVAILABLE or TFLITE_RUNTIME_AVAILABLE:
+            for tflite_file in self.models_path.glob("**/*.tflite"):
+                # Skip preprocessing models
+                if tflite_file.stem in ["melspectrogram", "embedding_model"]:
+                    continue
 
-            # Skip if already found via JSON config
-            model_id = tflite_file.stem.replace("_v0.1", "")
-            if model_id in found_ids:
-                continue
+                # Skip if already found via JSON config
+                model_id = tflite_file.stem.replace("_v0.1", "")
+                if model_id in found_ids:
+                    continue
 
-            found_ids.add(model_id)
-            # Use pyopen-wakeword for standalone TFLite files (if available)
-            # or fall back to micro-wakeword
-            model_type = "open" if OPEN_WAKEWORD_AVAILABLE else "micro"
-            models.append({
-                "id": model_id,
-                "name": tflite_file.stem,
-                "path": str(tflite_file),
-                "type": model_type,
-                "threshold": self.default_threshold,
-            })
+                found_ids.add(model_id)
+                # Use pyopen-wakeword for standalone TFLite files (if available)
+                # or fall back to micro-wakeword
+                model_type = "open" if OPEN_WAKEWORD_AVAILABLE else "micro"
+                models.append({
+                    "id": model_id,
+                    "name": tflite_file.stem,
+                    "path": str(tflite_file),
+                    "type": model_type,
+                    "threshold": self.default_threshold,
+                })
 
         # Look for ONNX models (legacy)
         for onnx_file in self.models_path.glob("**/*.onnx"):
@@ -256,7 +258,16 @@ class WakeWordDetector:
         for keyword in self.keywords:
             keyword_normalized = keyword.lower().replace("-", "_")
 
-            # First try openwakeword (ONNX) - works better on ARM64
+            # First check for local model files (custom/downloaded models)
+            model_info = self._find_model(keyword, available_models)
+            if model_info:
+                model = self._load_model(model_info)
+                if model:
+                    self._wake_models[keyword] = model
+                    print(f"Loaded wake word: {keyword} ({model.model_type}/{model_info['path']})")
+                    continue
+
+            # Try openwakeword builtin models (pretrained)
             if ONNX_WAKEWORD_AVAILABLE:
                 model_info = {
                     "id": keyword,
@@ -271,7 +282,7 @@ class WakeWordDetector:
                     print(f"Loaded wake word: {keyword} ({model.model_type}/builtin)")
                     continue
 
-            # Fall back to pymicro-wakeword if ONNX not available
+            # Fall back to pymicro-wakeword built-in models
             if MICRO_WAKEWORD_AVAILABLE and keyword_normalized in MICRO_BUILTIN_MODELS:
                 model_info = {
                     "id": keyword,
@@ -286,21 +297,22 @@ class WakeWordDetector:
                     print(f"Loaded wake word: {keyword} ({model.model_type}/builtin)")
                     continue
 
-            # Otherwise search in discovered models
-            model_info = self._find_model(keyword, available_models)
-            if model_info:
-                model = self._load_model(model_info)
-                if model:
-                    self._wake_models[keyword] = model
-                    print(f"Loaded wake word: {keyword} ({model.model_type})")
-            else:
-                print(f"No model found for wake word: {keyword}")
+            print(f"No model found for wake word: {keyword}")
 
         # Load stop word models
         for stop_word in self.stop_words:
             stop_normalized = stop_word.lower().replace("-", "_")
 
-            # First try openwakeword (ONNX) - works better on ARM64
+            # First check for local model files (custom/downloaded models)
+            model_info = self._find_model(stop_word, available_models)
+            if model_info:
+                model = self._load_model(model_info)
+                if model:
+                    self._stop_models[stop_word] = model
+                    print(f"Loaded stop word: {stop_word} ({model.model_type}/{model_info['path']})")
+                    continue
+
+            # Try openwakeword builtin models (pretrained)
             if ONNX_WAKEWORD_AVAILABLE:
                 model_info = {
                     "id": stop_word,
@@ -315,7 +327,7 @@ class WakeWordDetector:
                     print(f"Loaded stop word: {stop_word} ({model.model_type}/builtin)")
                     continue
 
-            # Fall back to pymicro-wakeword
+            # Fall back to pymicro-wakeword built-in models
             if MICRO_WAKEWORD_AVAILABLE and stop_normalized in MICRO_BUILTIN_MODELS:
                 model_info = {
                     "id": stop_word,
@@ -330,15 +342,7 @@ class WakeWordDetector:
                     print(f"Loaded stop word: {stop_word} ({model.model_type}/builtin)")
                     continue
 
-            # Otherwise search in discovered models
-            model_info = self._find_model(stop_word, available_models)
-            if model_info:
-                model = self._load_model(model_info)
-                if model:
-                    self._stop_models[stop_word] = model
-                    print(f"Loaded stop word: {stop_word} ({model.model_type})")
-            else:
-                print(f"No model found for stop word: {stop_word}")
+            print(f"No model found for stop word: {stop_word}")
 
         self._loaded = len(self._wake_models) > 0
         return self._loaded
@@ -474,8 +478,9 @@ class WakeWordDetector:
 
         current_time = time.time()
 
-        # Check wake words
-        for keyword, model in self._wake_models.items():
+        # Check wake words (snapshot to avoid RuntimeError if update_config
+        # modifies the dict concurrently from the WebSocket handler)
+        for keyword, model in list(self._wake_models.items()):
             # Check refractory period
             last_time = self._last_detection_time.get(keyword, 0)
             if current_time - last_time < self.refractory_seconds:
@@ -493,7 +498,7 @@ class WakeWordDetector:
                 )
 
         # Check stop words
-        for stop_word, model in self._stop_models.items():
+        for stop_word, model in list(self._stop_models.items()):
             detected, confidence = self._run_detection(model, audio_bytes)
             if detected:
                 print(f"Stop word detected: {stop_word} ({confidence:.2f})")
@@ -678,7 +683,21 @@ class WakeWordDetector:
 
         keyword_normalized = keyword.lower().replace("-", "_")
 
-        # First try openwakeword (ONNX) - works better on ARM64
+        # First check for local model files (downloaded or custom models)
+        # This must come before builtin lookups so that custom-trained ONNX
+        # models (e.g. hey_renfield) are loaded from their file path instead
+        # of being looked up as an openwakeword pretrained model name.
+        available_models = self._discover_models()
+        model_info = self._find_model(keyword, available_models)
+        if model_info:
+            model = self._load_model(model_info)
+            if model:
+                self._wake_models[keyword] = model
+                self._loaded = True
+                print(f"Loaded wake word: {keyword} ({model.model_type}/{model_info['path']})")
+                return True
+
+        # Try openwakeword builtin models (pretrained: alexa, hey_jarvis, etc.)
         if ONNX_WAKEWORD_AVAILABLE:
             model_info = {
                 "id": keyword,
@@ -694,7 +713,7 @@ class WakeWordDetector:
                 print(f"Loaded wake word: {keyword} ({model.model_type}/builtin)")
                 return True
 
-        # Fall back to pymicro-wakeword if ONNX not available
+        # Fall back to pymicro-wakeword built-in models
         if MICRO_WAKEWORD_AVAILABLE and keyword_normalized in MICRO_BUILTIN_MODELS:
             model_info = {
                 "id": keyword,
@@ -710,15 +729,6 @@ class WakeWordDetector:
                 print(f"Loaded wake word: {keyword} ({model.model_type}/builtin)")
                 return True
 
-        # Otherwise search in discovered models (files)
-        available_models = self._discover_models()
-        model_info = self._find_model(keyword, available_models)
-        if model_info:
-            model = self._load_model(model_info)
-            if model:
-                self._wake_models[keyword] = model
-                self._loaded = True  # Mark as loaded
-                return True
         return False
 
     def remove_keyword(self, keyword: str):
