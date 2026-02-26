@@ -139,7 +139,7 @@ class ST7789Display:
         self._spi = self._dc = self._rst = self._bl = None
 
     def _init_display(self):
-        """ST7789 initialization sequence."""
+        """ST7789 initialization sequence (from WhisPlay.py reference)."""
         # Hardware reset
         self._rst.on()
         time.sleep(0.01)
@@ -148,19 +148,36 @@ class ST7789Display:
         self._rst.on()
         time.sleep(0.12)
 
-        self._cmd(_SWRESET)
-        time.sleep(0.15)
         self._cmd(_SLPOUT)
         time.sleep(0.12)
 
+        # Memory access control (0xC0 = row/col mirrored for Whisplay orientation)
+        self._cmd(_MADCTL, bytes([0xC0]))
         # 16-bit color (RGB565)
-        self._cmd(_COLMOD, bytes([0x55]))
-        # Memory access control: row/col exchange for correct orientation
-        self._cmd(_MADCTL, bytes([0x00]))
+        self._cmd(_COLMOD, bytes([0x05]))
+        # Porch setting
+        self._cmd(0xB2, bytes([0x0C, 0x0C, 0x00, 0x33, 0x33]))
+        # Gate control
+        self._cmd(0xB7, bytes([0x35]))
+        # VCOM setting
+        self._cmd(0xBB, bytes([0x32]))
+        # Power control
+        self._cmd(0xC2, bytes([0x01]))
+        # VDV/VRH
+        self._cmd(0xC3, bytes([0x15]))
+        self._cmd(0xC4, bytes([0x20]))
+        # Frame rate
+        self._cmd(0xC6, bytes([0x0F]))
+        # Power control 2
+        self._cmd(0xD0, bytes([0xA4, 0xA1]))
+        # Positive gamma
+        self._cmd(0xE0, bytes([0xD0, 0x08, 0x0E, 0x09, 0x09, 0x05, 0x31, 0x33,
+                               0x48, 0x17, 0x14, 0x15, 0x31, 0x34]))
+        # Negative gamma
+        self._cmd(0xE1, bytes([0xD0, 0x08, 0x0E, 0x09, 0x09, 0x15, 0x31, 0x33,
+                               0x48, 0x17, 0x14, 0x15, 0x31, 0x34]))
         # Inversion on (required for ST7789)
         self._cmd(_INVON)
-        self._cmd(_NORON)
-        time.sleep(0.01)
         self._cmd(_DISPON)
         time.sleep(0.01)
 
@@ -175,9 +192,9 @@ class ST7789Display:
             self._spi.writebytes(list(data))
 
     def set_window(self, x0: int, y0: int, x1: int, y1: int):
-        """Set the drawing window."""
+        """Set the drawing window. Applies Y+20 offset for 240x280 panel."""
         self._cmd(_CASET, struct.pack(">HH", x0, x1))
-        self._cmd(_RASET, struct.pack(">HH", y0, y1))
+        self._cmd(_RASET, struct.pack(">HH", y0 + 20, y1 + 20))
         self._cmd(_RAMWR)
 
     def draw_image(self, image: "Image.Image"):
