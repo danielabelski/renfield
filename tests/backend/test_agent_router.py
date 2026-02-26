@@ -39,6 +39,23 @@ SAMPLE_CONFIG = {
             "max_steps": 4,
             "prompt_key": "agent_prompt_smart_home",
         },
+        "routine": {
+            "description": {
+                "de": "Routinen: Gute-Nacht-Routine, Guten-Morgen-Routine",
+                "en": "Routines: good-night routine, good-morning routine",
+            },
+            "mcp_servers": ["homeassistant", "calendar", "weather", "jellyfin", "dlna", "radio"],
+            "internal_tools": [
+                "internal.get_all_presence",
+                "internal.get_user_location",
+                "internal.resolve_room_player",
+                "internal.media_control",
+                "internal.play_in_room",
+                "internal.play_radio",
+            ],
+            "max_steps": 15,
+            "prompt_key": "agent_prompt_routine",
+        },
         "research": {
             "description": {
                 "de": "Recherche: Websuche, Nachrichten, Wetter",
@@ -146,7 +163,7 @@ class TestParseRoles:
     @pytest.mark.unit
     def test_parse_all_roles(self):
         roles = _parse_roles(SAMPLE_CONFIG)
-        assert len(roles) == 9
+        assert len(roles) == 10
         assert "smart_home" in roles
         assert "research" in roles
         assert "documents" in roles
@@ -248,7 +265,7 @@ class TestFilterAvailableRoles:
     def test_no_filter_keeps_all(self):
         roles = _parse_roles(SAMPLE_CONFIG)
         filtered = _filter_available_roles(roles, connected_servers=None)
-        assert len(filtered) == 9
+        assert len(filtered) == 10
 
     @pytest.mark.unit
     def test_filter_excludes_unavailable_servers(self):
@@ -302,7 +319,7 @@ class TestAgentRouter:
     @pytest.mark.unit
     def test_init_without_mcp(self):
         router = AgentRouter(SAMPLE_CONFIG)
-        assert len(router.roles) == 9
+        assert len(router.roles) == 10
 
     @pytest.mark.unit
     def test_init_with_mcp_filter(self):
@@ -665,3 +682,109 @@ class TestPrebuiltRoles:
         assert GENERAL_ROLE.name == "general"
         assert GENERAL_ROLE.mcp_servers is None
         assert GENERAL_ROLE.max_steps == 12
+
+
+# ============================================================================
+# Test Routine Role
+# ============================================================================
+
+class TestRoutineRole:
+    """Test the routine role for good-night / good-morning sequences."""
+
+    @pytest.mark.unit
+    def test_routine_role_properties(self):
+        roles = _parse_roles(SAMPLE_CONFIG)
+        role = roles["routine"]
+        assert role.name == "routine"
+        assert role.max_steps == 15
+        assert role.prompt_key == "agent_prompt_routine"
+        assert role.has_agent_loop is True
+        assert "homeassistant" in role.mcp_servers
+        assert "calendar" in role.mcp_servers
+        assert "weather" in role.mcp_servers
+        assert "internal.get_all_presence" in role.internal_tools
+        assert "internal.media_control" in role.internal_tools
+
+    @pytest.mark.unit
+    def test_routine_role_available_with_homeassistant(self):
+        """Routine role is available when at least one of its MCP servers is connected."""
+        roles = _parse_roles(SAMPLE_CONFIG)
+        filtered = _filter_available_roles(roles, connected_servers=["homeassistant"])
+        assert "routine" in filtered
+
+    @pytest.mark.unit
+    def test_routine_role_unavailable_without_servers(self):
+        """Routine role is excluded when none of its MCP servers are connected."""
+        roles = _parse_roles(SAMPLE_CONFIG)
+        filtered = _filter_available_roles(roles, connected_servers=[])
+        assert "routine" not in filtered
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_classify_gute_nacht(self):
+        """'Gute Nacht' is classified as routine."""
+        ollama = make_mock_ollama('{"role": "routine", "reason": "Gute-Nacht-Routine"}')
+        router = AgentRouter(SAMPLE_CONFIG)
+
+        with patch("services.agent_router.settings") as mock_settings:
+            mock_settings.ollama_intent_model = "test-model"
+            mock_settings.ollama_model = "test-model"
+            mock_settings.agent_ollama_url = None
+
+            role = await router.classify("Gute Nacht", ollama)
+            assert role.name == "routine"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_classify_guten_morgen(self):
+        """'Guten Morgen' is classified as routine."""
+        ollama = make_mock_ollama('{"role": "routine", "reason": "Guten-Morgen-Routine"}')
+        router = AgentRouter(SAMPLE_CONFIG)
+
+        with patch("services.agent_router.settings") as mock_settings:
+            mock_settings.ollama_intent_model = "test-model"
+            mock_settings.ollama_model = "test-model"
+            mock_settings.agent_ollama_url = None
+
+            role = await router.classify("Guten Morgen", ollama)
+            assert role.name == "routine"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_classify_ich_gehe_schlafen(self):
+        """'Ich gehe schlafen' is classified as routine."""
+        ollama = make_mock_ollama('{"role": "routine", "reason": "Schlafenszeit"}')
+        router = AgentRouter(SAMPLE_CONFIG)
+
+        with patch("services.agent_router.settings") as mock_settings:
+            mock_settings.ollama_intent_model = "test-model"
+            mock_settings.ollama_model = "test-model"
+            mock_settings.agent_ollama_url = None
+
+            role = await router.classify("Ich gehe schlafen", ollama)
+            assert role.name == "routine"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_classify_casual_morgen_as_conversation(self):
+        """Casual 'Morgen!' is classified as conversation, not routine."""
+        ollama = make_mock_ollama('{"role": "conversation", "reason": "Beilaeufiger Gruss"}')
+        router = AgentRouter(SAMPLE_CONFIG)
+
+        with patch("services.agent_router.settings") as mock_settings:
+            mock_settings.ollama_intent_model = "test-model"
+            mock_settings.ollama_model = "test-model"
+            mock_settings.agent_ollama_url = None
+
+            role = await router.classify("Morgen!", ollama)
+            assert role.name == "conversation"
+
+    @pytest.mark.unit
+    def test_routine_in_actual_config(self):
+        """Verify that the actual agent_roles.yaml contains the routine role."""
+        config = load_roles_config("config/agent_roles.yaml")
+        assert "routine" in config["roles"]
+        role_cfg = config["roles"]["routine"]
+        assert "homeassistant" in role_cfg["mcp_servers"]
+        assert role_cfg["max_steps"] == 15
+        assert role_cfg["prompt_key"] == "agent_prompt_routine"
