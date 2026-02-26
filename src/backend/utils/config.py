@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     ollama_read_timeout: float = 300.0            # Read timeout for long LLM responses
     ollama_fallback_url: str = ""                 # Fallback Ollama URL if primary is unreachable (e.g. http://host.docker.internal:11434)
     ollama_vision_model: str = ""                  # Vision-capable model (e.g. "minicpm-v"). Empty = vision disabled.
+    ollama_vision_url: str | None = None         # Separate Ollama URL for vision model (default: ollama_url)
     ollama_embed_url: str | None = None          # Separate Ollama URL for embeddings (default: ollama_url)
 
     # Home Assistant

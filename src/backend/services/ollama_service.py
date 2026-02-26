@@ -300,8 +300,15 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                 "images": [image_b64],
             })
 
+            # Use dedicated vision URL if configured, otherwise default client
+            if settings.ollama_vision_url:
+                from utils.llm_client import _make_client_with_fallback
+                vision_client = _make_client_with_fallback(settings.ollama_vision_url)
+            else:
+                vision_client = self.client
+
             classification_kwargs = get_classification_chat_kwargs(vision_model)
-            async for chunk in await self.client.chat(
+            async for chunk in await vision_client.chat(
                 model=vision_model,
                 messages=messages,
                 stream=True,
