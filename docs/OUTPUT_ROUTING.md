@@ -16,15 +16,18 @@ Renfield unterstützt intelligentes Routing von TTS-Ausgaben an das beste verfü
 
 ### ADVERTISE_HOST Konfiguration
 
-Damit Home Assistant die TTS-Audio-Dateien vom Renfield-Backend abrufen kann, muss `ADVERTISE_HOST` in der `.env` Datei gesetzt werden:
+Damit HA Media Player und DLNA Renderer die TTS-Audio-Dateien vom Renfield-Backend abrufen können, muss `ADVERTISE_HOST` in der `.env` Datei gesetzt werden:
 
 ```bash
 # .env
-ADVERTISE_HOST=192.168.1.100  # IP oder Hostname des Renfield-Servers
-ADVERTISE_PORT=8000           # Optional, Standard: 8000
+ADVERTISE_HOST=192.168.1.159  # IP-Adresse des Renfield-Servers
+ADVERTISE_PORT=80             # Port 80 = Nginx (empfohlen für Produktion)
 ```
 
-Der Wert muss eine Adresse sein, die Home Assistant erreichen kann (nicht `localhost`).
+**Wichtig:**
+- **IP-Adresse verwenden**, nicht mDNS (`.local`) — DLNA-Renderer können mDNS oft nicht auflösen
+- **Port 80** verwenden — Port 8000 ist nur auf `127.0.0.1` gebunden und von extern nicht erreichbar
+- Nginx muss `/api/voice/tts-cache/` über **plain HTTP** weiterleiten (ohne HTTPS-Redirect), da DLNA-Renderer kein HTTPS/self-signed Certs unterstützen
 
 ## Konfiguration über das Frontend
 
@@ -252,18 +255,21 @@ User spricht zum Tablet: "Wie ist das Wetter?"
 
 ## Troubleshooting
 
-### TTS wird nicht auf HA Media Player abgespielt
+### TTS wird nicht auf HA Media Player / DLNA Renderer abgespielt
 
 1. **ADVERTISE_HOST prüfen:**
    ```bash
    docker exec renfield-backend env | grep ADVERTISE
    ```
-   Muss auf erreichbare IP/Hostname gesetzt sein.
+   Muss auf erreichbare IP gesetzt sein (nicht `.local` für DLNA!).
 
-2. **Kann HA die URL erreichen?**
+2. **Kann der Renderer die URL erreichen?**
    ```bash
-   # Von HA aus testen:
-   curl http://<ADVERTISE_HOST>:8000/api/voice/tts-cache/test
+   # Von einem anderen Gerät im LAN testen:
+   curl http://<ADVERTISE_HOST>/api/voice/tts-cache/test
+   # Erwartung: 404 (Not Found) = Endpoint erreichbar
+   # 301 = HTTPS-Redirect (Nginx-Konfig prüfen)
+   # Connection refused = Port/IP falsch
    ```
 
 3. **Media Player Status prüfen:**

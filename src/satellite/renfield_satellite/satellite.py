@@ -76,7 +76,7 @@ class Satellite:
         self._silence_chunks: int = 0  # Consecutive non-speech chunks (for audio-time silence detection)
         self._listening_start: Optional[float] = None  # When listening state began
         self._processing_start: Optional[float] = None  # Track when processing started
-        self._processing_timeout: float = 30.0  # Max time to wait for server response
+        self._processing_timeout: float = 60.0  # Max time to wait for server response (vision models need more time)
         self._reconnecting: bool = False  # Prevent duplicate reconnection attempts
         self._wakeword_pending: bool = False  # Prevent duplicate wakeword processing
         self._pending_snapshot: Optional[asyncio.Task] = None  # Background camera capture

@@ -110,6 +110,28 @@ Siehe `docs/LLM_MODEL_GUIDE.md` für eine vollständige Modell-Übersicht pro Ro
 
 ---
 
+### Vision LLM (Satellite Camera)
+
+```bash
+# Vision-fähiges Modell für Kamera-Snapshots von Satellites
+# Leer = Visual Queries deaktiviert (Bilder werden ignoriert)
+OLLAMA_VISION_MODEL=qwen3-vl
+
+# Optional: Separate Ollama-URL für das Vision-Modell
+# Nützlich wenn Vision auf einer anderen GPU läuft als Chat
+OLLAMA_VISION_URL=http://host.docker.internal:11434
+```
+
+**Defaults:**
+- `OLLAMA_VISION_MODEL`: `""` (deaktiviert)
+- `OLLAMA_VISION_URL`: `None` (verwendet Standard-OLLAMA_URL)
+
+**Empfohlenes Modell:** `qwen3-vl` (~12 GB VRAM, passt auf 16 GB Karten, gutes Deutsch).
+
+Siehe [SATELLITE_CAMERA.md](SATELLITE_CAMERA.md) für Setup und Modellvergleich.
+
+---
+
 ### Sprache & Voice
 
 ```bash
@@ -512,31 +534,38 @@ ADVERTISE_IP=192.168.1.100
 ### Audio Output Routing
 
 ```bash
-# Hostname/IP die externe Dienste (z.B. Home Assistant) erreichen können
-ADVERTISE_HOST=demeter.local
+# Hostname/IP die externe Dienste (HA Media Player, DLNA Renderer) erreichen können
+ADVERTISE_HOST=192.168.1.159
 
-# Port für ADVERTISE_HOST (optional)
-ADVERTISE_PORT=8000
+# Port für ADVERTISE_HOST (Default: 8000, setze 80 wenn über Nginx)
+ADVERTISE_PORT=80
 ```
 
 **Defaults:**
-- `ADVERTISE_HOST`: None (muss gesetzt werden für HA Media Player Output)
+- `ADVERTISE_HOST`: None (muss gesetzt werden für HA Media Player / DLNA Output)
 - `ADVERTISE_PORT`: `8000`
 
 **Wann benötigt:**
-- Wenn TTS-Ausgabe auf Home Assistant Media Playern erfolgen soll
+- Wenn TTS-Ausgabe auf Home Assistant Media Playern oder DLNA Renderern erfolgen soll
 - Der Wert muss eine Adresse sein, die Home Assistant erreichen kann (nicht `localhost`!)
 
 **Beispiele:**
 ```bash
-ADVERTISE_HOST=192.168.1.100      # IP-Adresse
-ADVERTISE_HOST=renfield.local     # mDNS Hostname
-ADVERTISE_HOST=demeter.local      # Server Hostname
+ADVERTISE_HOST=192.168.1.159      # IP-Adresse (empfohlen für DLNA)
+ADVERTISE_HOST=renfield.local     # mDNS Hostname (funktioniert NICHT für DLNA Renderer)
 ```
+
+**Wichtig:** DLNA-Renderer (z.B. HiFiBerry) können mDNS-Hostnamen (`.local`) oft
+nicht auflösen. **IP-Adresse verwenden** wenn DLNA-Ausgabe genutzt wird.
+
+**Port 80 vs 8000:** Der Backend-Container exposed Port 8000 nur auf `127.0.0.1`.
+Für externe Zugriffe (DLNA, HA) muss der Traffic über Nginx (Port 80) laufen.
+Setze `ADVERTISE_PORT=80` in Produktion. Nginx leitet `/api/voice/tts-cache/`
+über plain HTTP (ohne HTTPS-Redirect) an den Backend weiter.
 
 **Ohne ADVERTISE_HOST:**
 - TTS wird nur auf Renfield-Geräten (Satellites, Web Panels) abgespielt
-- HA Media Player können keine TTS-Dateien abrufen
+- HA Media Player und DLNA Renderer können keine TTS-Dateien abrufen
 
 **Dokumentation:** Siehe `OUTPUT_ROUTING.md` für Details zum Output Routing System.
 
@@ -1210,8 +1239,8 @@ WAKE_WORD_THRESHOLD=0.5
 # Audio Output Routing
 # -----------------------------------------------------------------------------
 # Hostname/IP die externe Dienste (z.B. HA) erreichen können
-ADVERTISE_HOST=demeter.local
-ADVERTISE_PORT=8000
+ADVERTISE_HOST=192.168.1.159
+ADVERTISE_PORT=80
 
 # -----------------------------------------------------------------------------
 # MCP Server

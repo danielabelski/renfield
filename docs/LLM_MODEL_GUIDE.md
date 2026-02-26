@@ -11,7 +11,8 @@ Keine Cloud-LLMs — alles laeuft lokal auf eigener Hardware.
 
 1. [Aktueller Stand (Produktion)](#aktueller-stand-produktion)
 2. [Alle LLM-Funktionen im Detail](#alle-llm-funktionen-im-detail)
-3. [Embedding-Modell](#8-embeddings)
+3. [Vision-Modell](#8-vision-satellite-camera)
+4. [Embedding-Modell](#9-embeddings)
 4. [Hardware-Architektur: Dual-Ollama](#hardware-architektur-dual-ollama)
 5. [Konfiguration](#konfiguration)
 6. [Qualitaetsvergleich](#qualitaetsvergleich-qwen314b-vs-30b-a3b)
@@ -29,6 +30,7 @@ Keine Cloud-LLMs — alles laeuft lokal auf eigener Hardware.
 | `ollama_intent_model` | `qwen3:8b` | RTX 5070 Ti (cuda.local) | Intent-Erkennung |
 | `ollama_embed_model` | `qwen3-embedding:4b` | RTX 5070 Ti (cuda.local) | Alle Embeddings (5 Services, 2560 dim) |
 | `agent_model` | `qwen3:14b` | RTX 5060 Ti (renfield.local) | Agent Loop, Router |
+| `ollama_vision_model` | `qwen3-vl` | RTX 5060 Ti (renfield.local) | Satellite Camera Visual Queries |
 | `proactive_enrichment_model` | `None` (Fallback auf chat_model) | — | Notification-Enrichment |
 
 **Qwen3-Familie** — Vollstaendig migriert (Februar 2026). Alle Rollen nutzen Qwen3-Modelle mit `think=False` fuer schnelle, deterministische Antworten. Exzellentes Deutsch, zuverlaessiges JSON, starkes Tool-Calling.
@@ -156,7 +158,33 @@ Keine Cloud-LLMs — alles laeuft lokal auf eigener Hardware.
 
 ---
 
-### 8. Embeddings
+### 8. Vision (Satellite Camera)
+
+| Aspekt | Detail |
+|--------|--------|
+| **Config** | `ollama_vision_model` + `ollama_vision_url` |
+| **Service** | `ollama_service.py` → `chat_stream_with_image()` |
+| **Aufgabe** | Bild + Text → natuerliche Bildbeschreibung (Deutsch/Englisch) |
+| **Output** | Freitext (Beschreibung der Szene) |
+| **Anforderung** | Vision-faehig, gutes Deutsch, muss in 16 GB VRAM passen |
+
+**Aktuell (PRD):** `qwen3-vl` (~12 GB VRAM) auf RTX 5060 Ti (renfield.local) — Unterstuetzt Thinking-Modus (`think=False` aktiv), exzellentes Deutsch, ~30s pro Query (davon ~25s Prompt-Evaluation fuer Bild-Tokens).
+
+**Alternativen:**
+
+| Modell | VRAM | Geschwindigkeit | Qualitaet | Anmerkung |
+|--------|------|-----------------|-----------|-----------|
+| **`qwen3-vl`** | ~12 GB | ~30s | Exzellent | Empfohlen, passt auf 16 GB |
+| `qwen2.5vl` | ~10 GB | ~25s | Gut | Aeltere Generation |
+| `llava:7b` | ~6 GB | ~8s | Gut | Schnell, aber schwaecher auf Deutsch |
+| `llava:13b` | ~12 GB | ~15s | Sehr gut | Guter Kompromiss |
+| `minicpm-v` | ~19 GB | ~50s | Gut | Passt NICHT auf 16 GB (Partial Offload) |
+
+**WARNUNG:** `minicpm-v` benoetigt ~19 GB VRAM. Auf einer 16 GB Karte wird es teilweise auf die CPU ausgelagert, was die Latenz auf ~50s erhoehen kann.
+
+---
+
+### 9. Embeddings
 
 | Aspekt | Detail |
 |--------|--------|
@@ -224,7 +252,8 @@ Ollama Primary (cuda.local — RTX 5070 Ti 16 GB, 896 GB/s)
 └── qwen3-embedding:4b  ~3 GB  [Embeddings, 2560 dim] keep_alive=-1
 
 Ollama Agent (renfield.local — RTX 5060 Ti 16 GB, 448 GB/s)
-└── qwen3:14b          ~10 GB  [Agent Loop + Router]  keep_alive=5m
+├── qwen3:14b          ~10 GB  [Agent Loop + Router]  keep_alive=5m
+└── qwen3-vl           ~12 GB  [Vision / Camera]      keep_alive=5m
 ```
 
 Alle Modelle nutzen `think=False` fuer schnelle, deterministische Antworten. Dense-Architektur = vorhersagbare Latenz. Ollama laedt Modelle on-demand; qwen3:14b und qwen3:8b teilen sich den VRAM auf der Primary GPU (nur eines aktiv, `keep_alive=5m`).
@@ -262,6 +291,10 @@ AGENT_TOTAL_TIMEOUT=600.0
 
 # Fallback: Wenn cuda.local offline, nutze renfield.local's GPU
 OLLAMA_FALLBACK_URL=http://host.docker.internal:11434
+
+# === Vision (Satellite Camera — RTX 5060 Ti auf renfield.local) ===
+OLLAMA_VISION_MODEL=qwen3-vl
+OLLAMA_VISION_URL=http://host.docker.internal:11434
 ```
 
 **`host.docker.internal`** wird von Docker zu der IP des Host-Systems aufgeloest. Da das Renfield-Backend als Docker-Container auf renfield.local laeuft, zeigt `host.docker.internal` auf die lokale Ollama-Instanz (RTX 5060 Ti).
@@ -362,6 +395,11 @@ Ungefaehre Werte fuer Q4_K_M Quantisierung:
 | qwen3:30b-a3b | 30B (3B aktiv) | MoE | ~20 GB | ~0.2 GB | ~20.2 GB |
 | qwen3:32b | 32B | Dense | ~22 GB | ~1.0 GB | ~23 GB |
 | mistral-small3.2:24b | 24B | Dense | ~15 GB | ~1.7 GB | **~16.7 GB** |
+| **qwen3-vl** | **8.8B** | **Vision** | **~10 GB** | **~2 GB** | **~12 GB** |
+| qwen2.5vl | 7B | Vision | ~8 GB | ~2 GB | ~10 GB |
+| minicpm-v | 8B | Vision | ~17 GB | ~2 GB | ~19 GB |
+| llava:7b | 7B | Vision | ~5 GB | ~1 GB | ~6 GB |
+| llava:13b | 13B | Vision | ~10 GB | ~2 GB | ~12 GB |
 | qwen3-embedding:4b | 4B | — | ~3 GB | — | ~3 GB |
 | qwen3-embedding:0.6b | 0.6B | — | ~0.5 GB | — | ~0.5 GB |
 | nomic-embed-text | 137M | — | ~0.3 GB | — | ~0.3 GB |

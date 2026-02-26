@@ -69,6 +69,13 @@ class AudioOutputService:
                 device_id=output_device.renfield_device_id,
                 session_id=session_id
             )
+        elif output_device.is_dlna_device:
+            return await self._play_on_dlna_renderer(
+                audio_bytes=audio_bytes,
+                renderer_name=output_device.dlna_renderer_name,
+                tts_volume=output_device.tts_volume,
+                session_id=session_id
+            )
         else:
             return await self._play_on_ha_media_player(
                 audio_bytes=audio_bytes,
@@ -113,6 +120,64 @@ class AudioOutputService:
 
         except Exception as e:
             logger.error(f"Failed to send audio to Renfield device {device_id}: {e}")
+            return False
+
+    async def _play_on_dlna_renderer(
+        self,
+        audio_bytes: bytes,
+        renderer_name: str,
+        tts_volume: float | None,
+        session_id: str
+    ) -> bool:
+        """
+        Play audio on a DLNA renderer via the DLNA MCP server.
+
+        1. Save audio to cache file
+        2. Call mcp.dlna.play_tracks with the cache URL
+        """
+        import json
+
+        await self._cleanup_old_cache_files()
+
+        audio_id = f"tts_{session_id}_{uuid.uuid4().hex[:8]}"
+        audio_path = self.TTS_CACHE_DIR / f"{audio_id}.wav"
+
+        try:
+            audio_path.write_bytes(audio_bytes)
+        except Exception as e:
+            logger.error(f"Failed to cache TTS audio for DLNA: {e}")
+            return False
+
+        base_url = self._get_backend_url()
+        audio_url = f"{base_url}/api/voice/tts-cache/{audio_id}"
+
+        try:
+            from main import app
+            mcp_manager = getattr(app.state, "mcp_manager", None)
+            if not mcp_manager:
+                logger.warning(f"MCP manager not available for DLNA playback on {renderer_name}")
+                return False
+
+            tracks = [{"url": audio_url, "title": "Renfield TTS"}]
+            logger.info(f"🔊 DLNA play_tracks: renderer={renderer_name}, url={audio_url}")
+            result = await mcp_manager.execute_tool(
+                "mcp.dlna.play_tracks",
+                {
+                    "renderer_name": renderer_name,
+                    "tracks": json.dumps(tracks),
+                },
+            )
+            logger.info(f"🔊 DLNA play_tracks result: {result}")
+
+            if result.get("success"):
+                logger.info(f"🔊 Playing TTS audio on DLNA renderer {renderer_name}")
+                return True
+            else:
+                logger.warning(f"DLNA playback failed on {renderer_name}: {result.get('message', 'unknown')}")
+                return False
+
+        except Exception as e:
+            logger.error(f"Failed to play audio on DLNA renderer {renderer_name}: {e}")
             return False
 
     async def _play_on_ha_media_player(
@@ -239,8 +304,10 @@ class AudioOutputService:
         """
         if settings.advertise_host:
             host = settings.advertise_host
-            port = settings.advertise_port or 8000
-            return f"http://{host}:{port}"
+            port = settings.advertise_port
+            if port and port != 80:
+                return f"http://{host}:{port}"
+            return f"http://{host}"
 
         # Use internal Docker URL - works when HA and Renfield are on same Docker network
         logger.debug(f"Using internal backend URL: {settings.backend_internal_url}")
