@@ -22,8 +22,9 @@ from .audio.playback import AudioPlayback, AudioPlaybackAsync
 from .audio.preprocessor import AudioPreprocessor
 from .audio.vad import VoiceActivityDetector, VADBackend
 from .wakeword.detector import WakeWordDetector, Detection
-from .hardware.led import LEDController, LEDPattern
+from .hardware.led import LEDController, GPIOLEDController, LEDPattern
 from .hardware.button import ButtonHandler
+from .hardware.display import DisplayController
 from .network.websocket_client import WebSocketClient, ServerConfig
 from .network.discovery import ServiceDiscovery
 from .network.auth import fetch_ws_token, http_url_from_ws
@@ -145,14 +146,31 @@ class Satellite:
             refractory_seconds=self.config.wakeword.refractory_seconds,
         )
 
-        # LED controller
-        self.leds = LEDController(
-            num_leds=self.config.led.num_leds,
-            spi_bus=self.config.led.spi_bus,
-            spi_device=self.config.led.spi_device,
-            brightness=self.config.led.brightness,
-            led_power_pin=self.config.led.led_power_pin,
-        )
+        # LED controller (select based on type)
+        if self.config.led.type == "gpio_rgb":
+            self.leds = GPIOLEDController(
+                gpio_red=self.config.led.gpio_red or 25,
+                gpio_green=self.config.led.gpio_green or 24,
+                gpio_blue=self.config.led.gpio_blue or 23,
+                brightness=self.config.led.brightness,
+            )
+        else:
+            self.leds = LEDController(
+                num_leds=self.config.led.num_leds,
+                spi_bus=self.config.led.spi_bus,
+                spi_device=self.config.led.spi_device,
+                brightness=self.config.led.brightness,
+                led_power_pin=self.config.led.led_power_pin,
+            )
+
+        # Display controller (optional, Whisplay HAT)
+        self.display: Optional[DisplayController] = None
+        if self.config.display.enabled:
+            self.display = DisplayController(
+                width=self.config.display.width,
+                height=self.config.display.height,
+                room=self.config.satellite.room,
+            )
 
         # Button handler
         self.button = ButtonHandler(
@@ -242,6 +260,10 @@ class Satellite:
         if not self.leds.open():
             print("Warning: LED control not available")
 
+        if self.display and not self.display.open():
+            print("Warning: Display not available")
+            self.display = None
+
         if not self.button.setup():
             print("Warning: Button control not available")
 
@@ -307,9 +329,12 @@ class Satellite:
         # Stop discovery if running
         await self.discovery.stop_continuous_discovery()
 
-        # Turn off LEDs
+        # Turn off LEDs and display
         self.leds.set_pattern(LEDPattern.OFF)
         self.leds.close()
+
+        if self.display:
+            self.display.close()
 
         # Cleanup GPIO
         self.button.cleanup()
@@ -456,6 +481,10 @@ class Satellite:
             SatelliteState.ERROR: LEDPattern.ERROR,
         }
         self.leds.set_pattern(pattern_map.get(state, LEDPattern.OFF))
+
+        # Update display
+        if self.display:
+            self.display.update_state(state.value)
 
     def _schedule_async(self, coro):
         """Schedule a coroutine from a non-async context (thread-safe)"""

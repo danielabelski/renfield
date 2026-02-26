@@ -1,0 +1,27 @@
+---
+# Whisplay HAT configuration (WM8960 codec + LCD + GPIO RGB LED)
+
+hat_type: "whisplay"
+satellite_id: "sat-arbeitszimmer"
+satellite_room: "Arbeitszimmer"
+
+# Audio (stereo with beamforming)
+audio_device: "capture"
+audio_playback_device: "plughw:0,0"
+audio_channels: 2
+beamforming_enabled: true
+beamforming_mic_spacing: 0.040   # ~40mm estimated MEMS spacing
+
+# Whisplay GPIO RGB LED (not APA102)
+led_type: "gpio_rgb"
+led_gpio_red: 25
+led_gpio_green: 24
+led_gpio_blue: 23
+
+# Display
+display_enabled: true
+
+# No SPI LEDs
+led_num: 0
+led_spi_device: 0
+led_power_pin: null

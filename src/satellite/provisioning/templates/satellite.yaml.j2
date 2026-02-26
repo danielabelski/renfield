@@ -23,10 +23,10 @@ audio:
   playback_device: "{{ audio_playback_device }}"
   beamforming:
     enabled: {{ beamforming_enabled | lower }}
-{%- if beamforming_enabled %}
+{% if beamforming_enabled %}
     mic_spacing: {{ beamforming_mic_spacing }}
     steering_angle: 0.0
-{%- endif %}
+{% endif %}
 
 wakeword:
   model: "{{ wakeword_model }}"
@@ -41,13 +41,25 @@ vad:
   silero_threshold: {{ vad_silero_threshold }}
 
 led:
+  type: "{{ led_type | default('apa102') }}"
   brightness: {{ led_brightness }}
+{% if led_type | default('apa102') == 'gpio_rgb' %}
+  gpio_red: {{ led_gpio_red }}
+  gpio_green: {{ led_gpio_green }}
+  gpio_blue: {{ led_gpio_blue }}
+{% else %}
   num_leds: {{ led_num }}
   spi_bus: 0
   spi_device: {{ led_spi_device }}
-{%- if led_power_pin is not none %}
+{% if led_power_pin is not none %}
   led_power_pin: {{ led_power_pin }}
-{%- endif %}
+{% endif %}
+{% endif %}
+
+display:
+  enabled: {{ display_enabled | default(false) | lower }}
+  width: 240
+  height: 280
 
 button:
   gpio_pin: {{ button_gpio_pin }}
