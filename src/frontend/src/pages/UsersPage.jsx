@@ -6,7 +6,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
-import apiClient, { extractApiError } from '../utils/axios';
+import apiClient, { extractApiError, extractFieldErrors } from '../utils/axios';
 import Modal from '../components/Modal';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
@@ -49,6 +49,7 @@ export default function UsersPage() {
   });
   const [showPassword, setShowPassword] = useState(false);
   const [formLoading, setFormLoading] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState({});
 
   // Load data
   const loadData = useCallback(async () => {
@@ -105,6 +106,7 @@ export default function UsersPage() {
       personality_prompt: ''
     });
     setShowPassword(false);
+    setFieldErrors({});
     setShowModal(true);
   };
 
@@ -123,7 +125,16 @@ export default function UsersPage() {
       personality_prompt: user.personality_prompt || ''
     });
     setShowPassword(false);
+    setFieldErrors({});
     setShowModal(true);
+  };
+
+  // Update form field and clear its error
+  const updateField = (field, value) => {
+    setFormData(prev => ({ ...prev, [field]: value }));
+    if (fieldErrors[field]) {
+      setFieldErrors(prev => { const next = { ...prev }; delete next[field]; return next; });
+    }
   };
 
   // Submit form
@@ -177,7 +188,12 @@ export default function UsersPage() {
       setShowModal(false);
       loadData();
     } catch (err) {
-      setError(extractApiError(err, t('users.failedToSave')));
+      const fields = extractFieldErrors(err);
+      if (Object.keys(fields).length > 0) {
+        setFieldErrors(fields);
+      } else {
+        setError(extractApiError(err, t('users.failedToSave')));
+      }
     } finally {
       setFormLoading(false);
     }
@@ -420,13 +436,16 @@ export default function UsersPage() {
             <input
               type="text"
               value={formData.username}
-              onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-              className="input w-full"
+              onChange={(e) => updateField('username', e.target.value)}
+              className={`input w-full ${fieldErrors.username ? 'input-error' : ''}`}
               placeholder={t('auth.enterUsername')}
               required
               minLength={3}
               disabled={formLoading}
             />
+            {fieldErrors.username && (
+              <p className="mt-1 text-sm text-red-600 dark:text-red-400">{fieldErrors.username}</p>
+            )}
           </div>
 
           {/* First Name / Last Name */}
@@ -438,12 +457,15 @@ export default function UsersPage() {
               <input
                 type="text"
                 value={formData.first_name}
-                onChange={(e) => setFormData({ ...formData, first_name: e.target.value })}
-                className="input w-full"
+                onChange={(e) => updateField('first_name', e.target.value)}
+                className={`input w-full ${fieldErrors.first_name ? 'input-error' : ''}`}
                 placeholder={t('users.firstNamePlaceholder')}
                 maxLength={100}
                 disabled={formLoading}
               />
+              {fieldErrors.first_name && (
+                <p className="mt-1 text-sm text-red-600 dark:text-red-400">{fieldErrors.first_name}</p>
+              )}
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -452,12 +474,15 @@ export default function UsersPage() {
               <input
                 type="text"
                 value={formData.last_name}
-                onChange={(e) => setFormData({ ...formData, last_name: e.target.value })}
-                className="input w-full"
+                onChange={(e) => updateField('last_name', e.target.value)}
+                className={`input w-full ${fieldErrors.last_name ? 'input-error' : ''}`}
                 placeholder={t('users.lastNamePlaceholder')}
                 maxLength={100}
                 disabled={formLoading}
               />
+              {fieldErrors.last_name && (
+                <p className="mt-1 text-sm text-red-600 dark:text-red-400">{fieldErrors.last_name}</p>
+              )}
             </div>
           </div>
 
@@ -469,11 +494,14 @@ export default function UsersPage() {
             <input
               type="email"
               value={formData.email}
-              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-              className="input w-full"
+              onChange={(e) => updateField('email', e.target.value)}
+              className={`input w-full ${fieldErrors.email ? 'input-error' : ''}`}
               placeholder={t('auth.emailPlaceholder')}
               disabled={formLoading}
             />
+            {fieldErrors.email && (
+              <p className="mt-1 text-sm text-red-600 dark:text-red-400">{fieldErrors.email}</p>
+            )}
           </div>
 
           {/* Password */}
@@ -486,8 +514,8 @@ export default function UsersPage() {
               <input
                 type={showPassword ? 'text' : 'password'}
                 value={formData.password}
-                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                className="input w-full pr-10"
+                onChange={(e) => updateField('password', e.target.value)}
+                className={`input w-full pr-10 ${fieldErrors.password ? 'input-error' : ''}`}
                 placeholder={editingUser ? '••••••••' : t('auth.enterPassword')}
                 required={!editingUser}
                 minLength={8}
@@ -501,6 +529,9 @@ export default function UsersPage() {
                 {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
               </button>
             </div>
+            {fieldErrors.password && (
+              <p className="mt-1 text-sm text-red-600 dark:text-red-400">{fieldErrors.password}</p>
+            )}
           </div>
 
           {/* Role */}
@@ -510,8 +541,8 @@ export default function UsersPage() {
             </label>
             <select
               value={formData.role_id}
-              onChange={(e) => setFormData({ ...formData, role_id: e.target.value })}
-              className="input w-full"
+              onChange={(e) => updateField('role_id', e.target.value)}
+              className={`input w-full ${fieldErrors.role_id ? 'input-error' : ''}`}
               required
               disabled={formLoading}
             >
@@ -522,6 +553,9 @@ export default function UsersPage() {
                 </option>
               ))}
             </select>
+            {fieldErrors.role_id && (
+              <p className="mt-1 text-sm text-red-600 dark:text-red-400">{fieldErrors.role_id}</p>
+            )}
           </div>
 
           {/* Active */}
@@ -530,7 +564,7 @@ export default function UsersPage() {
               type="checkbox"
               id="is_active"
               checked={formData.is_active}
-              onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
+              onChange={(e) => updateField('is_active', e.target.checked)}
               className="w-4 h-4 rounded-sm border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-700 text-primary-600 focus:ring-primary-500"
               disabled={formLoading}
             />
@@ -546,7 +580,7 @@ export default function UsersPage() {
             </label>
             <select
               value={formData.personality_style}
-              onChange={(e) => setFormData({ ...formData, personality_style: e.target.value })}
+              onChange={(e) => updateField('personality_style', e.target.value)}
               className="input w-full"
               disabled={formLoading}
             >
@@ -565,7 +599,7 @@ export default function UsersPage() {
             </label>
             <textarea
               value={formData.personality_prompt}
-              onChange={(e) => setFormData({ ...formData, personality_prompt: e.target.value })}
+              onChange={(e) => updateField('personality_prompt', e.target.value)}
               className="input w-full"
               rows={3}
               placeholder={t('users.personalityPromptPlaceholder')}

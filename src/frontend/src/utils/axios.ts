@@ -33,6 +33,42 @@ apiClient.interceptors.response.use(
 );
 
 /**
+ * Extract per-field validation errors from a Pydantic 422 response.
+ * Returns a map of field name → error message. Empty {} for non-field errors.
+ */
+export function extractFieldErrors(err: unknown): Record<string, string> {
+  const resp = (err as AxiosError<{ detail?: unknown }>)?.response;
+  const detail = resp?.data?.detail;
+
+  // Pydantic 422: detail is an array of { loc, msg, type }
+  if (resp?.status === 422 && Array.isArray(detail)) {
+    const fields: Record<string, string> = {};
+    for (const d of detail) {
+      const loc = d.loc as string[] | undefined;
+      const msg = d.msg as string | undefined;
+      if (loc && msg) {
+        // loc is e.g. ["body", "username"] — take the last element as field name
+        const fieldName = loc[loc.length - 1];
+        if (fieldName && fieldName !== 'body') {
+          fields[fieldName] = msg;
+        }
+      }
+    }
+    if (Object.keys(fields).length > 0) return fields;
+  }
+
+  // Non-422 string detail with field name hints
+  if (typeof detail === 'string') {
+    const lower = detail.toLowerCase();
+    if (lower.includes('username')) return { username: detail };
+    if (lower.includes('email')) return { email: detail };
+    if (lower.includes('password')) return { password: detail };
+  }
+
+  return {};
+}
+
+/**
  * Extract a displayable error message from an Axios error.
  * Handles both simple string details and Pydantic 422 validation arrays.
  */
