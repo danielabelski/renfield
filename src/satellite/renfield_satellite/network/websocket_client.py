@@ -624,7 +624,8 @@ class WebSocketClient:
     async def send_audio_end(
         self,
         session_id: str,
-        reason: str = "silence"
+        reason: str = "silence",
+        image_b64: str | None = None,
     ):
         """
         Notify server that audio streaming has ended.
@@ -632,15 +633,20 @@ class WebSocketClient:
         Args:
             session_id: Current session ID
             reason: Why audio ended (silence, button, timeout)
+            image_b64: Optional base64-encoded JPEG snapshot for visual queries
         """
         if not self.is_connected:
             return
 
-        await self._send({
+        msg = {
             "type": "audio_end",
             "session_id": session_id,
-            "reason": reason
-        })
+            "reason": reason,
+        }
+        if image_b64:
+            msg["image"] = image_b64
+
+        await self._send(msg)
 
         self._current_session_id = None
 

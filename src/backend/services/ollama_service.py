@@ -254,6 +254,69 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             logger.error(f"Streaming Fehler: {e}")
             yield prompt_manager.get("chat", "error_fallback", lang=lang, default=f"Fehler: {e!s}", error=str(e))
 
+    async def chat_stream_with_image(
+        self,
+        message: str,
+        image_b64: str,
+        history: list[dict] | None = None,
+        lang: str | None = None,
+    ) -> AsyncGenerator[str, None]:
+        """
+        Streaming chat with a vision-capable model.
+
+        Sends an image alongside the user message using Ollama's images parameter.
+
+        Args:
+            message: User message (transcribed speech)
+            image_b64: Base64-encoded JPEG image
+            history: Optional conversation history
+            lang: Language for the response (de/en)
+        """
+        lang = lang or self.default_lang
+        vision_model = settings.ollama_vision_model
+
+        if not vision_model:
+            logger.warning("chat_stream_with_image called but no vision model configured")
+            async for chunk in self.chat_stream(message, history=history, lang=lang):
+                yield chunk
+            return
+
+        if not await llm_circuit_breaker.allow_request():
+            logger.warning("🔴 LLM circuit breaker OPEN — rejecting vision request")
+            yield prompt_manager.get("chat", "error_fallback", lang=lang, default="LLM-Service vorübergehend nicht verfügbar.", error="Circuit Breaker aktiv")
+            return
+
+        try:
+            message = _sanitize_user_input(message)
+            system_prompt = self.get_system_prompt(lang)
+            messages = [{"role": "system", "content": system_prompt}]
+
+            if history:
+                messages.extend(history)
+
+            messages.append({
+                "role": "user",
+                "content": message,
+                "images": [image_b64],
+            })
+
+            classification_kwargs = get_classification_chat_kwargs(vision_model)
+            async for chunk in await self.client.chat(
+                model=vision_model,
+                messages=messages,
+                stream=True,
+                options={"num_ctx": settings.ollama_num_ctx},
+                **classification_kwargs,
+            ):
+                if chunk.message and chunk.message.content:
+                    yield chunk.message.content
+
+            await llm_circuit_breaker.record_success()
+        except Exception as e:
+            await llm_circuit_breaker.record_failure()
+            logger.error(f"Vision streaming error: {e}")
+            yield prompt_manager.get("chat", "error_fallback", lang=lang, default=f"Fehler: {e!s}", error=str(e))
+
     async def extract_intent(
         self,
         message: str,
