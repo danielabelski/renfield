@@ -93,6 +93,7 @@ export default function UsersPage() {
 
   // Open create modal
   const handleCreate = () => {
+    const defaultRoleId = String(roles.find(r => r.name === 'Gast')?.id || roles[0]?.id || '');
     setEditingUser(null);
     setFormData({
       username: '',
@@ -100,7 +101,7 @@ export default function UsersPage() {
       last_name: '',
       email: '',
       password: '',
-      role_id: String(roles.find(r => r.name === 'Gast')?.id || roles[0]?.id || ''),
+      role_id: defaultRoleId,
       is_active: true,
       personality_style: 'freundlich',
       personality_prompt: ''
@@ -140,7 +141,6 @@ export default function UsersPage() {
   // Submit form
   const handleSubmit = async (e) => {
     e.preventDefault();
-
     // Client-side validation (replaces native HTML5 validation disabled by noValidate)
     const errors = {};
     if (!formData.username || formData.username.length < 3) {
@@ -156,14 +156,12 @@ export default function UsersPage() {
       setFieldErrors(errors);
       return;
     }
-
     setFormLoading(true);
 
     try {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
       const roleId = parseInt(formData.role_id, 10);
-
       if (editingUser) {
         // Update user
         const updateData = {
@@ -189,7 +187,7 @@ export default function UsersPage() {
         setSuccess(t('users.userUpdated'));
       } else {
         // Create user
-        await apiClient.post('/api/users', {
+        const createPayload = {
           username: formData.username,
           first_name: formData.first_name || null,
           last_name: formData.last_name || null,
@@ -199,7 +197,8 @@ export default function UsersPage() {
           is_active: formData.is_active,
           personality_style: formData.personality_style,
           personality_prompt: formData.personality_prompt || null
-        }, { headers });
+        };
+        await apiClient.post('/api/users', createPayload, { headers });
         setSuccess(t('users.userCreated'));
       }
 
