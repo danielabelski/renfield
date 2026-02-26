@@ -12,3 +12,6 @@ all:
         satellite-kinderbad:
           ansible_host: satellite-kinderbad.local
           ansible_user: evdb
+        satellite-arbeitszimmer:
+          ansible_host: satellite-arbeitszimmer.local
+          ansible_user: evdb

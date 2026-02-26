@@ -33,6 +33,10 @@ vad_silero_threshold: 0.5
 
 # LED
 led_brightness: 20
+led_type: "apa102"
+
+# Display
+display_enabled: false
 
 # Button
 button_gpio_pin: 17
@@ -76,6 +80,7 @@ satellite_python_packages:
   - aiohttp
   - requests
   - bleak
+  - Pillow
 
 # BLE Presence Detection
 ble_enabled: true
@@ -90,7 +95,7 @@ openwakeword_package: "openwakeword"
 seeed_dtoverlays_repo: "https://github.com/Seeed-Studio/seeed-linux-dtoverlays.git"
 
 # Model URLs
-oww_base_url: "https://github.com/dscripka/openWakeWord/releases/download/v0.6.0"
+oww_base_url: "https://github.com/dscripka/openWakeWord/releases/download/v0.5.1"
 oww_models:
   - melspectrogram.onnx
   - embedding_model.onnx

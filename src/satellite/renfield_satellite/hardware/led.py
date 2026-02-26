@@ -24,10 +24,11 @@ except ImportError:
     print("Warning: spidev not installed. LED control disabled.")
 
 try:
-    from gpiozero import LED as GpioLED
+    from gpiozero import LED as GpioLED, PWMLED
     GPIO_AVAILABLE = True
 except ImportError:
     GpioLED = None
+    PWMLED = None
     GPIO_AVAILABLE = False
 
 
@@ -378,6 +379,156 @@ class LEDController:
     @property
     def current_pattern(self) -> LEDPattern:
         """Get current pattern"""
+        return self._pattern
+
+
+class GPIOLEDController:
+    """
+    Controls a single GPIO RGB LED (e.g. Whisplay HAT).
+
+    Uses gpiozero PWMLED for PWM-based color mixing.
+    Whisplay LEDs are active-low (inverted duty cycle).
+    Implements the same set_pattern()/stop_animation() interface as LEDController.
+    """
+
+    def __init__(
+        self,
+        gpio_red: int = 25,
+        gpio_green: int = 24,
+        gpio_blue: int = 23,
+        brightness: int = 20,
+    ):
+        self.gpio_red = gpio_red
+        self.gpio_green = gpio_green
+        self.gpio_blue = gpio_blue
+        self.brightness = min(31, max(0, brightness))
+
+        self._red: Optional["PWMLED"] = None
+        self._green: Optional["PWMLED"] = None
+        self._blue: Optional["PWMLED"] = None
+
+        self._pattern: LEDPattern = LEDPattern.OFF
+        self._running = False
+        self._thread: Optional[threading.Thread] = None
+        self._lock = threading.Lock()
+
+    def open(self) -> bool:
+        """Initialize GPIO PWM pins. Returns True if successful."""
+        if not GPIO_AVAILABLE or PWMLED is None:
+            print("gpiozero/PWMLED not available for GPIO LED control")
+            return False
+
+        try:
+            # active_high=False for Whisplay's active-low LED
+            self._red = PWMLED(self.gpio_red, active_high=False, initial_value=0)
+            self._green = PWMLED(self.gpio_green, active_high=False, initial_value=0)
+            self._blue = PWMLED(self.gpio_blue, active_high=False, initial_value=0)
+            print(f"GPIO RGB LED initialized: R={self.gpio_red}, G={self.gpio_green}, B={self.gpio_blue}")
+            return True
+        except Exception as e:
+            print(f"Failed to initialize GPIO LED: {e}")
+            return False
+
+    def close(self):
+        """Turn off LED and release GPIO."""
+        self.stop_animation()
+        self._set_color(0, 0, 0)
+
+        for pin in (self._red, self._green, self._blue):
+            if pin:
+                try:
+                    pin.close()
+                except Exception:
+                    pass
+        self._red = self._green = self._blue = None
+
+    def _set_color(self, r: int, g: int, b: int):
+        """Set RGB color (0-255 per channel), scaled by brightness."""
+        if not self._red:
+            return
+        scale = self.brightness / 31.0
+        with self._lock:
+            self._red.value = (r / 255.0) * scale
+            self._green.value = (g / 255.0) * scale
+            self._blue.value = (b / 255.0) * scale
+
+    def set_pattern(self, pattern: LEDPattern):
+        """Start an LED animation pattern."""
+        if pattern == self._pattern:
+            return
+        self.stop_animation()
+        self._pattern = pattern
+        if pattern != LEDPattern.OFF:
+            self._running = True
+            self._thread = threading.Thread(target=self._animation_loop, daemon=True)
+            self._thread.start()
+
+    def stop_animation(self):
+        """Stop current animation."""
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=0.5)
+            self._thread = None
+
+    def _animation_loop(self):
+        """Background thread running LED animations."""
+        frame = 0
+        while self._running:
+            pattern = self._pattern
+
+            if pattern == LEDPattern.IDLE:
+                self._animate_pulse(frame, 0, 0, 255, 0.05)
+            elif pattern == LEDPattern.LISTENING:
+                self._set_color(0, 255, 0)
+                time.sleep(0.1)
+            elif pattern == LEDPattern.PROCESSING:
+                self._animate_breathe(frame, 255, 255, 0)
+            elif pattern == LEDPattern.SPEAKING:
+                self._animate_breathe(frame, 0, 255, 255)
+            elif pattern == LEDPattern.ERROR:
+                self._animate_blink(frame, 255, 0, 0)
+            elif pattern == LEDPattern.SUCCESS:
+                self._animate_flash(frame, 0, 255, 0)
+            elif pattern == LEDPattern.BOOT:
+                self._animate_rainbow(frame)
+            else:
+                self._set_color(0, 0, 0)
+                time.sleep(0.1)
+
+            frame += 1
+            time.sleep(0.05)
+
+    def _animate_pulse(self, frame: int, r: int, g: int, b: int, min_brightness: float):
+        phase = (frame % 60) / 60.0 * 2 * math.pi
+        factor = (math.sin(phase) + 1) / 2
+        factor = min_brightness + factor * (1 - min_brightness)
+        self._set_color(int(r * factor), int(g * factor), int(b * factor))
+
+    def _animate_breathe(self, frame: int, r: int, g: int, b: int):
+        phase = (frame % 80) / 80.0 * 2 * math.pi
+        factor = 0.2 + ((math.sin(phase) + 1) / 2) * 0.8
+        self._set_color(int(r * factor), int(g * factor), int(b * factor))
+
+    def _animate_blink(self, frame: int, r: int, g: int, b: int):
+        if (frame // 10) % 2 == 0:
+            self._set_color(r, g, b)
+        else:
+            self._set_color(0, 0, 0)
+
+    def _animate_flash(self, frame: int, r: int, g: int, b: int):
+        if frame < 10:
+            self._set_color(r, g, b)
+        else:
+            self._set_color(0, 0, 0)
+            self._running = False
+
+    def _animate_rainbow(self, frame: int):
+        hue = (frame * 5) % 360
+        r, g, b = colorsys.hsv_to_rgb(hue / 360.0, 1.0, 1.0)
+        self._set_color(int(r * 255), int(g * 255), int(b * 255))
+
+    @property
+    def current_pattern(self) -> LEDPattern:
         return self._pattern
 
 

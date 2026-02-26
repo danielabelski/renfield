@@ -84,11 +84,16 @@ class VADConfig:
 @dataclass
 class LEDConfig:
     """LED control settings"""
+    type: str = "apa102"  # "apa102" or "gpio_rgb"
     brightness: int = 20  # 0-255
     spi_bus: int = 0
     spi_device: int = 0
     num_leds: int = 3
     led_power_pin: Optional[int] = None  # GPIO pin to enable LED power (4-mic HAT: 5)
+    # GPIO RGB LED pins (Whisplay HAT)
+    gpio_red: Optional[int] = None
+    gpio_green: Optional[int] = None
+    gpio_blue: Optional[int] = None
 
 
 @dataclass
@@ -96,6 +101,14 @@ class ButtonConfig:
     """Button settings"""
     gpio_pin: int = 17
     debounce_ms: int = 50
+
+
+@dataclass
+class DisplayConfig:
+    """Display settings (Whisplay HAT ST7789)"""
+    enabled: bool = False
+    width: int = 240
+    height: int = 280
 
 
 @dataclass
@@ -118,6 +131,7 @@ class Config:
     vad: VADConfig = field(default_factory=VADConfig)
     led: LEDConfig = field(default_factory=LEDConfig)
     button: ButtonConfig = field(default_factory=ButtonConfig)
+    display: DisplayConfig = field(default_factory=DisplayConfig)
     ble: BLEConfig = field(default_factory=BLEConfig)
 
 
@@ -215,15 +229,25 @@ def load_config(config_path: Optional[str] = None) -> Config:
 
     if "led" in config_data:
         led = config_data["led"]
+        config.led.type = led.get("type", config.led.type)
         config.led.brightness = led.get("brightness", config.led.brightness)
         config.led.num_leds = led.get("num_leds", config.led.num_leds)
         config.led.spi_bus = led.get("spi_bus", config.led.spi_bus)
         config.led.spi_device = led.get("spi_device", config.led.spi_device)
         config.led.led_power_pin = led.get("led_power_pin", config.led.led_power_pin)
+        config.led.gpio_red = led.get("gpio_red", config.led.gpio_red)
+        config.led.gpio_green = led.get("gpio_green", config.led.gpio_green)
+        config.led.gpio_blue = led.get("gpio_blue", config.led.gpio_blue)
 
     if "button" in config_data:
         btn = config_data["button"]
         config.button.gpio_pin = btn.get("gpio_pin", config.button.gpio_pin)
+
+    if "display" in config_data:
+        disp = config_data["display"]
+        config.display.enabled = disp.get("enabled", config.display.enabled)
+        config.display.width = disp.get("width", config.display.width)
+        config.display.height = disp.get("height", config.display.height)
 
     if "ble" in config_data:
         ble = config_data["ble"]

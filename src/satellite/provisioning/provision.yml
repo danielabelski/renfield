@@ -181,6 +181,35 @@
         state: present
       notify: reboot after driver install
 
+    # --- Whisplay HAT: WM8960 codec driver ---
+
+    - name: Clone Whisplay driver for WM8960 codec
+      tags: [driver]
+      when: hat_type == "whisplay"
+      ansible.builtin.git:
+        repo: https://github.com/PiSugar/Whisplay.git
+        dest: /tmp/whisplay
+        depth: 1
+        force: true
+
+    - name: Install WM8960 driver (Whisplay)
+      tags: [driver]
+      when: hat_type == "whisplay"
+      ansible.builtin.shell: |
+        cd /tmp/whisplay/Driver && bash install_wm8960_drive.sh
+      args:
+        creates: /boot/firmware/overlays/wm8960-soundcard.dtbo
+      notify: reboot after driver install
+
+    - name: Ensure wm8960-soundcard overlay in config.txt
+      tags: [driver]
+      when: hat_type == "whisplay"
+      ansible.builtin.lineinfile:
+        path: /boot/firmware/config.txt
+        line: "dtoverlay=wm8960-soundcard"
+        state: present
+      notify: reboot after driver install
+
     # --- Flush handlers (reboot if driver was installed) ---
 
     - name: Reboot now if driver was installed
@@ -191,7 +220,7 @@
       tags: [driver]
       ansible.builtin.wait_for:
         path: /proc/asound/cards
-        search_regex: "seeed"
+        search_regex: "seeed|wm8960"
         timeout: 30
       register: soundcard_check
       ignore_errors: true
@@ -341,6 +370,16 @@
         recurse: true
       register: oww_dirs
 
+    - name: Create openwakeword models directory in venv
+      tags: [models]
+      when: oww_dirs.files | length > 0
+      ansible.builtin.file:
+        path: "{{ oww_dirs.files[0].path }}/resources/models"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: "0755"
+
     - name: Copy models to openwakeword package directory
       tags: [models]
       when: oww_dirs.files | length > 0
@@ -408,5 +447,6 @@
           - HAT: {{ hat_type }}
           - ID: {{ satellite_id }}
           - Room: {{ satellite_room }}
-          - LEDs: {{ led_num }} on SPI 0:{{ led_spi_device }}
+          - LED type: {{ led_type | default('apa102') }}
+          - Display: {{ display_enabled | default(false) }}
           - Server: {{ server_url }}
