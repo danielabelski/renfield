@@ -10,6 +10,7 @@
  */
 
 import React, { useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 
 export default function Modal({
@@ -103,44 +104,47 @@ export default function Modal({
 
   if (!isOpen) return null;
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+      className="fixed inset-0 z-50 overflow-y-auto bg-black/50"
       onClick={handleOverlayClick}
       aria-hidden={!isOpen}
     >
-      <div
-        ref={modalRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={title ? 'modal-title' : undefined}
-        tabIndex={-1}
-        onKeyDown={handleKeyDown}
-        className={`card ${maxWidth} w-full outline-hidden ${className}`}
-      >
-        {/* Header with title and close button */}
-        {(title || showCloseButton) && (
-          <div className="flex items-center justify-between mb-4">
-            {title && (
-              <h2 id="modal-title" className="text-xl font-bold text-gray-900 dark:text-white">
-                {title}
-              </h2>
-            )}
-            {showCloseButton && (
-              <button
-                onClick={onClose}
-                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors ml-auto"
-                aria-label="Dialog schließen"
-              >
-                <X className="w-5 h-5 text-gray-400" aria-hidden="true" />
-              </button>
-            )}
-          </div>
-        )}
+      <div className="flex min-h-full items-center justify-center p-4">
+        <div
+          ref={modalRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={title ? 'modal-title' : undefined}
+          tabIndex={-1}
+          onKeyDown={handleKeyDown}
+          onClick={(e) => e.stopPropagation()}
+          className={`card ${maxWidth} w-full outline-hidden ${className}`}
+        >
+          {/* Header with title and close button */}
+          {(title || showCloseButton) && (
+            <div className="flex items-center justify-between mb-4 shrink-0">
+              {title && (
+                <h2 id="modal-title" className="text-xl font-bold text-gray-900 dark:text-white">
+                  {title}
+                </h2>
+              )}
+              {showCloseButton && (
+                <button
+                  onClick={onClose}
+                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors ml-auto"
+                  aria-label="Dialog schließen"
+                >
+                  <X className="w-5 h-5 text-gray-400" aria-hidden="true" />
+                </button>
+              )}
+            </div>
+          )}
 
-        {/* Modal content */}
-        {children}
+          {children}
+        </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
