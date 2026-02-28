@@ -15,3 +15,6 @@ all:
         satellite-arbeitszimmer:
           ansible_host: satellite-arbeitszimmer.local
           ansible_user: evdb
+        satellite-esszimmer:
+          ansible_host: satellite-esszimmer.local
+          ansible_user: evdb
