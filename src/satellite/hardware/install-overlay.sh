@@ -112,10 +112,12 @@ echo "To complete installation, reboot the system:"
 echo "  sudo reboot"
 echo ""
 
-# Ask to reboot
-read -p "Reboot now? [y/N] " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    echo "Rebooting..."
-    reboot
+# Ask to reboot (only when running interactively — skip in Ansible/CI)
+if [ -t 0 ]; then
+    read -p "Reboot now? [y/N] " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        echo "Rebooting..."
+        reboot
+    fi
 fi
