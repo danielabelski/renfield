@@ -155,6 +155,7 @@ class Satellite:
                 gpio_green=self.config.led.gpio_green or 24,
                 gpio_blue=self.config.led.gpio_blue or 23,
                 brightness=self.config.led.brightness,
+                idle_color=self.config.led.idle_color,
             )
         else:
             self.leds = LEDController(
@@ -163,6 +164,7 @@ class Satellite:
                 spi_device=self.config.led.spi_device,
                 brightness=self.config.led.brightness,
                 led_power_pin=self.config.led.led_power_pin,
+                idle_color=self.config.led.idle_color,
             )
 
         # Display controller (optional, Whisplay HAT)
