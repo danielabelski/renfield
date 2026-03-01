@@ -16,3 +16,6 @@ beamforming_mic_spacing: 0.058
 led_num: 3
 led_spi_device: 0
 led_power_pin: null
+
+# IDLE LED color for visual identification
+led_idle_color: "yellow"

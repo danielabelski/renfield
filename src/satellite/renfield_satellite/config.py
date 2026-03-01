@@ -90,6 +90,7 @@ class LEDConfig:
     spi_device: int = 0
     num_leds: int = 3
     led_power_pin: Optional[int] = None  # GPIO pin to enable LED power (4-mic HAT: 5)
+    idle_color: Optional[str] = None  # IDLE pulse color name (e.g. "green", "yellow"); None = blue
     # GPIO RGB LED pins (Whisplay HAT)
     gpio_red: Optional[int] = None
     gpio_green: Optional[int] = None
@@ -244,6 +245,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
         config.led.spi_bus = led.get("spi_bus", config.led.spi_bus)
         config.led.spi_device = led.get("spi_device", config.led.spi_device)
         config.led.led_power_pin = led.get("led_power_pin", config.led.led_power_pin)
+        config.led.idle_color = led.get("idle_color", config.led.idle_color)
         config.led.gpio_red = led.get("gpio_red", config.led.gpio_red)
         config.led.gpio_green = led.get("gpio_green", config.led.gpio_green)
         config.led.gpio_blue = led.get("gpio_blue", config.led.gpio_blue)

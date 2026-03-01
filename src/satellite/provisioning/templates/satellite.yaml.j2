@@ -43,6 +43,7 @@ vad:
 led:
   type: "{{ led_type | default('apa102') }}"
   brightness: {{ led_brightness }}
+  idle_color: "{{ led_idle_color | default('blue') }}"
 {% if led_type | default('apa102') == 'gpio_rgb' %}
   gpio_red: {{ led_gpio_red }}
   gpio_green: {{ led_gpio_green }}

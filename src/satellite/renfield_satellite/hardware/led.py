@@ -88,6 +88,7 @@ class LEDController:
         spi_device: int = 0,
         brightness: int = 20,
         led_power_pin: Optional[int] = None,
+        idle_color: Optional[str] = None,
     ):
         """
         Initialize LED controller.
@@ -98,12 +99,14 @@ class LEDController:
             spi_device: SPI device number
             brightness: Default brightness 0-31
             led_power_pin: GPIO pin to enable LED power (4-mic HAT uses GPIO5)
+            idle_color: Color name for IDLE pulse (e.g. "green", "yellow"); defaults to blue
         """
         self.num_leds = num_leds
         self.spi_bus = spi_bus
         self.spi_device = spi_device
         self.brightness = min(31, max(0, brightness))
         self.led_power_pin = led_power_pin
+        self.idle_color = idle_color
         self._power = None
 
         self._spi: Optional["spidev.SpiDev"] = None
@@ -269,8 +272,9 @@ class LEDController:
             pattern = self._pattern
 
             if pattern == LEDPattern.IDLE:
-                # Dim blue pulse
-                self._animate_pulse(frame, COLORS["blue"], 0.05)
+                # Dim pulse in configured idle color (default: blue)
+                idle = COLORS.get(self.idle_color, COLORS["blue"])
+                self._animate_pulse(frame, idle, 0.05)
 
             elif pattern == LEDPattern.LISTENING:
                 # Solid green
@@ -397,11 +401,13 @@ class GPIOLEDController:
         gpio_green: int = 24,
         gpio_blue: int = 23,
         brightness: int = 20,
+        idle_color: Optional[str] = None,
     ):
         self.gpio_red = gpio_red
         self.gpio_green = gpio_green
         self.gpio_blue = gpio_blue
         self.brightness = min(31, max(0, brightness))
+        self.idle_color = idle_color
 
         self._red: Optional["PWMLED"] = None
         self._green: Optional["PWMLED"] = None
@@ -477,7 +483,8 @@ class GPIOLEDController:
             pattern = self._pattern
 
             if pattern == LEDPattern.IDLE:
-                self._animate_pulse(frame, 0, 0, 255, 0.05)
+                idle = COLORS.get(self.idle_color, COLORS["blue"])
+                self._animate_pulse(frame, idle.r, idle.g, idle.b, 0.05)
             elif pattern == LEDPattern.LISTENING:
                 self._set_color(0, 255, 0)
                 time.sleep(0.1)
