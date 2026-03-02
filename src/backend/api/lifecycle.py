@@ -516,8 +516,10 @@ async def lifespan(app: "FastAPI"):
     await _init_paperless_audit(app)
 
     # Background preloading
-    _schedule_whisper_preload()
-    _schedule_ha_keywords_preload()
+    if settings.features["voice"]:
+        _schedule_whisper_preload()
+    if settings.features["smart_home"]:
+        _schedule_ha_keywords_preload()
     _schedule_notification_cleanup()
     _schedule_reminder_checker()
     _schedule_notification_poller(app)

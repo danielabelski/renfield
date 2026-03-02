@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     feature_smart_home: bool | None = None   # None = use edition default
     feature_cameras: bool | None = None      # None = use edition default
     feature_satellites: bool | None = None   # None = use edition default
+    feature_voice: bool | None = None       # None = use edition default
 
     # Datenbank - Einzelfelder für dynamischen DATABASE_URL-Aufbau
     database_url: str | None = None
@@ -353,14 +354,15 @@ class Settings(BaseSettings):
     def features(self) -> dict[str, bool]:
         """Resolve feature flags: explicit override > edition preset."""
         presets = {
-            "community": {"smart_home": True, "cameras": True, "satellites": True},
-            "pro": {"smart_home": False, "cameras": False, "satellites": False},
+            "community": {"smart_home": True, "cameras": True, "satellites": True, "voice": True},
+            "pro": {"smart_home": False, "cameras": False, "satellites": False, "voice": False},
         }
         defaults = presets.get(self.renfield_edition, presets["pro"])
         return {
             "smart_home": self.feature_smart_home if self.feature_smart_home is not None else defaults["smart_home"],
             "cameras": self.feature_cameras if self.feature_cameras is not None else defaults["cameras"],
             "satellites": self.feature_satellites if self.feature_satellites is not None else defaults["satellites"],
+            "voice": self.feature_voice if self.feature_voice is not None else defaults["voice"],
         }
 
     @property
