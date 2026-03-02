@@ -143,7 +143,7 @@ async def test_multiple_hooks_same_event():
 def test_hook_events_is_frozenset():
     """HOOK_EVENTS is immutable."""
     assert isinstance(HOOK_EVENTS, frozenset)
-    assert len(HOOK_EVENTS) == 6
+    assert len(HOOK_EVENTS) == 12
 
 
 # --- plugin loading integration ---

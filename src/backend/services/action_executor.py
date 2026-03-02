@@ -75,6 +75,15 @@ class ActionExecutor:
                 user_id=user_id,
             )
 
+        # Plugin tool dispatch — plugins can register custom tool handlers
+        from utils.hooks import run_hooks
+        hook_results = await run_hooks(
+            "execute_tool", intent=intent, parameters=parameters,
+            user_permissions=user_permissions, user_id=user_id,
+        )
+        if hook_results:
+            return hook_results[0]
+
         # Unknown intent
         return {
             "success": False,
