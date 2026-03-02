@@ -15,7 +15,6 @@ from fastapi import WebSocket
 from loguru import logger
 
 from models.websocket_messages import WSErrorCode, create_error_response
-from services.whisper_service import WhisperService
 
 # =============================================================================
 # Session State Management
@@ -163,13 +162,14 @@ def is_followup_question(query: str, previous_query: str | None = None) -> bool:
 # Whisper Service Singleton
 # =============================================================================
 
-_whisper_service: WhisperService | None = None
+_whisper_service = None
 
 
-def get_whisper_service() -> WhisperService:
+def get_whisper_service():
     """Get or create the global WhisperService instance."""
     global _whisper_service
     if _whisper_service is None:
+        from services.whisper_service import WhisperService
         _whisper_service = WhisperService()
     return _whisper_service
 
