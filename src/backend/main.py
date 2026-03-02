@@ -36,7 +36,6 @@ from api.routes import (
     speakers,
     tasks,
     users,
-    voice,
 )
 from api.routes import homeassistant as ha_routes
 from api.routes import knowledge_graph as kg_routes
@@ -137,6 +136,7 @@ app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
 app.include_router(chat_upload.router, prefix="/api/chat", tags=["Chat Upload"])
 app.include_router(tasks.router, prefix="/api/tasks", tags=["Tasks"])
 if settings.features["voice"]:
+    from api.routes import voice
     app.include_router(voice.router, prefix="/api/voice", tags=["Voice"])
 if settings.features["cameras"]:
     app.include_router(camera.router, prefix="/api/camera", tags=["Camera"])
