@@ -17,6 +17,7 @@ HOOK_EVENTS: frozenset[str] = frozenset({
     "shutdown",
     "register_routes",
     "register_tools",
+    "execute_tool",
     "post_message",
     "post_document_ingest",
     "retrieve_context",
