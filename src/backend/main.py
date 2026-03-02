@@ -136,7 +136,8 @@ app.include_router(users.router, prefix="/api/users", tags=["Users"])
 app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
 app.include_router(chat_upload.router, prefix="/api/chat", tags=["Chat Upload"])
 app.include_router(tasks.router, prefix="/api/tasks", tags=["Tasks"])
-app.include_router(voice.router, prefix="/api/voice", tags=["Voice"])
+if settings.features["voice"]:
+    app.include_router(voice.router, prefix="/api/voice", tags=["Voice"])
 if settings.features["cameras"]:
     app.include_router(camera.router, prefix="/api/camera", tags=["Camera"])
 if settings.features["smart_home"]:

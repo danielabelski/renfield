@@ -24,6 +24,7 @@ class TestEditionPresets:
             "smart_home": True,
             "cameras": True,
             "satellites": True,
+            "voice": True,
         }
 
     def test_pro_edition_disables_home_features(self):
@@ -33,6 +34,7 @@ class TestEditionPresets:
             "smart_home": False,
             "cameras": False,
             "satellites": False,
+            "voice": False,
         }
 
     def test_unknown_edition_falls_back_to_pro(self):
@@ -42,6 +44,7 @@ class TestEditionPresets:
             "smart_home": False,
             "cameras": False,
             "satellites": False,
+            "voice": False,
         }
 
     def test_default_edition_is_community(self):
@@ -95,6 +98,7 @@ class TestFeatureOverrides:
             "smart_home": True,
             "cameras": True,
             "satellites": True,
+            "voice": False,
         }
 
     def test_none_means_use_default(self):
@@ -104,6 +108,26 @@ class TestFeatureOverrides:
             feature_smart_home=None,
             _env_file=None,
         )
+        assert s.features["smart_home"] is True
+
+    def test_voice_override_enables_on_pro(self):
+        """Explicit True enables voice on pro edition."""
+        s = Settings(
+            renfield_edition="pro",
+            feature_voice=True,
+            _env_file=None,
+        )
+        assert s.features["voice"] is True
+        assert s.features["smart_home"] is False
+
+    def test_voice_override_disables_on_community(self):
+        """Explicit False disables voice on community edition."""
+        s = Settings(
+            renfield_edition="community",
+            feature_voice=False,
+            _env_file=None,
+        )
+        assert s.features["voice"] is False
         assert s.features["smart_home"] is True
 
 
@@ -122,6 +146,7 @@ class TestAuthStatusFeatures:
             "smart_home": True,
             "cameras": True,
             "satellites": True,
+            "voice": True,
         }
 
     def test_pro_features_for_status(self):
@@ -132,6 +157,7 @@ class TestAuthStatusFeatures:
             "smart_home": False,
             "cameras": False,
             "satellites": False,
+            "voice": False,
         }
 
     def test_override_in_features_for_status(self):
@@ -164,6 +190,11 @@ class TestRouteGuards:
         s = Settings(renfield_edition="pro", _env_file=None)
         assert s.features["satellites"] is False
 
+    def test_voice_route_not_mounted_when_disabled(self):
+        """Voice routes should not be mounted when voice feature is disabled."""
+        s = Settings(renfield_edition="pro", _env_file=None)
+        assert s.features["voice"] is False
+
     def test_all_routes_mounted_when_community(self):
         """All feature routes should be mounted in community edition."""
         s = Settings(renfield_edition="community", _env_file=None)
@@ -178,10 +209,10 @@ class TestFeaturesPropertyConsistency:
     """Test that features property is always consistent."""
 
     def test_features_returns_all_keys(self):
-        """Features dict always contains all three keys."""
+        """Features dict always contains all four keys."""
         for edition in ["community", "pro", "enterprise"]:
             s = Settings(renfield_edition=edition, _env_file=None)
-            assert set(s.features.keys()) == {"smart_home", "cameras", "satellites"}
+            assert set(s.features.keys()) == {"smart_home", "cameras", "satellites", "voice"}
 
     def test_features_values_are_bool(self):
         """All feature values are booleans."""
