@@ -81,7 +81,11 @@ class ConversationService:
                         f"[Aktionsergebnis — Verwende diese Daten für "
                         f"Folgeanfragen (IDs, Titel, etc.):\n{summary}]\n\n{content}"
                     )
-                context.append({"role": msg.role, "content": content})
+                context.append({
+                    "role": msg.role,
+                    "content": content,
+                    "metadata": msg.message_metadata,
+                })
 
             logger.info(f"Geladen: {len(context)} Nachrichten für Session {session_id}")
             return context
