@@ -1,7 +1,7 @@
 """Add context_vars and summary to conversations
 
 Revision ID: x7y8z9a0b1c2
-Revises: w6x7y8z9a0b1
+Revises: t4c5d6e7f8g9
 Create Date: 2026-03-08
 """
 from alembic import op
@@ -10,7 +10,7 @@ from sqlalchemy import inspect
 
 # revision identifiers
 revision = "x7y8z9a0b1c2"
-down_revision = "w6x7y8z9a0b1"
+down_revision = "t4c5d6e7f8g9"
 branch_labels = None
 depends_on = None
 
