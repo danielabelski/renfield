@@ -130,6 +130,45 @@ SAMPLE_CONFIG = {
     }
 }
 
+# Config with sub_intents for testing
+SAMPLE_CONFIG_WITH_SUB_INTENTS = {
+    "roles": {
+        **SAMPLE_CONFIG["roles"],
+        "release": {
+            "description": {
+                "de": "Release-Management",
+                "en": "Release management",
+            },
+            "mcp_servers": ["release"],
+            "max_steps": 10,
+            "prompt_key": "agent_prompt",
+            "sub_intents": {
+                "my_dashboard": {
+                    "de": "Mein Dashboard, meine Releases",
+                    "en": "My dashboard, my releases",
+                },
+            },
+        },
+        "memory_role": {
+            "description": {
+                "de": "Erinnerungen",
+                "en": "Memory",
+            },
+            "prompt_key": "agent_prompt",
+            "sub_intents": {
+                "delete": {
+                    "de": "Erinnerungen loeschen",
+                    "en": "Delete memories",
+                },
+                "list": {
+                    "de": "Erinnerungen anzeigen",
+                    "en": "Show memories",
+                },
+            },
+        },
+    }
+}
+
 
 def make_mock_ollama(response_text: str):
     """Create a mock OllamaService that returns a fixed response."""
@@ -529,31 +568,72 @@ class TestParseClassification:
     @pytest.mark.unit
     def test_clean_json(self):
         router = AgentRouter(SAMPLE_CONFIG)
-        assert router._parse_classification('{"role": "smart_home", "reason": "test"}') == "smart_home"
+        role, sub = router._parse_classification('{"role": "smart_home", "reason": "test"}')
+        assert role == "smart_home"
+        assert sub is None
 
     @pytest.mark.unit
     def test_json_with_text(self):
         router = AgentRouter(SAMPLE_CONFIG)
-        result = router._parse_classification('Here is: {"role": "documents", "reason": "test"} done.')
-        assert result == "documents"
+        role, sub = router._parse_classification('Here is: {"role": "documents", "reason": "test"} done.')
+        assert role == "documents"
+        assert sub is None
 
     @pytest.mark.unit
     def test_empty_response(self):
         router = AgentRouter(SAMPLE_CONFIG)
-        assert router._parse_classification("") is None
+        role, sub = router._parse_classification("")
+        assert role is None
+        assert sub is None
 
     @pytest.mark.unit
     def test_plain_text_with_role_name(self):
         router = AgentRouter(SAMPLE_CONFIG)
         # Last resort: find role name in text
-        result = router._parse_classification("I think this is research related")
-        assert result == "research"
+        role, sub = router._parse_classification("I think this is research related")
+        assert role == "research"
+        assert sub is None
 
     @pytest.mark.unit
     def test_no_match(self):
         router = AgentRouter(SAMPLE_CONFIG)
-        result = router._parse_classification("completely unrelated text xyz")
-        assert result is None
+        role, sub = router._parse_classification("completely unrelated text xyz")
+        assert role is None
+        assert sub is None
+
+    @pytest.mark.unit
+    def test_parse_classification_with_sub_intent(self):
+        """JSON with sub_intent returns both role and sub_intent."""
+        router = AgentRouter(SAMPLE_CONFIG)
+        role, sub = router._parse_classification('{"role": "smart_home", "sub_intent": "my_dashboard", "reason": "test"}')
+        assert role == "smart_home"
+        assert sub == "my_dashboard"
+
+    @pytest.mark.unit
+    def test_parse_classification_without_sub_intent_key(self):
+        """JSON without sub_intent key returns None for sub_intent (backward compat)."""
+        router = AgentRouter(SAMPLE_CONFIG)
+        role, sub = router._parse_classification('{"role": "research", "reason": "web search"}')
+        assert role == "research"
+        assert sub is None
+
+    @pytest.mark.unit
+    def test_parse_classification_sub_intent_in_text(self):
+        """JSON-in-text extraction includes sub_intent."""
+        router = AgentRouter(SAMPLE_CONFIG)
+        role, sub = router._parse_classification(
+            'Here: {"role": "smart_home", "sub_intent": "test_sub", "reason": "x"} end.'
+        )
+        assert role == "smart_home"
+        assert sub == "test_sub"
+
+    @pytest.mark.unit
+    def test_parse_classification_null_sub_intent(self):
+        """JSON with sub_intent: null returns None."""
+        router = AgentRouter(SAMPLE_CONFIG)
+        role, sub = router._parse_classification('{"role": "research", "sub_intent": null, "reason": "x"}')
+        assert role == "research"
+        assert sub is None
 
 
 # ============================================================================
@@ -788,3 +868,157 @@ class TestRoutineRole:
         assert "homeassistant" in role_cfg["mcp_servers"]
         assert role_cfg["max_steps"] == 15
         assert role_cfg["prompt_key"] == "agent_prompt_routine"
+
+
+# ============================================================================
+# Test Sub-Intent Parsing & Classification
+# ============================================================================
+
+class TestSubIntentParsing:
+    """Test sub_intent parsing from config and classification."""
+
+    @pytest.mark.unit
+    def test_parse_roles_with_sub_intents(self):
+        """Roles with sub_intents config get sub_intent_definitions populated."""
+        roles = _parse_roles(SAMPLE_CONFIG_WITH_SUB_INTENTS)
+        role = roles["release"]
+        assert role.sub_intent_definitions is not None
+        assert "my_dashboard" in role.sub_intent_definitions
+        assert role.sub_intent_definitions["my_dashboard"]["de"] == "Mein Dashboard, meine Releases"
+        assert role.sub_intent is None  # Not set on shared role
+
+    @pytest.mark.unit
+    def test_parse_roles_without_sub_intents(self):
+        """Roles without sub_intents config have sub_intent_definitions=None."""
+        roles = _parse_roles(SAMPLE_CONFIG)
+        role = roles["smart_home"]
+        assert role.sub_intent_definitions is None
+        assert role.sub_intent is None
+
+    @pytest.mark.unit
+    def test_parse_roles_string_sub_intent(self):
+        """String sub_intent values are normalized to {de: str, en: str}."""
+        config = {
+            "roles": {
+                "test_role": {
+                    "description": {"de": "Test", "en": "Test"},
+                    "prompt_key": "agent_prompt",
+                    "sub_intents": {
+                        "simple": "A simple sub-intent",
+                    },
+                },
+            }
+        }
+        roles = _parse_roles(config)
+        role = roles["test_role"]
+        assert role.sub_intent_definitions["simple"] == {"de": "A simple sub-intent", "en": "A simple sub-intent"}
+
+    @pytest.mark.unit
+    def test_parse_roles_multiple_sub_intents(self):
+        """Role with multiple sub_intents gets all of them."""
+        roles = _parse_roles(SAMPLE_CONFIG_WITH_SUB_INTENTS)
+        role = roles["memory_role"]
+        assert role.sub_intent_definitions is not None
+        assert "delete" in role.sub_intent_definitions
+        assert "list" in role.sub_intent_definitions
+
+    @pytest.mark.unit
+    def test_build_role_descriptions_includes_sub_intents(self):
+        """Role descriptions include sub_intent lines with > prefix."""
+        router = AgentRouter(SAMPLE_CONFIG_WITH_SUB_INTENTS)
+        desc = router._build_role_descriptions("de")
+        assert "> release/my_dashboard:" in desc
+        assert "Mein Dashboard" in desc
+        # Memory role sub_intents
+        assert "> memory_role/delete:" in desc
+        assert "> memory_role/list:" in desc
+
+    @pytest.mark.unit
+    def test_build_role_descriptions_en(self):
+        """Sub_intent descriptions use the correct language."""
+        router = AgentRouter(SAMPLE_CONFIG_WITH_SUB_INTENTS)
+        desc = router._build_role_descriptions("en")
+        assert "My dashboard" in desc
+        assert "Delete memories" in desc
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_classify_valid_sub_intent(self):
+        """Valid sub_intent is set on the returned role copy."""
+        ollama = make_mock_ollama('{"role": "release", "sub_intent": "my_dashboard", "reason": "dashboard"}')
+        router = AgentRouter(SAMPLE_CONFIG_WITH_SUB_INTENTS)
+
+        with patch("services.agent_router.settings") as mock_settings:
+            mock_settings.ollama_intent_model = "test-model"
+            mock_settings.ollama_model = "test-model"
+            mock_settings.agent_ollama_url = None
+
+            role = await router.classify("Meine Releases", ollama)
+            assert role.name == "release"
+            assert role.sub_intent == "my_dashboard"
+            # Shared role in router.roles must NOT be mutated
+            assert router.roles["release"].sub_intent is None
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_classify_sub_intent_with_role_prefix(self):
+        """LLM returns 'release/my_dashboard' — role prefix is stripped."""
+        ollama = make_mock_ollama('{"role": "release", "sub_intent": "release/my_dashboard", "reason": "dashboard"}')
+        router = AgentRouter(SAMPLE_CONFIG_WITH_SUB_INTENTS)
+
+        with patch("services.agent_router.settings") as mock_settings:
+            mock_settings.ollama_intent_model = "test-model"
+            mock_settings.ollama_model = "test-model"
+            mock_settings.agent_ollama_url = None
+
+            role = await router.classify("Meine Releases", ollama)
+            assert role.name == "release"
+            assert role.sub_intent == "my_dashboard"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_classify_invalid_sub_intent(self):
+        """Undefined sub_intent is discarded (set to None)."""
+        ollama = make_mock_ollama('{"role": "release", "sub_intent": "nonexistent", "reason": "test"}')
+        router = AgentRouter(SAMPLE_CONFIG_WITH_SUB_INTENTS)
+
+        with patch("services.agent_router.settings") as mock_settings:
+            mock_settings.ollama_intent_model = "test-model"
+            mock_settings.ollama_model = "test-model"
+            mock_settings.agent_ollama_url = None
+
+            role = await router.classify("Something", ollama)
+            assert role.name == "release"
+            assert role.sub_intent is None
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_classify_sub_intent_no_definitions(self):
+        """Role without sub_intent_definitions always returns sub_intent=None."""
+        ollama = make_mock_ollama('{"role": "smart_home", "sub_intent": "anything", "reason": "test"}')
+        router = AgentRouter(SAMPLE_CONFIG_WITH_SUB_INTENTS)
+
+        with patch("services.agent_router.settings") as mock_settings:
+            mock_settings.ollama_intent_model = "test-model"
+            mock_settings.ollama_model = "test-model"
+            mock_settings.agent_ollama_url = None
+
+            role = await router.classify("Licht ein", ollama)
+            assert role.name == "smart_home"
+            assert role.sub_intent is None
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_classify_no_sub_intent_from_llm(self):
+        """When LLM returns no sub_intent, role.sub_intent is None."""
+        ollama = make_mock_ollama('{"role": "release", "reason": "general release query"}')
+        router = AgentRouter(SAMPLE_CONFIG_WITH_SUB_INTENTS)
+
+        with patch("services.agent_router.settings") as mock_settings:
+            mock_settings.ollama_intent_model = "test-model"
+            mock_settings.ollama_model = "test-model"
+            mock_settings.agent_ollama_url = None
+
+            role = await router.classify("Zeige alle Releases", ollama)
+            assert role.name == "release"
+            assert role.sub_intent is None

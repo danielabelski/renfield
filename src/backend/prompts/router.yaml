@@ -22,7 +22,8 @@ de:
     "Good morning", "Ich bin wach", "Aufgestanden" → routine (mehrstufige Ablauefe).
     ACHTUNG: Ein beilaeufiges "Morgen!" oder "Moin!" ohne weiteren Kontext ist Smalltalk (conversation), NICHT routine.
 
-    Antworte NUR mit JSON: {{"role": "<kategorie>", "reason": "..."}}
+    Sub-Intents (mit > markiert) sind spezifische Aktionen. Nur angeben wenn eindeutig passend.
+    Antworte NUR mit JSON: {{"role": "<kategorie>", "sub_intent": "<sub_intent oder null>", "reason": "..."}}
 
   # Conversation history context template
   # Available variables: {history_lines}
@@ -50,7 +51,8 @@ en:
     "Good morning", "Ich bin wach", "Aufgestanden" → routine (multi-step sequences).
     NOTE: A casual "Morgen!" or "Moin!" without further context is smalltalk (conversation), NOT routine.
 
-    Reply ONLY with JSON: {{"role": "<category>", "reason": "..."}}
+    Sub-intents (marked with >) are specific actions. Only include when clearly matching.
+    Reply ONLY with JSON: {{"role": "<category>", "sub_intent": "<sub_intent or null>", "reason": "..."}}
 
   # Conversation history context template
   # Available variables: {history_lines}
@@ -62,5 +64,5 @@ en:
 llm_options:
   temperature: 0.0
   top_p: 0.1
-  num_predict: 128
+  num_predict: 160
   num_ctx: 4096
