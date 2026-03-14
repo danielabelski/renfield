@@ -283,6 +283,12 @@ class AgentRouter:
                     clean_sub = sub_intent.split("/", 1)[-1] if "/" in sub_intent else sub_intent
                     if clean_sub in role.sub_intent_definitions:
                         valid_sub = clean_sub
+                # Fallback: infer sub_intent from user message keywords
+                # when LLM didn't return one (e.g. prose response)
+                if not valid_sub and role.sub_intent_definitions:
+                    valid_sub = self._infer_sub_intent(
+                        message, role.sub_intent_definitions, lang
+                    )
                 result = replace(role, sub_intent=valid_sub)
                 logger.info(
                     f"Router classified '{message[:60]}...' as '{role_name}'"
@@ -302,6 +308,30 @@ class AgentRouter:
         except Exception as e:
             logger.error(f"Router classification failed: {e}")
             return self.get_role("general")
+
+    @staticmethod
+    def _infer_sub_intent(
+        message: str,
+        definitions: dict[str, dict[str, str]],
+        lang: str = "de",
+    ) -> str | None:
+        """Infer sub_intent by matching user message words against description keywords.
+
+        Used as fallback when the router LLM returns prose instead of JSON.
+        Returns the sub_intent name with the most keyword hits, or None.
+        """
+        msg_lower = message.lower()
+        best_name: str | None = None
+        best_hits = 0
+        for si_name, si_desc in definitions.items():
+            # Use the description in the user's language (fallback to de)
+            desc_text = si_desc.get(lang, si_desc.get("de", ""))
+            keywords = [k.strip().lower() for k in desc_text.split(",") if k.strip()]
+            hits = sum(1 for kw in keywords if kw in msg_lower)
+            if hits > best_hits:
+                best_hits = hits
+                best_name = si_name
+        return best_name if best_hits > 0 else None
 
     def _parse_classification(self, response_text: str) -> tuple[str | None, str | None]:
         """Parse the role name and optional sub_intent from the LLM response."""
