@@ -14,7 +14,7 @@ Each role defines:
 import asyncio
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Optional
 
 import yaml
@@ -45,6 +45,8 @@ class AgentRole:
     has_agent_loop: bool = True  # False for conversation and knowledge roles
     model: str | None = None  # Per-role model override
     ollama_url: str | None = None  # Per-role Ollama URL override
+    sub_intent: str | None = None  # Set per-classification (on returned copy)
+    sub_intent_definitions: dict[str, dict[str, str]] | None = None  # From config
 
 
 # Pre-built fallback roles
@@ -86,6 +88,19 @@ def _parse_roles(config: dict) -> dict[str, AgentRole]:
         # Roles without mcp_servers and without prompt_key are non-agent roles
         has_agent_loop = "prompt_key" in role_data
 
+        # Parse sub_intent_definitions from config
+        sub_intents_raw = role_data.get("sub_intents")
+        if sub_intents_raw and isinstance(sub_intents_raw, dict):
+            sub_intents = {}
+            for si_name, si_val in sub_intents_raw.items():
+                if isinstance(si_val, str):
+                    sub_intents[si_name] = {"de": si_val, "en": si_val}
+                elif isinstance(si_val, dict):
+                    sub_intents[si_name] = si_val
+            sub_intent_definitions = sub_intents if sub_intents else None
+        else:
+            sub_intent_definitions = None
+
         role = AgentRole(
             name=name,
             description=description,
@@ -96,6 +111,7 @@ def _parse_roles(config: dict) -> dict[str, AgentRole]:
             has_agent_loop=has_agent_loop,
             model=role_data.get("model"),
             ollama_url=role_data.get("ollama_url"),
+            sub_intent_definitions=sub_intent_definitions,
         )
         roles[name] = role
 
@@ -170,6 +186,10 @@ class AgentRouter:
         for name, role in sorted(self.roles.items()):
             desc = role.description.get(lang, role.description.get("de", name))
             lines.append(f"- {name}: {desc}")
+            if role.sub_intent_definitions:
+                for si_name, si_desc in role.sub_intent_definitions.items():
+                    si_text = si_desc.get(lang, si_desc.get("de", si_name))
+                    lines.append(f"  > {name}/{si_name}: {si_text}")
         return "\n".join(lines)
 
     async def classify(
@@ -253,11 +273,28 @@ class AgentRouter:
             logger.info(f"Router LLM raw response: {response_text[:300]}")
 
             # Parse JSON response
-            role_name = self._parse_classification(response_text)
+            role_name, sub_intent = self._parse_classification(response_text)
             if role_name and role_name in self.roles:
                 role = self.roles[role_name]
-                logger.info(f"Router classified '{message[:60]}...' as '{role_name}'")
-                return role
+                # Validate sub_intent against role's defined sub_intents
+                valid_sub = None
+                if sub_intent and role.sub_intent_definitions:
+                    # Strip "role/" prefix if LLM included it (e.g. "release/my_dashboard" → "my_dashboard")
+                    clean_sub = sub_intent.split("/", 1)[-1] if "/" in sub_intent else sub_intent
+                    if clean_sub in role.sub_intent_definitions:
+                        valid_sub = clean_sub
+                # Fallback: infer sub_intent from user message keywords
+                # when LLM didn't return one (e.g. prose response)
+                if not valid_sub and role.sub_intent_definitions:
+                    valid_sub = self._infer_sub_intent(
+                        message, role.sub_intent_definitions, lang
+                    )
+                result = replace(role, sub_intent=valid_sub)
+                logger.info(
+                    f"Router classified '{message[:60]}...' as '{role_name}'"
+                    + (f" (sub_intent={valid_sub})" if valid_sub else "")
+                )
+                return result
 
             logger.warning(
                 f"Router: invalid role '{role_name}' from LLM, "
@@ -272,33 +309,58 @@ class AgentRouter:
             logger.error(f"Router classification failed: {e}")
             return self.get_role("general")
 
-    def _parse_classification(self, response_text: str) -> str | None:
-        """Parse the role name from the LLM classification response."""
+    @staticmethod
+    def _infer_sub_intent(
+        message: str,
+        definitions: dict[str, dict[str, str]],
+        lang: str = "de",
+    ) -> str | None:
+        """Infer sub_intent by matching user message words against description keywords.
+
+        Used as fallback when the router LLM returns prose instead of JSON.
+        Returns the sub_intent name with the most keyword hits, or None.
+        """
+        msg_lower = message.lower()
+        best_name: str | None = None
+        best_hits = 0
+        for si_name, si_desc in definitions.items():
+            # Use the description in the user's language (fallback to de)
+            desc_text = si_desc.get(lang, si_desc.get("de", ""))
+            keywords = [k.strip().lower() for k in desc_text.split(",") if k.strip()]
+            hits = sum(1 for kw in keywords if kw in msg_lower)
+            if hits > best_hits:
+                best_hits = hits
+                best_name = si_name
+        return best_name if best_hits > 0 else None
+
+    def _parse_classification(self, response_text: str) -> tuple[str | None, str | None]:
+        """Parse the role name and optional sub_intent from the LLM response."""
         import re
 
         text = response_text.strip()
         if not text:
-            return None
+            return None, None
 
         # Try direct JSON parse
         try:
             parsed = json.loads(text)
             if isinstance(parsed, dict):
-                return parsed.get("role")
+                return parsed.get("role"), parsed.get("sub_intent")
         except json.JSONDecodeError:
             pass
 
         # Try to find JSON in text
         match = re.search(r'\{[^}]*"role"\s*:\s*"([^"]+)"[^}]*\}', text)
         if match:
-            return match.group(1)
+            si_match = re.search(r'"sub_intent"\s*:\s*"([^"]+)"', match.group(0))
+            return match.group(1), (si_match.group(1) if si_match else None)
 
         # Last resort: look for a known role name in the text
         for role_name in self.roles:
             if role_name in text.lower():
-                return role_name
+                return role_name, None
 
-        return None
+        return None, None
 
 
 def load_roles_config(config_path: str) -> dict:

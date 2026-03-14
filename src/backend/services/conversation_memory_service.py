@@ -190,9 +190,10 @@ class ConversationMemoryService:
         if not extracted:
             return []
 
-        # Save each extracted fact
+        # Save each extracted fact (cap to avoid runaway DB calls)
+        max_extracts = 10
         saved: list[ConversationMemory] = []
-        for item in extracted:
+        for item in extracted[:max_extracts]:
             content = item.get("content", "").strip()
             category = item.get("category", "").strip().lower()
             importance = item.get("importance", 0.5)
@@ -699,12 +700,13 @@ class ConversationMemoryService:
         )
         self.db.add(entry)
 
-    async def get_history(self, memory_id: int) -> list[dict]:
+    async def get_history(self, memory_id: int, limit: int = 100) -> list[dict]:
         """Get modification history for a memory."""
         result = await self.db.execute(
             select(MemoryHistory)
             .where(MemoryHistory.memory_id == memory_id)
             .order_by(MemoryHistory.created_at.asc())
+            .limit(limit)
         )
         entries = result.scalars().all()
         return [
@@ -1059,7 +1061,9 @@ class ConversationMemoryService:
         user_filter = "AND user_id = :user_id" if user_id is not None else ""
 
         sql = text(f"""
-            SELECT id,
+            SELECT id, content, category, importance, access_count,
+                   last_accessed_at, is_active, user_id, source_session_id,
+                   source_message_id, expires_at, created_at, embedding,
                    1 - (embedding <=> CAST(:embedding AS vector)) as similarity
             FROM conversation_memories
             WHERE is_active = true
@@ -1077,11 +1081,8 @@ class ConversationMemoryService:
         row = result.fetchone()
 
         if row and float(row.similarity) >= threshold:
-            # Fetch the full ORM object
-            mem_result = await self.db.execute(
-                select(ConversationMemory).where(ConversationMemory.id == row.id)
-            )
-            return mem_result.scalar_one_or_none()
+            # Merge into session as ORM object (avoids second query)
+            return await self.db.get(ConversationMemory, row.id)
 
         return None
 
