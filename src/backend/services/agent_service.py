@@ -22,6 +22,7 @@ from services.agent_tools import AgentToolRegistry
 from services.prompt_manager import prompt_manager
 from utils.circuit_breaker import agent_circuit_breaker
 from utils.config import settings
+from utils.hooks import run_hooks
 from utils.llm_client import (
     client_supports_native_tools,
     extract_response_content,
@@ -1029,6 +1030,11 @@ class AgentService:
                 }
 
             logger.info(f"🤖 Agent step {step_num} tool result: success={result.get('success')}, has_data={result.get('data') is not None}, message_len={len(result.get('message', ''))}")
+
+            # Allow plugins to compact large MCP responses before truncation
+            compact_results = await run_hooks("compact_mcp_result", tool=action, result=result)
+            if compact_results:
+                result = compact_results[0]
 
             # Extract large binary blobs before building LLM summary
             result_data = result.get("data")

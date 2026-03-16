@@ -18,6 +18,7 @@ HOOK_EVENTS: frozenset[str] = frozenset({
     "register_routes",
     "register_tools",
     "execute_tool",
+    "compact_mcp_result",
     "post_message",
     "post_document_ingest",
     "retrieve_context",
