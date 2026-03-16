@@ -129,6 +129,8 @@ class _FallbackLLMClient:
         self._primary = primary
         self._fallback = fallback
         self._fallback_url = fallback_url
+        # Forward native tool support flag from primary client
+        self.supports_native_tools = getattr(primary, "supports_native_tools", False)
 
     async def _call(self, method: str, /, *args: Any, **kwargs: Any) -> Any:
         import httpx
@@ -251,3 +253,57 @@ def extract_response_content(response: Any) -> str:
             # Instead, return empty so caller falls back to default behavior
 
     return content
+
+
+# ---------------------------------------------------------------------------
+# Native Function Calling — Capability Detection + Response Parsing
+# ---------------------------------------------------------------------------
+
+
+def client_supports_native_tools(client: Any) -> bool:
+    """Check if an LLM client supports native function calling.
+
+    Clients that support it set `supports_native_tools = True` as a class
+    attribute (OpenAIClient, AnthropicClient, VLLMClient).  Ollama's
+    AsyncClient doesn't have this attribute and uses prompt-based tool calling.
+    """
+    return getattr(client, "supports_native_tools", False)
+
+
+def extract_tool_calls(response: Any) -> list[dict] | None:
+    """Extract tool calls from an LLM response (OpenAI/Ollama/Anthropic format).
+
+    Returns a normalized list of dicts: [{"name": str, "arguments": dict}]
+    or None if no tool calls are present.
+    """
+    tool_calls = getattr(response.message, "tool_calls", None)
+    if not tool_calls:
+        return None
+
+    import json as _json
+
+    result = []
+    for tc in tool_calls:
+        if isinstance(tc, dict):
+            # OpenAI/vLLM format: {"id": ..., "function": {"name": ..., "arguments": "..."}}
+            fn = tc.get("function", {})
+            name = fn.get("name", "")
+            args_raw = fn.get("arguments", "{}")
+            try:
+                args = _json.loads(args_raw) if isinstance(args_raw, str) else args_raw
+            except _json.JSONDecodeError:
+                args = {}
+        else:
+            # Ollama native format: object with .function.name / .function.arguments
+            fn = getattr(tc, "function", tc)
+            name = getattr(fn, "name", "") or ""
+            args = getattr(fn, "arguments", {}) or {}
+            if isinstance(args, str):
+                try:
+                    args = _json.loads(args)
+                except _json.JSONDecodeError:
+                    args = {}
+        if name:
+            result.append({"name": name, "arguments": args})
+
+    return result if result else None

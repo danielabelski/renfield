@@ -788,7 +788,15 @@ async def websocket_endpoint(
                         server_filter=role.mcp_servers,
                         internal_filter=role.internal_tools,
                     )
-                    agent = AgentService(tool_registry, role=role)
+                    router = getattr(app.state, "agent_router", None)
+                    available_roles = router.roles if router else {}
+                    capabilities = router.list_capabilities() if router else []
+                    agent = AgentService(
+                        tool_registry, role=role,
+                        mcp_manager=mcp_manager,
+                        available_roles=available_roles,
+                        capabilities=capabilities,
+                    )
                     executor = ActionExecutor(mcp_manager=mcp_manager)
 
                     agent_tool_results = []

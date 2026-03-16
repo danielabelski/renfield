@@ -20,12 +20,37 @@ if TYPE_CHECKING:
     from services.mcp_client import MCPManager
 
 
+def _synthesize_schema(parameters: dict[str, str]) -> dict:
+    """Synthesize a JSON Schema from a flat {param_name: description} dict.
+
+    Used for internal tools and plugin tools that don't have a full JSON Schema.
+    Parameters with '(required)' in the description are marked as required.
+    """
+    if not parameters:
+        return {"type": "object", "properties": {}}
+
+    properties = {}
+    required = []
+    for name, desc in parameters.items():
+        is_required = "(required)" in desc
+        clean_desc = desc.replace(" (required)", "").replace("(required)", "").strip()
+        properties[name] = {"type": "string", "description": clean_desc}
+        if is_required:
+            required.append(name)
+
+    schema: dict = {"type": "object", "properties": properties}
+    if required:
+        schema["required"] = required
+    return schema
+
+
 @dataclass
 class ToolDefinition:
     """Definition of a tool available to the Agent."""
     name: str
     description: str
     parameters: dict[str, str] = field(default_factory=dict)  # param_name -> description
+    input_schema: dict | None = None  # Full JSON Schema (from MCP or synthesized)
 
 
 class AgentToolRegistry:
@@ -52,6 +77,7 @@ class AgentToolRegistry:
                             None means include all internal tools.
         """
         self._tools: dict[str, ToolDefinition] = {}
+        self.server_filter = server_filter  # Exposed for hooks to do role-aware filtering
 
         # Register MCP tools (includes HA, n8n, weather, search, etc.)
         if mcp_manager:
@@ -127,6 +153,7 @@ class AgentToolRegistry:
                 name=mcp_tool.namespaced_name,
                 description=mcp_tool.description,
                 parameters=params,
+                input_schema=mcp_tool.input_schema or None,
             )
             self._tools[tool.name] = tool
             logger.debug(f"MCP agent tool registered: {tool.name}")
@@ -158,6 +185,45 @@ class AgentToolRegistry:
     def is_valid_tool(self, name: str) -> bool:
         """Check if a tool name is valid."""
         return self.resolve_tool_name(name) is not None
+
+    def build_tools_schema(self, tools: dict[str, "ToolDefinition"] | None = None) -> list[dict]:
+        """Build OpenAI-compatible function calling schema from registered tools.
+
+        Tool names are sanitized for API compatibility (dots → double underscores)
+        since OpenAI requires names matching ``^[a-zA-Z0-9_-]+$``.
+        Use ``unsanitize_tool_name()`` to map sanitized names back to originals.
+
+        Returns:
+            List of tool definitions in OpenAI format:
+            [{"type": "function", "function": {"name": ..., "description": ..., "parameters": {JSON Schema}}}]
+        """
+        tool_set = tools if tools is not None else self._tools
+        self._sanitized_names: dict[str, str] = {}  # sanitized → original
+        result = []
+        for tool in tool_set.values():
+            schema = tool.input_schema if tool.input_schema else _synthesize_schema(tool.parameters)
+            safe_name = tool.name.replace(".", "__")
+            self._sanitized_names[safe_name] = tool.name
+            result.append({
+                "type": "function",
+                "function": {
+                    "name": safe_name,
+                    "description": tool.description,
+                    **({"parameters": schema} if schema else {}),
+                },
+            })
+        return result
+
+    def unsanitize_tool_name(self, name: str) -> str:
+        """Map a sanitized tool name back to the original (dots restored).
+
+        Falls back to simple ``__`` → ``.`` replacement if the name wasn't
+        in the sanitization map (e.g. for locally registered tools without dots).
+        """
+        if hasattr(self, "_sanitized_names") and name in self._sanitized_names:
+            return self._sanitized_names[name]
+        # Fallback: reverse the sanitization
+        return name.replace("__", ".")
 
     def build_tools_prompt(self, tools: dict[str, "ToolDefinition"] | None = None) -> str:
         """

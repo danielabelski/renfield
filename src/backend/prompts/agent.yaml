@@ -54,6 +54,37 @@ de:
 
     {step_directive}
 
+  # Native function calling variant of agent_prompt.
+  # Used when the LLM client supports native tool calling (OpenAI, Anthropic, vLLM).
+  # No JSON format instructions — the LLM calls tools natively and responds with text.
+  native_fc_agent_prompt: |
+    AUFGABE: "{message}"
+
+    {tools_prompt}
+
+    {tool_corrections}
+
+    {history_prompt}
+
+    {conv_context}
+
+    {memory_context}
+
+    {document_context}
+
+    {personality_context}
+
+    REGELN:
+    - Rufe pro Antwort GENAU EIN Tool auf
+    - Nutze die Ergebnisse vorheriger Schritte für Entscheidungen
+    - Erfinde NIEMALS IDs oder Werte — hole sie IMMER zuerst über ein Such-Tool
+    - Wenn im KONVERSATIONS-KONTEXT bereits Suchergebnisse vorliegen, nutze diese direkt weiter
+    - Wenn ein Such-Tool 0 Ergebnisse liefert, wiederhole NICHT dieselbe Suche. Versuche alternative Suchbegriffe. Nach 2 Fehlversuchen: antworte mit "nicht gefunden"
+    - Wenn alle Informationen gesammelt und alle Aktionen abgeschlossen sind, antworte direkt als Text
+    - Antworte natürlich auf Deutsch, es sei denn der Nutzer schreibt auf Englisch
+
+    {step_directive}
+
   # Smart Home agent prompt (focused, fewer rules)
   agent_prompt_smart_home: |
     Du bist ein Smart-Home-Agent. Steuere Geraete mit den verfuegbaren Tools.
@@ -464,6 +495,17 @@ de:
   # JSON system message
   json_system_message: "Antworte nur mit JSON."
 
+  # Native function calling system message (replaces json_system_message when client supports native tools)
+  native_fc_system_message: |
+    Du bist ein hilfreicher Agent, der komplexe Aufgaben Schritt für Schritt löst.
+    Nutze die verfügbaren Tools um Informationen zu sammeln und Aktionen auszuführen.
+    Rufe pro Antwort GENAU EIN Tool auf. Wenn du alle Informationen hast, antworte direkt als Text.
+    Erfinde NIEMALS IDs oder Werte — hole sie IMMER zuerst über ein Such-Tool.
+    Antworte auf Deutsch, es sei denn der Nutzer schreibt auf Englisch.
+
+  # Short placeholder text replacing {tools_prompt} in native FC mode
+  native_fc_tools_placeholder: "Tools werden über native Function Calling bereitgestellt."
+
 en:
   # Main agent prompt template
   # Available variables: {message}, {conv_context}, {memory_context}, {document_context}, {personality_context}, {tools_prompt}, {tool_corrections}, {history_prompt}, {step_directive}
@@ -513,6 +555,35 @@ en:
     - Give final_answer when all information is gathered and ALL required actions have been completed
     - The final answer must be natural and in English
     - Reply ONLY with JSON, no other text
+
+    {step_directive}
+
+  # Native function calling variant of agent_prompt.
+  native_fc_agent_prompt: |
+    TASK: "{message}"
+
+    {tools_prompt}
+
+    {tool_corrections}
+
+    {history_prompt}
+
+    {conv_context}
+
+    {memory_context}
+
+    {document_context}
+
+    {personality_context}
+
+    RULES:
+    - Call EXACTLY ONE tool per response
+    - Use results from previous steps for decisions
+    - NEVER invent IDs or values — always fetch them via a search tool first
+    - If the CONVERSATION CONTEXT already contains relevant search results, use them directly
+    - If a search tool returns 0 results, do NOT repeat the same search. Try alternative queries. After 2 failures: respond with "not found"
+    - When all information is gathered and all actions completed, respond directly as text
+    - Respond naturally in the same language as the user
 
     {step_directive}
 
@@ -925,6 +996,17 @@ en:
 
   # JSON system message
   json_system_message: "Reply with JSON only."
+
+  # Native function calling system message (replaces json_system_message when client supports native tools)
+  native_fc_system_message: |
+    You are a helpful agent that solves complex tasks step by step.
+    Use the available tools to gather information and execute actions.
+    Call EXACTLY ONE tool per response. When you have all information, respond directly as text.
+    NEVER invent IDs or values — always fetch them first via a search tool.
+    Respond in the same language as the user.
+
+  # Short placeholder text replacing {tools_prompt} in native FC mode
+  native_fc_tools_placeholder: "Tools are provided via native function calling."
 
 # Language-independent LLM options
 llm_options:

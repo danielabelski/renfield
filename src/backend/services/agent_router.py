@@ -47,6 +47,7 @@ class AgentRole:
     ollama_url: str | None = None  # Per-role Ollama URL override
     sub_intent: str | None = None  # Set per-classification (on returned copy)
     sub_intent_definitions: dict[str, dict[str, str]] | None = None  # From config
+    capabilities: dict[str, dict] | None = None  # {name: {description, accepts}}
 
 
 # Pre-built fallback roles
@@ -112,6 +113,7 @@ def _parse_roles(config: dict) -> dict[str, AgentRole]:
             model=role_data.get("model"),
             ollama_url=role_data.get("ollama_url"),
             sub_intent_definitions=sub_intent_definitions,
+            capabilities=role_data.get("capabilities"),
         )
         roles[name] = role
 
@@ -171,14 +173,37 @@ class AgentRouter:
             connected_servers = mcp_manager.get_connected_server_names()
 
         self.roles = _filter_available_roles(all_roles, connected_servers)
+        self._capability_map = self._build_capability_map()
         logger.info(
             f"AgentRouter initialized: {len(self.roles)} roles available "
-            f"({', '.join(sorted(self.roles.keys()))})"
+            f"({', '.join(sorted(self.roles.keys()))}), "
+            f"{len(self._capability_map)} capabilities"
         )
 
     def get_role(self, name: str) -> AgentRole:
         """Get a role by name, falling back to general."""
         return self.roles.get(name, GENERAL_ROLE)
+
+    def _build_capability_map(self) -> dict[str, str]:
+        """Build mapping: capability_key -> role_name."""
+        cap_map: dict[str, str] = {}
+        for name, role in self.roles.items():
+            for cap in (role.capabilities or {}):
+                cap_map[cap] = name
+        return cap_map
+
+    def resolve_capability(self, capability: str) -> AgentRole | None:
+        """O(1) lookup: capability key -> role that provides it."""
+        role_name = self._capability_map.get(capability)
+        return self.roles.get(role_name) if role_name else None
+
+    def list_capabilities(self) -> list[dict]:
+        """List all capabilities for delegate tool descriptions."""
+        result = []
+        for role_name, role in self.roles.items():
+            for cap_name, cap_schema in (role.capabilities or {}).items():
+                result.append({"capability": cap_name, "role": role_name, **cap_schema})
+        return result
 
     def _build_role_descriptions(self, lang: str = "de") -> str:
         """Build compact role descriptions for the classification prompt."""

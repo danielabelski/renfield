@@ -22,7 +22,13 @@ from services.agent_tools import AgentToolRegistry
 from services.prompt_manager import prompt_manager
 from utils.circuit_breaker import agent_circuit_breaker
 from utils.config import settings
-from utils.llm_client import extract_response_content, get_agent_client, get_classification_chat_kwargs
+from utils.llm_client import (
+    client_supports_native_tools,
+    extract_response_content,
+    extract_tool_calls,
+    get_agent_client,
+    get_classification_chat_kwargs,
+)
 from utils.token_counter import token_counter
 
 if TYPE_CHECKING:
@@ -460,6 +466,9 @@ class AgentService:
         step_timeout: float | None = None,
         total_timeout: float | None = None,
         role: Optional["AgentRole"] = None,
+        mcp_manager=None,
+        available_roles: dict | None = None,
+        capabilities: list[dict] | None = None,
     ):
         self.tool_registry = tool_registry
         self.role = role
@@ -468,6 +477,61 @@ class AgentService:
         self.step_timeout = step_timeout or settings.agent_step_timeout
         self.total_timeout = total_timeout or settings.agent_total_timeout
         self._prompt_key = (role.prompt_key if role else None) or "agent_prompt"
+        # Cross-role delegation support
+        self.mcp_manager = mcp_manager
+        self.available_roles = available_roles or {}
+        self.capabilities = capabilities or []
+
+    async def _execute_delegate(self, parameters, ollama, executor_template, **kwargs) -> dict:
+        """Execute a cross-role delegation via sub-agent."""
+        capability = parameters.get("capability", "")
+        context_param = parameters.get("context", {})
+        if isinstance(context_param, str):
+            try:
+                context_param = json.loads(context_param)
+            except (json.JSONDecodeError, TypeError):
+                context_param = {"query": context_param}
+
+        # Resolve capability → role
+        cap_info = next((c for c in self.capabilities if c["capability"] == capability), None)
+        if not cap_info:
+            return {"success": False, "message": f"Unknown capability: {capability}", "action_taken": False}
+
+        target_role = self.available_roles.get(cap_info["role"])
+        if not target_role or not self.mcp_manager:
+            return {"success": False, "message": f"Role '{cap_info['role']}' unavailable", "action_taken": False}
+
+        # Build structured message for the sub-agent
+        message = f"{cap_info['description']}. Parameters: {json.dumps(context_param, ensure_ascii=False)}"
+        logger.info(f"🔀 Delegating '{capability}' to role '{cap_info['role']}': {message[:120]}")
+
+        # Create sub-agent with target role's tool registry (no delegation → prevents recursion)
+        sub_registry = AgentToolRegistry(
+            mcp_manager=self.mcp_manager,
+            server_filter=target_role.mcp_servers,
+            internal_filter=target_role.internal_tools,
+        )
+        if hasattr(sub_registry, "_hook_task"):
+            await sub_registry._hook_task
+
+        sub_agent = AgentService(sub_registry, role=target_role)  # no capabilities → no recursion
+
+        from services.action_executor import ActionExecutor
+        sub_executor = ActionExecutor(mcp_manager=self.mcp_manager)
+
+        # Run sub-agent silently (steps not yielded to UI)
+        final_answer = ""
+        async for step in sub_agent.run(message=message, ollama=ollama, executor=sub_executor, **kwargs):
+            if step.step_type == "final_answer":
+                final_answer = step.content
+
+        logger.info(f"🔀 Delegation '{capability}' complete: {len(final_answer)} chars")
+        return {
+            "success": bool(final_answer),
+            "message": final_answer or "Delegate produced no answer.",
+            "action_taken": True,
+            "data": {"delegated_to": cap_info["role"], "capability": capability},
+        }
 
     async def _build_agent_prompt(
         self,
@@ -481,9 +545,13 @@ class AgentService:
         personality_context: str = "",
         context_vars_text: str = "",
         summary_text: str = "",
+        use_native_tools: bool = False,
     ) -> str:
         """Build the prompt for the Agent LLM call."""
-        tools_prompt = self.tool_registry.build_tools_prompt()
+        if use_native_tools:
+            tools_prompt = prompt_manager.get("agent", "native_fc_tools_placeholder", lang=lang) or ""
+        else:
+            tools_prompt = self.tool_registry.build_tools_prompt()
         history_prompt = context.build_history_prompt(lang=lang)
 
         # Build room context string for the prompt
@@ -549,9 +617,10 @@ class AgentService:
         except Exception as e:
             logger.warning(f"⚠️ Agent tool correction lookup failed: {e}")
 
-        # Build prompt from externalized template (role-specific or default)
-        prompt = prompt_manager.get(
-            "agent", self._prompt_key, lang=lang,
+        # Build prompt from externalized template (role-specific or default).
+        # Native FC mode: try native_fc_{prompt_key} first (no JSON format instructions),
+        # fall back to regular prompt_key if not found.
+        prompt_kwargs = dict(
             message=message,
             room_context=room_context_str,
             conv_context=conv_context,
@@ -561,25 +630,32 @@ class AgentService:
             tools_prompt=tools_prompt,
             tool_corrections=tool_corrections,
             history_prompt=history_prompt,
-            step_directive=step_directive
+            step_directive=step_directive,
         )
+
+        prompt = ""
+        if use_native_tools:
+            native_key = f"native_fc_{self._prompt_key}"
+            prompt = prompt_manager.get("agent", native_key, lang=lang, **prompt_kwargs) or ""
+            if prompt:
+                logger.debug(f"Using native FC prompt: {native_key}")
+
+        if not prompt:
+            prompt = prompt_manager.get(
+                "agent", self._prompt_key, lang=lang, **prompt_kwargs
+            )
 
         # If role-specific prompt not found, fall back to default agent_prompt
         if not prompt and self._prompt_key != "agent_prompt":
             logger.debug(f"Prompt key '{self._prompt_key}' not found, falling back to 'agent_prompt'")
+            fallback_key = "native_fc_agent_prompt" if use_native_tools else "agent_prompt"
             prompt = prompt_manager.get(
-                "agent", "agent_prompt", lang=lang,
-                message=message,
-                room_context=room_context_str,
-                conv_context=conv_context,
-                memory_context=memory_context,
-                document_context=document_context,
-                personality_context=personality_context,
-                tools_prompt=tools_prompt,
-                tool_corrections=tool_corrections,
-                history_prompt=history_prompt,
-                step_directive=step_directive
+                "agent", fallback_key, lang=lang, **prompt_kwargs
             )
+            if not prompt and use_native_tools:
+                prompt = prompt_manager.get(
+                    "agent", "agent_prompt", lang=lang, **prompt_kwargs
+                )
 
         return prompt
 
@@ -630,7 +706,34 @@ class AgentService:
         # Use separate Ollama instance for agent if configured
         agent_client, resolved_url = get_agent_client(role_url, settings.agent_ollama_url)
         role_label = self.role.name if self.role else "default"
-        logger.info(f"🤖 Agent [{role_label}] using Ollama: {resolved_url} / {agent_model}")
+
+        # Native function calling: cloud LLMs (OpenAI, Anthropic, vLLM) pass tools
+        # via API parameter instead of embedding them as text in the prompt.
+        use_native_tools = client_supports_native_tools(agent_client)
+
+        # Register delegate tool if cross-role capabilities are available
+        if self.capabilities:
+            own_role = self.role.name if self.role else ""
+            cap_lines = "\n".join(
+                f"- {c['capability']}: {c['description']}. Accepts: {', '.join(c.get('accepts', []))}"
+                for c in self.capabilities
+                if c.get("role") != own_role
+            )
+            if cap_lines:
+                from services.agent_tools import ToolDefinition
+                delegate_tool = ToolDefinition(
+                    name="delegate",
+                    description=f"Delegate a task to a specialist agent by capability.\n{cap_lines}",
+                    parameters={
+                        "capability": "The capability key from the list above (required)",
+                        "context": "JSON string with parameters for the capability (required)",
+                    },
+                )
+                self.tool_registry._tools["delegate"] = delegate_tool
+
+        tools_schema = self.tool_registry.build_tools_schema() if use_native_tools else None
+        fc_mode = "native" if use_native_tools else "prompt"
+        logger.info(f"🤖 Agent [{role_label}] using {resolved_url} / {agent_model} (FC: {fc_mode})")
 
         # With 32k context, all tools fit in the prompt (~5000 tokens for 109 tools).
         # The LLM selects the right tool itself — eliminates keyword-filtering errors.
@@ -650,7 +753,10 @@ class AgentService:
         llm_options_retry = prompt_manager.get_config("agent", "llm_options_retry") or {
             "temperature": 0.3, "top_p": 0.4, "num_predict": 2048, "num_ctx": 32768
         }
-        json_system_message = prompt_manager.get("agent", "json_system_message", lang=lang)
+        if use_native_tools:
+            system_message = prompt_manager.get("agent", "native_fc_system_message", lang=lang) or ""
+        else:
+            system_message = prompt_manager.get("agent", "json_system_message", lang=lang)
 
         for step_num in range(1, self.max_steps + 1):
             # Check total timeout
@@ -662,7 +768,7 @@ class AgentService:
                 return
 
             # Build prompt with all available tools (32k context fits all tools)
-            prompt = await self._build_agent_prompt(message, context, conversation_history, room_context=room_context, lang=lang, memory_context=memory_context, document_context=document_context, personality_context=personality_context, context_vars_text=context_vars_text, summary_text=summary_text)
+            prompt = await self._build_agent_prompt(message, context, conversation_history, room_context=room_context, lang=lang, memory_context=memory_context, document_context=document_context, personality_context=personality_context, context_vars_text=context_vars_text, summary_text=summary_text, use_native_tools=use_native_tools)
             logger.info(f"🤖 Agent step {step_num} prompt ({len(prompt)} chars, {total_tools} tools)")
 
             # Check circuit breaker before LLM call
@@ -679,16 +785,19 @@ class AgentService:
 
             # Call LLM with per-step timeout
             try:
-                classification_kwargs = get_classification_chat_kwargs(agent_model)
+                chat_kwargs = get_classification_chat_kwargs(agent_model)
+                if use_native_tools and tools_schema:
+                    chat_kwargs["tools"] = tools_schema
+                    chat_kwargs["tool_choice"] = "auto"
                 raw_response = await asyncio.wait_for(
                     agent_client.chat(
                         model=agent_model,
                         messages=[
-                            {"role": "system", "content": json_system_message},
+                            {"role": "system", "content": system_message},
                             {"role": "user", "content": prompt},
                         ],
                         options=llm_options,
-                        **classification_kwargs,
+                        **chat_kwargs,
                     ),
                     timeout=self.step_timeout,
                 )
@@ -720,17 +829,44 @@ class AgentService:
                 yield self._build_fallback_answer(context, step_num, str(e), lang=lang)
                 return
 
-            # Parse JSON response
-            parsed = _parse_agent_json(response_text)
+            # --- Parse response: native tool calls or JSON ---
+            parsed = None
 
-            # Treat JSON without "action" field as malformed (LLM output just parameters)
-            if parsed and "action" not in parsed:
-                logger.info(f"🔄 Agent step {step_num}: JSON missing 'action' field, treating as empty for retry")
-                parsed = None
-                response_text = ""
+            if use_native_tools:
+                # Try native function calling first
+                native_calls = extract_tool_calls(raw_response)
+                if native_calls:
+                    # Use first tool call (agent calls one tool per step)
+                    tc = native_calls[0]
+                    # Unsanitize tool name (mcp__release__list_releases → mcp.release.list_releases)
+                    tool_name = self.tool_registry.unsanitize_tool_name(tc["name"])
+                    parsed = {
+                        "action": tool_name,
+                        "parameters": tc["arguments"],
+                        "reason": f"native_fc ({len(native_calls)} call(s))",
+                    }
+                    logger.info(f"🔧 Agent step {step_num} native tool call: {tool_name}")
+                elif response_text.strip():
+                    # No tool calls + text content = final answer
+                    parsed = {
+                        "action": "final_answer",
+                        "answer": response_text.strip(),
+                        "reason": "native_fc_text_response",
+                    }
+                # else: empty response, fall through to retry/error handling below
 
-            # Retry once on empty response with a nudge prompt
-            if not parsed and not response_text.strip():
+            if not parsed:
+                # Prompt-based mode or native FC fallback
+                parsed = _parse_agent_json(response_text)
+
+                # Treat JSON without "action" field as malformed
+                if parsed and "action" not in parsed:
+                    logger.info(f"🔄 Agent step {step_num}: JSON missing 'action' field, treating as empty for retry")
+                    parsed = None
+                    response_text = ""
+
+            # Retry once on empty response with a nudge prompt (prompt-based mode only)
+            if not parsed and not response_text.strip() and not use_native_tools:
                 logger.info(f"🔄 Agent step {step_num}: Empty LLM response, retrying with nudge...")
                 retry_nudge = prompt_manager.get("agent", "retry_nudge", lang=lang)
                 nudge = prompt + retry_nudge
@@ -739,11 +875,11 @@ class AgentService:
                         agent_client.chat(
                             model=agent_model,
                             messages=[
-                                {"role": "system", "content": json_system_message},
+                                {"role": "system", "content": system_message},
                                 {"role": "user", "content": nudge},
                             ],
                             options=llm_options_retry,
-                            **classification_kwargs,
+                            **chat_kwargs,
                         ),
                         timeout=self.step_timeout,
                     )
@@ -861,17 +997,28 @@ class AgentService:
             context.steps.append(tool_call_step)
             yield tool_call_step
 
-            # Execute the tool (with resolved blob data)
+            # Execute the tool (delegate or normal)
             try:
-                intent_data = {
-                    "intent": action,
-                    "parameters": resolved_parameters,
-                    "confidence": 1.0,
-                }
-                result = await executor.execute(
-                    intent_data, user_permissions=user_permissions,
-                    user_id=user_id,
-                )
+                if action == "delegate" and self.capabilities:
+                    result = await self._execute_delegate(
+                        parameters=resolved_parameters,
+                        ollama=ollama,
+                        executor_template=executor,
+                        user_permissions=user_permissions,
+                        user_id=user_id,
+                        context_vars_text=context_vars_text,
+                        lang=lang,
+                    )
+                else:
+                    intent_data = {
+                        "intent": action,
+                        "parameters": resolved_parameters,
+                        "confidence": 1.0,
+                    }
+                    result = await executor.execute(
+                        intent_data, user_permissions=user_permissions,
+                        user_id=user_id,
+                    )
             except Exception as e:
                 logger.error(f"❌ Agent tool execution failed: {action} — {e}")
                 error_msg = f"Tool error: {e!s}" if lang == "en" else f"Tool-Fehler: {e!s}"
