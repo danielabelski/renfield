@@ -176,6 +176,36 @@ def _schedule_memory_cleanup():
     )
 
 
+def _schedule_episodic_cleanup():
+    """Schedule periodic cleanup and summarization of episodic memories."""
+    if not settings.memory_enabled or not settings.memory_episodic_enabled:
+        return
+
+    async def cleanup_loop():
+        while True:
+            try:
+                await asyncio.sleep(settings.memory_cleanup_interval)
+                from services.episodic_memory_service import EpisodicMemoryService
+
+                async with AsyncSessionLocal() as db_session:
+                    service = EpisodicMemoryService(db_session)
+                    counts = await service.cleanup()
+                    total = sum(counts.values())
+                    if total > 0:
+                        logger.info(f"Episodic cleanup: {counts}")
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"Episodic cleanup failed: {e}")
+
+    task = asyncio.create_task(cleanup_loop())
+    _startup_tasks.append(task)
+    logger.info(
+        f"Episodic Cleanup Scheduler gestartet "
+        f"(interval={settings.memory_cleanup_interval}s)"
+    )
+
+
 def _schedule_upload_cleanup():
     """Schedule periodic cleanup of old non-indexed chat uploads."""
     if not settings.chat_upload_cleanup_enabled:
@@ -524,6 +554,7 @@ async def lifespan(app: "FastAPI"):
     _schedule_reminder_checker()
     _schedule_notification_poller(app)
     _schedule_memory_cleanup()
+    _schedule_episodic_cleanup()
     _schedule_upload_cleanup()
 
     # Zeroconf for satellite discovery
