@@ -773,6 +773,7 @@ class AgentService:
             # Build prompt with all available tools (32k context fits all tools)
             prompt = await self._build_agent_prompt(message, context, conversation_history, room_context=room_context, lang=lang, memory_context=memory_context, document_context=document_context, personality_context=personality_context, context_vars_text=context_vars_text, summary_text=summary_text, use_native_tools=use_native_tools)
             logger.info(f"[{rid}] Agent step {step_num} prompt ({len(prompt)} chars, {total_tools} tools)")
+            logger.debug(f"[{rid}] Agent step {step_num} prompt text:\n{prompt}")
 
             # Check circuit breaker before LLM call
             if not await agent_circuit_breaker.allow_request():
