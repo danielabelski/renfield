@@ -22,6 +22,7 @@ from loguru import logger
 
 from services.prompt_manager import prompt_manager
 from utils.config import settings
+from utils.request_context import request_id
 from utils.llm_client import (
     extract_response_content,
     get_agent_client,
@@ -279,7 +280,8 @@ class AgentRouter:
             router_model = settings.ollama_intent_model or settings.ollama_model
 
         try:
-            logger.info(f"Router using model: {router_model}")
+            rid = request_id.get()
+            logger.info(f"[{rid}] Router using model: {router_model}")
             # Option A: Disable thinking mode for classification tasks
             classification_kwargs = get_classification_chat_kwargs(router_model)
             raw_response = await asyncio.wait_for(
@@ -295,7 +297,7 @@ class AgentRouter:
             )
             # Option B: Failsafe for empty content with thinking
             response_text = extract_response_content(raw_response)
-            logger.info(f"Router LLM raw response: {response_text[:300]}")
+            logger.info(f"[{rid}] Router raw response: {response_text[:300]}")
 
             # Parse JSON response
             role_name, sub_intent = self._parse_classification(response_text)
@@ -316,7 +318,7 @@ class AgentRouter:
                     )
                 result = replace(role, sub_intent=valid_sub)
                 logger.info(
-                    f"Router classified '{message[:60]}...' as '{role_name}'"
+                    f"[{rid}] Router classified '{message[:60]}...' as '{role_name}'"
                     + (f" (sub_intent={valid_sub})" if valid_sub else "")
                 )
                 return result

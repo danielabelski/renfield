@@ -30,6 +30,7 @@ from utils.llm_client import (
     get_agent_client,
     get_classification_chat_kwargs,
 )
+from utils.request_context import request_id
 from utils.token_counter import token_counter
 
 if TYPE_CHECKING:
@@ -734,7 +735,8 @@ class AgentService:
 
         tools_schema = self.tool_registry.build_tools_schema() if use_native_tools else None
         fc_mode = "native" if use_native_tools else "prompt"
-        logger.info(f"🤖 Agent [{role_label}] using {resolved_url} / {agent_model} (FC: {fc_mode})")
+        rid = request_id.get()
+        logger.info(f"[{rid}] Agent [{role_label}] using {resolved_url} / {agent_model} (FC: {fc_mode})")
 
         # With 32k context, all tools fit in the prompt (~5000 tokens for 109 tools).
         # The LLM selects the right tool itself — eliminates keyword-filtering errors.
@@ -770,7 +772,7 @@ class AgentService:
 
             # Build prompt with all available tools (32k context fits all tools)
             prompt = await self._build_agent_prompt(message, context, conversation_history, room_context=room_context, lang=lang, memory_context=memory_context, document_context=document_context, personality_context=personality_context, context_vars_text=context_vars_text, summary_text=summary_text, use_native_tools=use_native_tools)
-            logger.info(f"🤖 Agent step {step_num} prompt ({len(prompt)} chars, {total_tools} tools)")
+            logger.info(f"[{rid}] Agent step {step_num} prompt ({len(prompt)} chars, {total_tools} tools)")
 
             # Check circuit breaker before LLM call
             if not await agent_circuit_breaker.allow_request():
@@ -807,7 +809,7 @@ class AgentService:
 
                 # Track token usage
                 context.track_tokens(prompt, response_text)
-                logger.info(f"🤖 Agent step {step_num} LLM response ({len(response_text)} chars): {response_text[:500]}")
+                logger.info(f"[{rid}] Agent step {step_num} LLM response ({len(response_text)} chars): {response_text[:500]}")
             except TimeoutError:
                 await agent_circuit_breaker.record_failure()
                 logger.warning(f"⏰ Agent step {step_num} timed out after {self.step_timeout}s")
@@ -846,7 +848,7 @@ class AgentService:
                         "parameters": tc["arguments"],
                         "reason": f"native_fc ({len(native_calls)} call(s))",
                     }
-                    logger.info(f"🔧 Agent step {step_num} native tool call: {tool_name}")
+                    logger.info(f"[{rid}] Agent step {step_num} native tool call: {tool_name}")
                 elif response_text.strip():
                     # No tool calls + text content = final answer
                     parsed = {
@@ -1029,7 +1031,7 @@ class AgentService:
                     "action_taken": False,
                 }
 
-            logger.info(f"🤖 Agent step {step_num} tool result: success={result.get('success')}, has_data={result.get('data') is not None}, message_len={len(result.get('message', ''))}")
+            logger.info(f"[{rid}] Agent step {step_num} tool result: success={result.get('success')}, has_data={result.get('data') is not None}, message_len={len(result.get('message', ''))}")
 
             # Allow plugins to compact large MCP responses before truncation
             compact_results = await run_hooks("compact_mcp_result", tool=action, result=result)

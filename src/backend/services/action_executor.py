@@ -7,6 +7,8 @@ conversation) have dedicated handlers here.
 """
 from loguru import logger
 
+from utils.request_context import request_id
+
 
 class ActionExecutor:
     """Führt Intents aus und gibt Ergebnisse zurück"""
@@ -46,8 +48,9 @@ class ActionExecutor:
         parameters = intent_data.get("parameters", {})
         confidence = intent_data.get("confidence", 0.0)
 
-        logger.info(f"🎯 Executing intent: {intent} (confidence: {confidence:.2f})")
-        logger.debug(f"Parameters: {parameters}")
+        rid = request_id.get()
+        logger.info(f"[{rid}] Executing intent: {intent} (confidence: {confidence:.2f})")
+        logger.debug(f"[{rid}] Parameters: {parameters}")
 
         # Internal intents (no MCP equivalent)
         if intent.startswith("knowledge."):
@@ -67,7 +70,7 @@ class ActionExecutor:
 
         # MCP tool intents (mcp.* prefix — handles HA, n8n, weather, search, etc.)
         if self.mcp_manager and intent.startswith("mcp."):
-            logger.info(f"🔌 Executing MCP tool: {intent}")
+            logger.info(f"[{rid}] Executing MCP tool: {intent}")
             if user_id is not None:
                 parameters["user_id"] = user_id
             return await self.mcp_manager.execute_tool(
