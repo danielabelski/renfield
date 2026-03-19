@@ -123,6 +123,8 @@ class Settings(BaseSettings):
     # Agent Advanced
     agent_history_limit: int = Field(default=20, ge=1, le=100)       # Max history steps in agent loop
     agent_response_truncation: int = Field(default=2000, ge=100, le=50000)  # Max chars for tool response truncation
+    agent_tool_result_max_items: int = Field(default=0, ge=0)  # Max items per tool result in agent prompt (0=adaptive)
+    agent_token_budget_threshold: float = Field(default=0.85, ge=0.0, le=1.0)  # Token budget threshold (0=disabled)
 
     # Embeddings
     embedding_dimension: int = Field(default=768, ge=128, le=4096)   # Embedding vector dimension

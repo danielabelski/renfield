@@ -13,6 +13,7 @@ import json
 import re
 import time
 from collections.abc import AsyncGenerator
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
@@ -32,6 +33,9 @@ from utils.llm_client import (
 )
 from utils.request_context import request_id
 from utils.token_counter import token_counter
+
+# Per-request token budget info (read by transport layer for metrics)
+token_budget_info: ContextVar[dict] = ContextVar("token_budget_info", default={})
 
 if TYPE_CHECKING:
     from services.action_executor import ActionExecutor
@@ -119,6 +123,9 @@ class AgentContext:
     # Track tools that return empty results (for empty-result loop detection)
     empty_results_per_tool: dict[str, int] = field(default_factory=dict)
 
+    # Adaptive tool result budget (set by _enforce_token_budget, 0=unlimited)
+    tool_result_budget_chars: int = 0
+
     # Token tracking
     total_input_tokens: int = 0
     total_output_tokens: int = 0
@@ -178,9 +185,17 @@ class AgentContext:
                     f" mit {json.dumps(step.parameters, ensure_ascii=False)}"
                 )
             elif step.step_type == "tool_result":
-                # With 32k context window, tool results can be much more detailed
-                content = step.content[:8000] if step.content else no_result
-                lines.append(f"  {result_label} {content}")
+                if step.data is not None:
+                    # Use structured data — serialize with budget awareness
+                    budget = settings.agent_tool_result_max_items or self.tool_result_budget_chars
+                    content = _serialize_for_prompt(step.data, budget_chars=budget)
+                else:
+                    # Fallback for error results or text-only results
+                    content = step.content or no_result
+                tool_name = step.tool or "unknown"
+                lines.append(f'  <tool_result tool="{tool_name}">')
+                lines.append(f"  {content}")
+                lines.append(f"  </tool_result>")
             elif step.step_type == "error":
                 lines.append(f"  {error_label} {step.content[:1500]}")
 
@@ -247,6 +262,79 @@ def _truncate(text: str, max_length: int = settings.agent_response_truncation) -
     if len(text) <= max_length:
         return text
     return text[:max_length] + "..."
+
+
+def _serialize_for_prompt(data: any, budget_chars: int = 0) -> str:
+    """Serialize structured tool result data for the LLM prompt.
+
+    Handles format normalization (MCP wrapper, local tool dicts, plain text),
+    array item limiting, and always produces valid JSON or text.
+
+    Args:
+        data: The structured data from step.data (dict, list, or MCP wrapper).
+        budget_chars: Maximum chars for the serialized output (0 = unlimited).
+
+    Returns:
+        A valid JSON string or plain text — never broken mid-field.
+    """
+    if data is None:
+        return ""
+
+    # Unwrap MCP format: [{"type": "text", "text": "{...json...}"}]
+    if isinstance(data, list) and data and isinstance(data[0], dict):
+        first = data[0]
+        if first.get("type") == "text" and "text" in first:
+            text = first["text"]
+            try:
+                data = json.loads(text)
+            except (json.JSONDecodeError, TypeError):
+                # Plain text MCP result
+                if not budget_chars or len(text) <= budget_chars:
+                    return text
+                return text[:budget_chars] + "\n...[truncated text]"
+
+    # Serialize to JSON
+    serialized = json.dumps(data, ensure_ascii=False)
+
+    # If within budget (or no budget), return as-is
+    if not budget_chars or len(serialized) <= budget_chars:
+        return serialized
+
+    # Over budget: reduce structurally
+    if isinstance(data, list) and len(data) > 1:
+        # Binary search for max items that fit
+        original_len = len(data)
+        lo, hi = 1, len(data)
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            candidate = json.dumps(data[:mid], ensure_ascii=False)
+            if len(candidate) <= budget_chars - 60:
+                lo = mid
+            else:
+                hi = mid - 1
+        result = json.dumps(data[:lo], ensure_ascii=False)
+        return result + f"\n(showing {lo} of {original_len} items)"
+
+    if isinstance(data, dict):
+        # Remove largest fields until it fits (work on a copy)
+        reduced = dict(data)
+        by_size = sorted(
+            reduced.keys(),
+            key=lambda k: len(json.dumps(reduced[k], ensure_ascii=False)),
+            reverse=True,
+        )
+        removed = []
+        for key in by_size:
+            if not removed and len(json.dumps(reduced, ensure_ascii=False)) <= budget_chars:
+                break
+            removed.append(key)
+            del reduced[key]
+            if len(json.dumps(reduced, ensure_ascii=False)) <= budget_chars - 80:
+                break
+        return json.dumps(reduced, ensure_ascii=False) + f"\n(fields omitted: {', '.join(removed)})"
+
+    # Scalar or other — return as-is (already over budget but can't reduce structurally)
+    return serialized
 
 
 # Fields that contain large binary data (base64-encoded)
@@ -535,6 +623,148 @@ class AgentService:
             "data": {"delegated_to": cap_info["role"], "capability": capability},
         }
 
+    async def _enforce_token_budget(
+        self,
+        prompt: str,
+        system_message: str,
+        llm_options: dict,
+        *,
+        message: str,
+        context: "AgentContext",
+        conversation_history: list[dict] | None = None,
+        room_context: dict | None = None,
+        lang: str = "de",
+        memory_context: str = "",
+        document_context: str = "",
+        personality_context: str = "",
+        context_vars_text: str = "",
+        summary_text: str = "",
+        use_native_tools: bool = False,
+    ) -> tuple[str, bool]:
+        """Adaptive token budget enforcement.
+
+        Instead of a static tool result limit, this dynamically calculates how
+        many chars of tool results fit within the budget. If the prompt exceeds
+        the threshold, it:
+          1. Computes how much space tool results can occupy given everything else
+          2. Sets context.tool_result_budget_chars to that exact value
+          3. Rebuilds the prompt — tool results are truncated to fit
+          4. Falls back to dropping history/memory/documents only if needed
+
+        Returns (prompt, was_truncated). Updates token_budget_info ContextVar.
+        """
+        num_ctx = llm_options.get("num_ctx", 32768)
+        num_predict = llm_options.get("num_predict", 2048)
+        available = num_ctx - num_predict
+
+        system_tokens = token_counter.count(system_message)
+        prompt_tokens = token_counter.count(prompt)
+        total_tokens = system_tokens + prompt_tokens
+        utilization = total_tokens / available if available > 0 else 1.0
+
+        rid = request_id.get()
+        threshold = settings.agent_token_budget_threshold
+        logger.info(f"[{rid}] Token budget: {total_tokens}/{available} ({utilization:.0%})")
+
+        # Store budget info for metrics (read by transport layer)
+        token_budget_info.set({
+            "utilization": round(utilization, 4),
+            "truncated": False,
+        })
+
+        # Disabled (threshold=0) or under threshold — no truncation needed
+        if threshold <= 0 or utilization <= threshold:
+            return prompt, False
+
+        logger.warning(
+            f"[{rid}] Token budget exceeded {threshold:.0%} ({utilization:.0%}), "
+            f"applying adaptive truncation"
+        )
+
+        target_tokens = int(available * threshold)
+        build_kwargs = dict(
+            message=message,
+            context=context,
+            conversation_history=conversation_history,
+            room_context=room_context,
+            lang=lang,
+            memory_context=memory_context,
+            document_context=document_context,
+            personality_context=personality_context,
+            context_vars_text=context_vars_text,
+            summary_text=summary_text,
+            use_native_tools=use_native_tools,
+        )
+
+        # --- Pass 0: Adaptive tool result budgeting ---
+        # Measure the prompt WITHOUT tool results to find the fixed overhead,
+        # then calculate exactly how many chars of tool results fit.
+        tool_result_steps = [
+            s for s in context.steps if s.step_type == "tool_result" and (s.data is not None or s.content)
+        ]
+        if tool_result_steps:
+            # Build prompt with empty tool results to measure fixed overhead
+            context.tool_result_budget_chars = 1  # minimal — just get the skeleton
+            prompt = await self._build_agent_prompt(**build_kwargs)
+            skeleton_tokens = system_tokens + token_counter.count(prompt)
+
+            # Budget for tool results = target - skeleton
+            token_headroom = max(0, target_tokens - skeleton_tokens)
+            # Convert tokens → chars (conservative: use 3.5 chars/token for JSON-heavy content)
+            total_chars_budget = int(token_headroom * 3.5)
+            # Distribute across tool results (most recent gets more)
+            n_results = len(tool_result_steps)
+            per_result_chars = max(200, total_chars_budget // max(1, n_results))
+
+            context.tool_result_budget_chars = per_result_chars
+            prompt = await self._build_agent_prompt(**build_kwargs)
+            prompt_tokens = token_counter.count(prompt)
+            total_tokens = system_tokens + prompt_tokens
+            utilization = total_tokens / available if available > 0 else 1.0
+
+            logger.info(
+                f"[{rid}] Budget pass 'adaptive_tool_results': "
+                f"{per_result_chars} chars/result ({n_results} results), "
+                f"{total_tokens}/{available} ({utilization:.0%})"
+            )
+            if utilization <= threshold:
+                token_budget_info.set({
+                    "utilization": round(utilization, 4),
+                    "truncated": True,
+                    "tool_result_budget_chars": per_result_chars,
+                })
+                return prompt, True
+
+        # --- Pass 1+: Progressive fallback (drop non-essential components) ---
+        context.tool_result_budget_chars = 0  # reset — keep whatever pass 0 set
+        fallback_passes = [
+            ("halve_history", {
+                "conversation_history": (conversation_history or [])[-3:],
+            }),
+            ("clear_memory", {
+                "memory_context": "",
+            }),
+            ("clear_document", {
+                "document_context": "",
+            }),
+        ]
+
+        for pass_name, overrides in fallback_passes:
+            build_kwargs.update(overrides)
+            prompt = await self._build_agent_prompt(**build_kwargs)
+            prompt_tokens = token_counter.count(prompt)
+            total_tokens = system_tokens + prompt_tokens
+            utilization = total_tokens / available if available > 0 else 1.0
+            logger.info(f"[{rid}] Budget pass '{pass_name}': {total_tokens}/{available} ({utilization:.0%})")
+            if utilization <= threshold:
+                break
+
+        token_budget_info.set({
+            "utilization": round(utilization, 4),
+            "truncated": True,
+        })
+        return prompt, True
+
     async def _build_agent_prompt(
         self,
         message: str,
@@ -567,7 +797,7 @@ class AgentService:
         # Conversation context prefix: context vars + summary before raw history
         conv_prefix = ""
         if context_vars_text:
-            conv_prefix += f"## Conversation Context\n{context_vars_text}\n\n"
+            conv_prefix += f"## Conversation Context\n<context_variables>\n{context_vars_text}\n</context_variables>\n\n"
         if summary_text:
             conv_prefix += f"## Earlier in this conversation\n{summary_text}\n\n"
 
@@ -586,8 +816,9 @@ class AgentService:
             history_lines = []
             for msg in recent:
                 role = "User" if msg.get("role") == "user" else "Assistant"
+                role_tag = role.lower()
                 content = _compress_history_message(msg.get("content", ""))
-                history_lines.append(f"  {role}: {content}")
+                history_lines.append(f"  <{role_tag}_turn>{content}</{role_tag}_turn>")
             conv_context = prompt_manager.get(
                 "agent", "conv_context_template", lang=lang,
                 history_lines="\n".join(history_lines)
@@ -622,12 +853,16 @@ class AgentService:
         # Build prompt from externalized template (role-specific or default).
         # Native FC mode: try native_fc_{prompt_key} first (no JSON format instructions),
         # fall back to regular prompt_key if not found.
+        # Wrap untrusted content in XML tags for injection defense
+        wrapped_memory = f"<memory_context>\n{memory_context}\n</memory_context>" if memory_context else ""
+        wrapped_document = f"<uploaded_document>\n{document_context}\n</uploaded_document>" if document_context else ""
+
         prompt_kwargs = dict(
             message=message,
             room_context=room_context_str,
             conv_context=conv_context,
-            memory_context=memory_context,
-            document_context=document_context,
+            memory_context=wrapped_memory,
+            document_context=wrapped_document,
             personality_context=personality_context,
             tools_prompt=tools_prompt,
             tool_corrections=tool_corrections,
@@ -774,6 +1009,22 @@ class AgentService:
             prompt = await self._build_agent_prompt(message, context, conversation_history, room_context=room_context, lang=lang, memory_context=memory_context, document_context=document_context, personality_context=personality_context, context_vars_text=context_vars_text, summary_text=summary_text, use_native_tools=use_native_tools)
             logger.info(f"[{rid}] Agent step {step_num} prompt ({len(prompt)} chars, {total_tools} tools)")
             logger.debug(f"[{rid}] Agent step {step_num} prompt text:\n{prompt}")
+
+            # W5: Pre-flight token budget check — progressively truncate if > 85%
+            prompt, budget_truncated = await self._enforce_token_budget(
+                prompt, system_message, llm_options,
+                message=message, context=context,
+                conversation_history=conversation_history,
+                room_context=room_context, lang=lang,
+                memory_context=memory_context,
+                document_context=document_context,
+                personality_context=personality_context,
+                context_vars_text=context_vars_text,
+                summary_text=summary_text,
+                use_native_tools=use_native_tools,
+            )
+            if budget_truncated:
+                logger.warning(f"[{rid}] Token budget enforced at step {step_num}")
 
             # Check circuit breaker before LLM call
             if not await agent_circuit_breaker.allow_request():
@@ -1079,20 +1330,26 @@ class AgentService:
                 result_summary = f"Document downloaded: {fname} ({mtype}). {attach_note}"
                 logger.info(f"📎 Step {step_num} summary: {result_summary}")
             elif result_data_for_llm:
-                data_label = "Data" if lang == "en" else "Daten"
-                data_str = json.dumps(result_data_for_llm, ensure_ascii=False)
-                result_summary = _truncate(f"{result_message} | {data_label}: {data_str}", max_length=settings.agent_response_truncation)
+                # Label only — structured data stays in step.data for _serialize_for_prompt()
+                item_count = ""
+                if isinstance(result_data_for_llm, list):
+                    item_count = f" ({len(result_data_for_llm)} items)"
+                elif isinstance(result_data_for_llm, dict) and isinstance(result_data_for_llm.get("text"), str):
+                    pass  # MCP wrapper — no count
+                result_summary = f"{result_message}{item_count}"
             else:
                 result_summary = _truncate(result_message, max_length=settings.agent_response_truncation)
 
             # Yield tool_result step
+            # Use blob-extracted data for prompt serialization (step.data is the
+            # source of truth for build_history_prompt → _serialize_for_prompt).
             tool_result_step = AgentStep(
                 step_number=step_num,
                 step_type="tool_result",
                 content=result_summary,
                 tool=action,
                 success=result.get("success", False),
-                data=result.get("data"),
+                data=result_data_for_llm,
             )
             context.steps.append(tool_result_step)
             context.tool_results.append(result)
