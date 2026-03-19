@@ -43,14 +43,18 @@ de:
 
   memory_context_section: |
     ERINNERUNGEN (Langzeit-Gedaechtnis ueber diesen Benutzer):
+    <memory_context>
     {memories}
+    </memory_context>
 
     Nutze diese Erinnerungen um personalisierter zu antworten.
     Widerspreche ihnen nicht, es sei denn der Benutzer korrigiert dich explizit.
 
   document_context_section: |
     HOCHGELADENES DOKUMENT ({filename}, {file_size}):
+    <uploaded_document>
     {document_text}
+    </uploaded_document>
 
     WICHTIG: Der Benutzer hat dieses Dokument hochgeladen. Beantworte Fragen basierend auf dem Dokumentinhalt. Zitiere relevante Stellen wenn moeglich.
 
@@ -117,14 +121,18 @@ en:
 
   memory_context_section: |
     MEMORIES (Long-term memory about this user):
+    <memory_context>
     {memories}
+    </memory_context>
 
     Use these memories to give personalized responses.
     Don't contradict them unless the user explicitly corrects you.
 
   document_context_section: |
     UPLOADED DOCUMENT ({filename}, {file_size}):
+    <uploaded_document>
     {document_text}
+    </uploaded_document>
 
     IMPORTANT: The user has uploaded this document. Answer questions based on the document content. Cite relevant passages when possible.
 
