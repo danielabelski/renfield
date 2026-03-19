@@ -1043,7 +1043,6 @@ class AgentService:
                 chat_kwargs = get_classification_chat_kwargs(agent_model)
                 if use_native_tools and tools_schema:
                     chat_kwargs["tools"] = tools_schema
-                    chat_kwargs["tool_choice"] = "auto"
                 raw_response = await asyncio.wait_for(
                     agent_client.chat(
                         model=agent_model,
