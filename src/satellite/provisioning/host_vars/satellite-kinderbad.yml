@@ -19,3 +19,6 @@ led_power_pin: null
 
 # 2-mic overlay variant: "simple" or "full"
 overlay_variant: "simple"
+
+# Camera (IMX708 via rpicam-still)
+camera_enabled: true

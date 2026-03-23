@@ -62,6 +62,8 @@ curl -L -o /opt/renfield-satellite/models/silero_vad.onnx \
 - [ ] **Audio Preprocessing auf Backend verschieben**: Für ressourcenschwache Satellites
   - Noise Reduction im Backend statt auf Satellite
   - Satellite sendet Raw Audio, Backend preprocessed vor Whisper
+  - **Alternative:** ReSpeaker XVF3800 macht AEC + Beamforming + Noise Suppression in Hardware
+    → siehe [docs/XVF3800_SATELLITE.md](../../docs/XVF3800_SATELLITE.md)
 
 ### Medium Priority
 
@@ -78,6 +80,7 @@ curl -L -o /opt/renfield-satellite/models/silero_vad.onnx \
 - [ ] **Echo Cancellation**
   - Wenn Satellite spricht und gleichzeitig aufnimmt
   - WebRTC Audio Processing Library
+  - **Alternative:** XVF3800 hat Hardware-AEC → siehe [docs/XVF3800_SATELLITE.md](../../docs/XVF3800_SATELLITE.md)
 
 ### Low Priority
 
