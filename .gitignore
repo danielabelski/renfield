@@ -37,6 +37,10 @@ yarn-error.log*
 frontend/dist/
 src/frontend/dist/
 
+src/satellite/provisioning/host_vars/
+src/satellite/provisioning/inventory.yml
+
+
 # macOS
 .DS_Store
 .AppleDouble

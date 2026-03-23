@@ -1,0 +1,128 @@
+/*
+ * ReSpeaker 2-Mic Pi HAT V2 Overlay with Real GPCLK0 MCLK
+ *
+ * The V2 HAT uses TLV320AIC3104 codec at I2C address 0x18.
+ * Like the V1 (WM8960), it needs a real GPCLK signal on GPIO4 as MCLK.
+ * The upstream respeaker-2mic-v2_0 overlay uses a fixed-clock which does
+ * NOT generate an actual clock signal — causing I2C timeout errors (-110).
+ *
+ * This overlay uses BCM2835_CLOCK_GP0 (clock 38) to generate a real
+ * 24.576 MHz MCLK signal on GPIO4.
+ *
+ * Hardware: ReSpeaker 2-Mics Pi HAT V2 (Seeed Studio)
+ * Codec: TLV320AIC3104
+ * Target: Raspberry Pi Zero 2 W / Pi 3 / Pi 4
+ *
+ * Installation:
+ *   dtc -@ -I dts -O dtb -o respeaker-2mic-v2-gpclk.dtbo respeaker-2mic-v2-gpclk-overlay.dts
+ *   sudo cp respeaker-2mic-v2-gpclk.dtbo /boot/firmware/overlays/
+ *   # In /boot/firmware/config.txt, REPLACE dtoverlay=respeaker-2mic-v2_0 with:
+ *   #   dtoverlay=respeaker-2mic-v2-gpclk
+ *
+ * Copyright 2026 Renfield Project
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/dts-v1/;
+/plugin/;
+
+/ {
+    compatible = "brcm,bcm2835", "brcm,bcm2708", "brcm,bcm2709", "brcm,bcm2711";
+
+    /* Fragment 0: Enable I2S interface */
+    fragment@0 {
+        target = <&i2s_clk_consumer>;
+        __overlay__ {
+            status = "okay";
+        };
+    };
+
+    /* Fragment 1: Configure GPIO4 for GPCLK0 output (ALT0 function) */
+    fragment@1 {
+        target = <&gpio>;
+        __overlay__ {
+            tlv320_gpclk_pin: tlv320_gpclk_pin {
+                brcm,pins = <4>;
+                brcm,function = <4>;  /* ALT0 = GPCLK0 */
+                brcm,pull = <0>;      /* No pull-up/down */
+            };
+        };
+    };
+
+    /* Fragment 2: TLV320AIC3104 codec on I2C1 with real GPCLK0 clock */
+    fragment@2 {
+        target = <&i2c1>;
+        __overlay__ {
+            #address-cells = <1>;
+            #size-cells = <0>;
+            status = "okay";
+
+            tlv320aic3104: tlv320aic3104@18 {
+                compatible = "ti,tlv320aic3104";
+                reg = <0x18>;
+
+                /* Use the real GPCLK0 clock instead of fixed-clock */
+                clocks = <&clocks 38>;  /* BCM2835_CLOCK_GP0 = 38 */
+                clock-names = "mclk";
+
+                /* Request 24.576 MHz clock rate */
+                assigned-clocks = <&clocks 38>;
+                assigned-clock-rates = <24576000>;
+
+                /* GPIO4 pin configuration for clock output */
+                pinctrl-names = "default";
+                pinctrl-0 = <&tlv320_gpclk_pin>;
+
+                /* Mic bias voltage: 2.5V */
+                ai3x-micbias-vg = <2>;
+
+                #sound-dai-cells = <0>;
+            };
+        };
+    };
+
+    /* Fragment 3: Simple audio card configuration */
+    fragment@3 {
+        target-path = "/";
+        __overlay__ {
+            sound: seeed-2mic-soundcard {
+                compatible = "simple-audio-card";
+                simple-audio-card,format = "i2s";
+                simple-audio-card,name = "seeed2micvoicec";
+                status = "okay";
+
+                /* Audio widgets */
+                simple-audio-card,widgets =
+                    "Headphone", "Headphone Jack",
+                    "Line", "Line In";
+
+                /* Audio routing */
+                simple-audio-card,routing =
+                    "Headphone Jack", "HPLOUT",
+                    "Headphone Jack", "HPROUT",
+                    "LINE1L", "Line In",
+                    "LINE1R", "Line In";
+
+                /* Codec is bitclock and frame master */
+                simple-audio-card,bitclock-master = <&sound_master>;
+                simple-audio-card,frame-master = <&sound_master>;
+
+                /* CPU DAI */
+                simple-audio-card,cpu {
+                    sound-dai = <&i2s_clk_consumer>;
+                };
+
+                /* Codec DAI */
+                sound_master: simple-audio-card,codec {
+                    sound-dai = <&tlv320aic3104>;
+                    clocks = <&clocks 38>;
+                    clock-names = "mclk";
+                };
+            };
+        };
+    };
+
+    __overrides__ {
+        alsaname = <&sound>, "simple-audio-card,name";
+    };
+};
