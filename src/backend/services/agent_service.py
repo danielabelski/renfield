@@ -696,56 +696,18 @@ class AgentService:
             use_native_tools=use_native_tools,
         )
 
-        # --- Pass 0: Adaptive tool result budgeting ---
-        # Measure the prompt WITHOUT tool results to find the fixed overhead,
-        # then calculate exactly how many chars of tool results fit.
-        tool_result_steps = [
-            s for s in context.steps if s.step_type == "tool_result" and (s.data is not None or s.content)
-        ]
-        if tool_result_steps:
-            # Build prompt with empty tool results to measure fixed overhead
-            context.tool_result_budget_chars = 1  # minimal — just get the skeleton
-            prompt = await self._build_agent_prompt(**build_kwargs)
-            skeleton_tokens = system_tokens + token_counter.count(prompt)
-
-            # Budget for tool results = target - skeleton
-            token_headroom = max(0, target_tokens - skeleton_tokens)
-            # Convert tokens → chars (conservative: use 3.5 chars/token for JSON-heavy content)
-            total_chars_budget = int(token_headroom * 3.5)
-            # Distribute across tool results (most recent gets more)
-            n_results = len(tool_result_steps)
-            per_result_chars = max(200, total_chars_budget // max(1, n_results))
-
-            context.tool_result_budget_chars = per_result_chars
-            prompt = await self._build_agent_prompt(**build_kwargs)
-            prompt_tokens = token_counter.count(prompt)
-            total_tokens = system_tokens + prompt_tokens
-            utilization = total_tokens / available if available > 0 else 1.0
-
-            logger.info(
-                f"[{rid}] Budget pass 'adaptive_tool_results': "
-                f"{per_result_chars} chars/result ({n_results} results), "
-                f"{total_tokens}/{available} ({utilization:.0%})"
-            )
-            if utilization <= threshold:
-                token_budget_info.set({
-                    "utilization": round(utilization, 4),
-                    "truncated": True,
-                    "tool_result_budget_chars": per_result_chars,
-                })
-                return prompt, True
-
-        # --- Pass 1+: Progressive fallback (drop non-essential components) ---
-        context.tool_result_budget_chars = 0  # reset — keep whatever pass 0 set
+        # --- Progressive fallback: drop context before compressing tool results ---
+        # Priority: preserve tool results (the answer data) at all cost.
+        # Drop less critical context first, compress tool results only as last resort.
         fallback_passes = [
-            ("halve_history", {
-                "conversation_history": (conversation_history or [])[-3:],
+            ("clear_document", {
+                "document_context": "",
             }),
             ("clear_memory", {
                 "memory_context": "",
             }),
-            ("clear_document", {
-                "document_context": "",
+            ("halve_history", {
+                "conversation_history": (conversation_history or [])[-3:],
             }),
         ]
 
@@ -757,11 +719,44 @@ class AgentService:
             utilization = total_tokens / available if available > 0 else 1.0
             logger.info(f"[{rid}] Budget pass '{pass_name}': {total_tokens}/{available} ({utilization:.0%})")
             if utilization <= threshold:
-                break
+                token_budget_info.set({
+                    "utilization": round(utilization, 4),
+                    "truncated": True,
+                })
+                return prompt, True
+
+        # --- Last resort: Adaptive tool result budgeting ---
+        # Only compress tool results after all context has been dropped.
+        # Tool results contain the answer data — compressing them degrades quality.
+        tool_result_steps = [
+            s for s in context.steps if s.step_type == "tool_result" and (s.data is not None or s.content)
+        ]
+        if tool_result_steps:
+            context.tool_result_budget_chars = 1  # minimal — just get the skeleton
+            prompt = await self._build_agent_prompt(**build_kwargs)
+            skeleton_tokens = system_tokens + token_counter.count(prompt)
+
+            token_headroom = max(0, target_tokens - skeleton_tokens)
+            total_chars_budget = int(token_headroom * 3.5)
+            n_results = len(tool_result_steps)
+            per_result_chars = max(200, total_chars_budget // max(1, n_results))
+
+            context.tool_result_budget_chars = per_result_chars
+            prompt = await self._build_agent_prompt(**build_kwargs)
+            prompt_tokens = token_counter.count(prompt)
+            total_tokens = system_tokens + prompt_tokens
+            utilization = total_tokens / available if available > 0 else 1.0
+
+            logger.info(
+                f"[{rid}] Budget pass 'adaptive_tool_results' (last resort): "
+                f"{per_result_chars} chars/result ({n_results} results), "
+                f"{total_tokens}/{available} ({utilization:.0%})"
+            )
 
         token_budget_info.set({
             "utilization": round(utilization, 4),
             "truncated": True,
+            **({"tool_result_budget_chars": per_result_chars} if tool_result_steps else {}),
         })
         return prompt, True
 
