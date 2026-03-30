@@ -54,7 +54,7 @@ export default function GraphView({ onEntityClick, isDark }) {
       try {
         const [entitiesRes, relationsRes] = await Promise.all([
           apiClient.get('/api/knowledge-graph/entities', { params: { size: MAX_NODES } }),
-          apiClient.get('/api/knowledge-graph/relations', { params: { size: 500 } }),
+          apiClient.get('/api/knowledge-graph/relations', { params: { size: 200 } }),
         ]);
 
         const entities = entitiesRes.data.entities || [];
