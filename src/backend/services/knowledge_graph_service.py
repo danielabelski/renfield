@@ -642,6 +642,34 @@ class KnowledgeGraphService:
                 f"{len(saved_relations)} relations (user_id={user_id})"
             )
 
+            # Broadcast to live KG graph viewers (fire-and-forget)
+            try:
+                from api.websocket.kg_live_handler import broadcast_kg_update
+
+                await broadcast_kg_update(
+                    entities=[
+                        {
+                            "id": e.id,
+                            "name": e.name,
+                            "type": e.entity_type,
+                            "mention_count": e.mention_count,
+                        }
+                        for e in saved_entities
+                    ],
+                    relations=[
+                        {
+                            "id": r.id,
+                            "subject_id": r.subject_id,
+                            "predicate": r.predicate,
+                            "object_id": r.object_id,
+                            "confidence": r.confidence,
+                        }
+                        for r in saved_relations
+                    ],
+                )
+            except Exception as e:
+                logger.debug(f"KG live broadcast failed (non-critical): {e}")
+
         return saved_entities, saved_relations
 
     async def extract_from_text(

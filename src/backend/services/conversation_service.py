@@ -160,6 +160,41 @@ class ConversationService:
             await self.db.rollback()
             raise
 
+    async def associate_speaker(
+        self,
+        session_id: str,
+        speaker_id: int,
+        user_id: int | None = None,
+    ) -> None:
+        """Associate a conversation with a speaker and optionally a user.
+
+        speaker_id: Always set (from speaker recognition, works without auth).
+        user_id: Set when Speaker→User mapping exists (requires auth + linked user).
+        Idempotent: only sets fields that are currently NULL.
+        """
+        try:
+            result = await self.db.execute(
+                select(Conversation).where(Conversation.session_id == session_id)
+            )
+            conv = result.scalar_one_or_none()
+            if not conv:
+                return
+
+            changed = False
+            if conv.speaker_id is None:
+                conv.speaker_id = speaker_id
+                changed = True
+            if user_id and conv.user_id is None:
+                conv.user_id = user_id
+                changed = True
+
+            if changed:
+                await self.db.commit()
+                logger.debug(f"Conversation {session_id} associated: speaker={speaker_id}, user={user_id}")
+        except Exception as e:
+            logger.warning(f"Failed to associate speaker with conversation: {e}")
+            await self.db.rollback()
+
     async def save_context_vars(
         self,
         session_id: str,

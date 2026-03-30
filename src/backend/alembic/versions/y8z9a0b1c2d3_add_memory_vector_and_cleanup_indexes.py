@@ -29,12 +29,28 @@ def upgrade() -> None:
             text("SELECT 1 FROM pg_indexes WHERE indexname = 'ix_conversation_memories_embedding_hnsw'")
         )
         if result.scalar() is None:
-            op.execute(text("""
-                CREATE INDEX ix_conversation_memories_embedding_hnsw
-                ON conversation_memories
-                USING hnsw (embedding vector_cosine_ops)
-                WITH (m = 16, ef_construction = 64)
-            """))
+            # Use halfvec cast for >2000-dim embeddings (pgvector HNSW limit)
+            dim_result = conn.execute(text(
+                "SELECT atttypmod FROM pg_attribute "
+                "WHERE attrelid = 'conversation_memories'::regclass "
+                "AND attname = 'embedding'"
+            ))
+            dim_row = dim_result.first()
+            dim = dim_row[0] if dim_row else 0
+            if dim > 2000:
+                op.execute(text(f"""
+                    CREATE INDEX ix_conversation_memories_embedding_hnsw
+                    ON conversation_memories
+                    USING hnsw ((embedding::halfvec({dim})) halfvec_cosine_ops)
+                    WITH (m = 16, ef_construction = 64)
+                """))
+            else:
+                op.execute(text("""
+                    CREATE INDEX ix_conversation_memories_embedding_hnsw
+                    ON conversation_memories
+                    USING hnsw (embedding vector_cosine_ops)
+                    WITH (m = 16, ef_construction = 64)
+                """))
 
     # I3: Composite partial index for cleanup queries
     # (category, last_accessed_at) WHERE is_active = true

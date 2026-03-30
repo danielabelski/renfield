@@ -41,7 +41,7 @@ from api.routes import homeassistant as ha_routes
 from api.routes import knowledge_graph as kg_routes
 from api.routes import mcp as mcp_routes
 from api.routes import settings as settings_routes
-from api.websocket import chat_router, device_router, satellite_router
+from api.websocket import chat_router, device_router, kg_live_router, satellite_router
 from models.database import User
 from models.permissions import Permission
 from services.api_rate_limiter import setup_rate_limiter
@@ -162,6 +162,8 @@ app.include_router(chat_router, tags=["WebSocket Chat"])
 if settings.features["satellites"]:
     app.include_router(satellite_router, tags=["WebSocket Satellite"])
 app.include_router(device_router, tags=["WebSocket Device"])
+if settings.knowledge_graph_enabled:
+    app.include_router(kg_live_router, tags=["WebSocket Knowledge Graph"])
 
 
 # WebSocket for Wake Word Detection (Server-Side Fallback)
