@@ -387,6 +387,35 @@ async def satellite_websocket(
                 try:
                     ollama = app.state.ollama
 
+                    # Resolve Speaker DB object for handoff + association
+                    spk = None
+                    if speaker_name:
+                        try:
+                            from sqlalchemy import select
+
+                            from models.database import Speaker
+
+                            async with AsyncSessionLocal() as _spk_db:
+                                _spk_r = await _spk_db.execute(
+                                    select(Speaker).where(Speaker.name == speaker_name)
+                                )
+                                spk = _spk_r.scalar_one_or_none()
+                        except Exception as e:
+                            logger.warning(f"⚠️ Speaker lookup for handoff failed: {e}")
+
+                    # Conversation handoff: copy context from another satellite if speaker moved
+                    if spk and satellite_db_session_id and not satellite_history_loaded:
+                        try:
+                            from services.conversation_handoff import try_handoff_context
+                            async with AsyncSessionLocal() as handoff_db:
+                                handed_off = await try_handoff_context(
+                                    spk.id, satellite_db_session_id, handoff_db
+                                )
+                                if handed_off:
+                                    logger.info(f"🔄 Conversation handoff for speaker {speaker_name} to {satellite_db_session_id}")
+                        except Exception as e:
+                            logger.warning(f"⚠️ Conversation handoff failed: {e}")
+
                     # Load conversation history from DB if not already loaded (once per day)
                     if satellite_db_session_id and not satellite_history_loaded:
                         try:
@@ -455,6 +484,18 @@ async def satellite_websocket(
                         except Exception as e:
                             logger.warning(f"⚠️ Failed to load satellite user permissions: {e}")
 
+                    # Associate conversation with speaker (for handoff lookup)
+                    if spk and satellite_db_session_id:
+                        try:
+                            from services.conversation_service import ConversationService
+                            async with AsyncSessionLocal() as assoc_db:
+                                assoc_svc = ConversationService(assoc_db)
+                                await assoc_svc.associate_speaker(
+                                    satellite_db_session_id, spk.id, user_id=sat_user_id
+                                )
+                        except Exception as e:
+                            logger.warning(f"⚠️ Failed to associate speaker with conversation: {e}")
+
                     # Register voice presence if speaker was recognized
                     if sat_user_id and settings.presence_enabled and satellite and satellite.room_id:
                         try:
@@ -464,6 +505,7 @@ async def satellite_websocket(
                                 user_id=sat_user_id,
                                 room_id=satellite.room_id,
                                 room_name=satellite.room,
+                                satellite_id=satellite_id,
                             )
                         except Exception as e:
                             logger.warning(f"⚠️ Voice presence update failed: {e}")

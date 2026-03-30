@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Brain, Link2, BarChart3, Search, Trash2, Edit3, Merge, X,
-  ChevronLeft, ChevronRight, ArrowRight, Lock, Users, Plus,
+  ChevronLeft, ChevronRight, ArrowRight, Lock, Users, Plus, GitBranch,
 } from 'lucide-react';
 import apiClient from '../utils/axios';
 import Modal from '../components/Modal';
@@ -10,6 +10,9 @@ import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import Badge from '../components/Badge';
 import { useConfirmDialog } from '../components/ConfirmDialog';
+import { useTheme } from '../context/ThemeContext';
+
+const GraphView = lazy(() => import('../components/knowledge-graph/GraphView'));
 
 const ENTITY_TYPES = ['person', 'place', 'organization', 'thing', 'event', 'concept'];
 
@@ -22,10 +25,11 @@ const TYPE_BADGE_COLORS = {
   concept: 'teal',
 };
 
-const TABS = ['entities', 'relations', 'stats'];
+const TABS = ['entities', 'relations', 'stats', 'graph'];
 
 export default function KnowledgeGraphPage() {
   const { t } = useTranslation();
+  const { theme } = useTheme();
   const { confirm, ConfirmDialogComponent } = useConfirmDialog();
 
   const [activeTab, setActiveTab] = useState('entities');
@@ -399,6 +403,7 @@ export default function KnowledgeGraphPage() {
             {tab === 'entities' && <Brain className="w-4 h-4" />}
             {tab === 'relations' && <Link2 className="w-4 h-4" />}
             {tab === 'stats' && <BarChart3 className="w-4 h-4" />}
+            {tab === 'graph' && <GitBranch className="w-4 h-4" />}
             {t(`knowledgeGraph.${tab}`)}
           </button>
         ))}
@@ -807,6 +812,30 @@ export default function KnowledgeGraphPage() {
             </div>
           )}
         </div>
+      )}
+
+      {/* Graph Tab */}
+      {activeTab === 'graph' && (
+        <Suspense fallback={
+          <div className="flex items-center justify-center h-96">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-500" />
+          </div>
+        }>
+          <GraphView
+            isDark={theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)}
+            onEntityClick={(entityId) => {
+              // Switch to entities tab and open edit modal for this entity
+              const entity = entities.find(e => e.id === entityId);
+              if (entity) {
+                setEditingEntity(entity);
+                setFormName(entity.name);
+                setFormType(entity.entity_type);
+                setFormDescription(entity.description || '');
+                setShowEditModal(true);
+              }
+            }}
+          />
+        </Suspense>
       )}
 
       {/* Entity Edit Modal */}

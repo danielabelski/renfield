@@ -348,6 +348,7 @@ class PresenceService:
         room_id: int,
         room_name: str | None = None,
         confidence: float = 1.0,
+        satellite_id: str | None = None,
     ):
         """
         Register presence from voice interaction (speaker recognition or auth).
@@ -414,6 +415,7 @@ class PresenceService:
             "room_name": current.room_name,
             "confidence": confidence,
             "source": "voice",
+            "satellite_id": satellite_id,
         }))
         if was_first:
             self._pending_events.append(("presence_first_arrived", {

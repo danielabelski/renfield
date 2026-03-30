@@ -557,6 +557,14 @@ async def lifespan(app: "FastAPI"):
             for room in rooms:
                 presence_svc.set_room_name(room.id, room.name)
 
+    # Conversation handoff hook (requires presence for room-change detection)
+    if settings.presence_enabled:
+        from services.conversation_handoff import on_presence_enter_room
+        from utils.hooks import register_hook
+
+        register_hook("presence_enter_room", on_presence_enter_room)
+        logger.info("✅ Conversation handoff hook registered")
+
     # Media Follow Me hooks (requires both presence and media_follow enabled)
     if settings.media_follow_enabled and settings.presence_enabled:
         from services.media_follow_service import get_media_follow_service

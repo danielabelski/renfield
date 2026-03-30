@@ -868,6 +868,8 @@
     "entities": "Entitäten",
     "relations": "Relationen",
     "stats": "Statistiken",
+    "graph": "Graph",
+    "noEntities": "Keine Entitäten vorhanden. Starte eine Unterhaltung, um den Wissensgraph aufzubauen.",
     "entityName": "Name",
     "entityType": "Typ",
     "entityTypes": "Typen",
