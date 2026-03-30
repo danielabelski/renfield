@@ -48,18 +48,25 @@ export default function GraphView({ onEntityClick, onSwitchToEntities, isDark })
 
   const colors = isDark ? TYPE_COLORS_DARK : TYPE_COLORS;
 
-  // Measure container size
+  // Measure container size — also re-measure when loading finishes
   useEffect(() => {
     if (!containerRef.current) return;
-    const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const { width, height } = entry.contentRect;
-        setDimensions({ width: Math.max(400, width), height: Math.max(300, height) });
+
+    const measure = () => {
+      if (!containerRef.current) return;
+      const { width, height } = containerRef.current.getBoundingClientRect();
+      if (width > 0 && height > 0) {
+        setDimensions({ width: Math.floor(width), height: Math.floor(height) });
       }
-    });
+    };
+
+    // Measure immediately
+    measure();
+
+    const observer = new ResizeObserver(() => measure());
     observer.observe(containerRef.current);
     return () => observer.disconnect();
-  }, []);
+  }, [loading]);
 
   // Fetch initial data
   useEffect(() => {
