@@ -824,7 +824,6 @@ export default function KnowledgeGraphPage() {
           <GraphView
             isDark={theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)}
             onEntityClick={(entityId) => {
-              // Switch to entities tab and open edit modal for this entity
               const entity = entities.find(e => e.id === entityId);
               if (entity) {
                 setEditingEntity(entity);
@@ -834,6 +833,7 @@ export default function KnowledgeGraphPage() {
                 setShowEditModal(true);
               }
             }}
+            onSwitchToEntities={() => setActiveTab('entities')}
           />
         </Suspense>
       )}
