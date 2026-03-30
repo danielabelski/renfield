@@ -74,10 +74,14 @@ export default function GraphView({ onEntityClick, isDark }) {
         });
 
         const links = relations
-          .filter((r) => entityMap.has(r.subject_id) && entityMap.has(r.object_id))
+          .filter((r) => {
+            const sId = r.subject_id ?? r.subject?.id;
+            const oId = r.object_id ?? r.object?.id;
+            return sId && oId && entityMap.has(sId) && entityMap.has(oId);
+          })
           .map((r) => ({
-            source: r.subject_id,
-            target: r.object_id,
+            source: r.subject_id ?? r.subject?.id,
+            target: r.object_id ?? r.object?.id,
             label: r.predicate,
             confidence: r.confidence,
           }));
