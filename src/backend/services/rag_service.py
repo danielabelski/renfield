@@ -73,19 +73,86 @@ class RAGService:
             text: Text für Embedding
 
         Returns:
-            Liste von Floats (768 Dimensionen für nomic-embed-text)
+            Liste von Floats (Dimensionen je nach Embedding-Modell)
+
+        Raises:
+            asyncio.TimeoutError: wenn Ollama nicht innerhalb rag_embedding_timeout antwortet
+            Exception: bei Verbindungsproblemen zu Ollama
         """
         try:
             client = await self._get_ollama_client()
-            response = await client.embeddings(
-                model=settings.ollama_embed_model,
-                prompt=text
+            response = await asyncio.wait_for(
+                client.embeddings(
+                    model=settings.ollama_embed_model,
+                    prompt=text
+                ),
+                timeout=settings.rag_embedding_timeout,
             )
             # ollama>=0.4.0 uses Pydantic models with .embedding attribute
             return response.embedding
+        except asyncio.TimeoutError:
+            logger.error(f"Embedding-Timeout nach {settings.rag_embedding_timeout}s")
+            raise
         except Exception as e:
             logger.error(f"Fehler beim Generieren des Embeddings: {e}")
             raise
+
+    # ==========================================================================
+    # Contextual Retrieval (LLM-generated context prefix per chunk)
+    # ==========================================================================
+
+    async def _generate_context_prefix(self, chunk_text: str, doc_summary: str) -> str | None:
+        """Generate a 1-2 sentence context prefix for a chunk using LLM.
+
+        The prefix describes what the chunk is about and where it comes from,
+        so the embedding captures document-level context (Anthropic's Contextual
+        Retrieval approach, ~49% fewer retrieval failures).
+        """
+        if not settings.rag_contextual_retrieval:
+            return None
+
+        prompt = (
+            "Beschreibe in 1-2 kurzen Sätzen, worum es in diesem Textabschnitt geht "
+            "und aus welchem Dokument er stammt. Nur die Beschreibung, keine Einleitung.\n\n"
+            f"Dokument: {doc_summary[:500]}\n\n"
+            f"Textabschnitt:\n{chunk_text[:800]}\n\n"
+            "Kontext:"
+        )
+        try:
+            from services.llm_client import get_chat_client
+            client = get_chat_client()
+            model = settings.rag_contextual_model or settings.ollama_chat_model
+            response = await asyncio.wait_for(
+                client.generate(model=model, prompt=prompt, options={"temperature": 0.1, "num_predict": 80}),
+                timeout=settings.rag_embedding_timeout,
+            )
+            prefix = response.response.strip()
+            return prefix if prefix else None
+        except Exception as e:
+            logger.warning(f"Context-Prefix-Generierung fehlgeschlagen: {e}")
+            return None
+
+    async def _contextualize_chunks(self, chunks: list[dict], doc_summary: str) -> list[dict]:
+        """Add contextual prefixes to chunks for better embedding quality."""
+        if not settings.rag_contextual_retrieval:
+            return chunks
+
+        sem = asyncio.Semaphore(3)  # Limit concurrent LLM calls
+
+        async def _add_prefix(chunk_data):
+            text = chunk_data.get("text", "")
+            if not text or not text.strip():
+                return chunk_data
+            async with sem:
+                prefix = await self._generate_context_prefix(text, doc_summary)
+            if prefix:
+                chunk_data.setdefault("metadata", {})["context_prefix"] = prefix
+                chunk_data["text_for_embedding"] = f"{prefix}\n---\n{text}"
+            else:
+                chunk_data["text_for_embedding"] = text
+            return chunk_data
+
+        return await asyncio.gather(*[_add_prefix(cd) for cd in chunks])
 
     # ==========================================================================
     # Document Ingestion
@@ -152,33 +219,20 @@ class RAGService:
             doc.file_size = metadata.get("file_size")
             doc.page_count = metadata.get("page_count")
 
-            # 3. Chunks mit Embeddings erstellen (parallel, batch insert)
+            # 3. Contextual Retrieval: generate LLM context prefix per chunk
             chunks = result["chunks"]
+            doc_summary = f"{doc.title or actual_filename}"
+            if chunks:
+                doc_summary += f" — {chunks[0]['text'][:300]}" if chunks[0].get("text") else ""
+            chunks = await self._contextualize_chunks(chunks, doc_summary)
+
+            # 4. Chunks mit Embeddings erstellen (parallel, batch insert)
             sem = asyncio.Semaphore(5)
 
-            async def _embed_chunk(chunk_data):
-                text_content = chunk_data["text"]
-                if not text_content or not text_content.strip():
-                    return None
-                async with sem:
-                    try:
-                        embedding = await self.get_embedding(text_content)
-                    except Exception as e:
-                        logger.warning(f"Embedding-Fehler für Chunk {chunk_data['chunk_index']}: {e}")
-                        return None
-                return DocumentChunk(
-                    document_id=doc.id,
-                    content=text_content,
-                    embedding=embedding,
-                    chunk_index=chunk_data["chunk_index"],
-                    page_number=chunk_data["metadata"].get("page_number"),
-                    section_title=", ".join(chunk_data["metadata"].get("headings", [])) or None,
-                    chunk_type=chunk_data["metadata"].get("chunk_type", "paragraph"),
-                    chunk_metadata=chunk_data["metadata"]
-                )
-
-            embed_results = await asyncio.gather(*[_embed_chunk(cd) for cd in chunks])
-            chunk_objects = [r for r in embed_results if r is not None]
+            if settings.rag_parent_child_enabled:
+                chunk_objects = await self._ingest_parent_child(doc.id, chunks, sem)
+            else:
+                chunk_objects = await self._ingest_flat(doc.id, chunks, sem)
 
             chunk_count = len(chunk_objects)
             if chunk_objects:
@@ -237,6 +291,207 @@ class RAGService:
             logger.error(f"Fehler beim Indexieren: {e}")
             raise
 
+    # --------------------------------------------------------------------------
+    # Ingestion Strategies
+    # --------------------------------------------------------------------------
+
+    async def _ingest_flat(self, doc_id: int, chunks: list[dict], sem: asyncio.Semaphore) -> list[DocumentChunk]:
+        """Original flat chunking: each chunk gets an embedding."""
+
+        async def _embed_chunk(chunk_data):
+            text_content = chunk_data["text"]
+            if not text_content or not text_content.strip():
+                return None
+            # Use contextualized text for embedding if available
+            embed_text = chunk_data.get("text_for_embedding", text_content)
+            async with sem:
+                try:
+                    embedding = await self.get_embedding(embed_text)
+                except Exception as e:
+                    logger.warning(f"Embedding-Fehler für Chunk {chunk_data['chunk_index']}: {e}")
+                    return None
+            return DocumentChunk(
+                document_id=doc_id,
+                content=text_content,  # Store original text for display
+                embedding=embedding,
+                chunk_index=chunk_data["chunk_index"],
+                page_number=chunk_data["metadata"].get("page_number"),
+                section_title=", ".join(chunk_data["metadata"].get("headings", [])) or None,
+                chunk_type=chunk_data["metadata"].get("chunk_type", "paragraph"),
+                chunk_metadata=chunk_data["metadata"],
+            )
+
+        results = await asyncio.gather(*[_embed_chunk(cd) for cd in chunks])
+        return [r for r in results if r is not None]
+
+    async def _ingest_parent_child(self, doc_id: int, chunks: list[dict], sem: asyncio.Semaphore) -> list[DocumentChunk]:
+        """Parent-child chunking: small embedded children reference larger context parents."""
+        # Group consecutive child chunks into parents
+        children_per_parent = max(1, settings.rag_parent_chunk_size // max(settings.rag_child_chunk_size, 1))
+        all_objects: list[DocumentChunk] = []
+
+        for group_start in range(0, len(chunks), children_per_parent):
+            group = chunks[group_start:group_start + children_per_parent]
+            if not group:
+                continue
+
+            # Create parent chunk (concatenated text, no embedding)
+            parent_text = "\n\n".join(c["text"] for c in group if c["text"] and c["text"].strip())
+            if not parent_text.strip():
+                continue
+
+            first_meta = group[0]["metadata"]
+            parent = DocumentChunk(
+                document_id=doc_id,
+                content=parent_text,
+                embedding=None,  # Parents are not embedded
+                chunk_index=group_start,
+                page_number=first_meta.get("page_number"),
+                section_title=", ".join(first_meta.get("headings", [])) or None,
+                chunk_type="parent",
+                chunk_metadata={"child_count": len(group)},
+            )
+            self.db.add(parent)
+            await self.db.flush()  # Get parent.id for children
+
+            # Create child chunks with embeddings
+            async def _embed_child(chunk_data, parent_id):
+                text_content = chunk_data["text"]
+                if not text_content or not text_content.strip():
+                    return None
+                embed_text = chunk_data.get("text_for_embedding", text_content)
+                async with sem:
+                    try:
+                        embedding = await self.get_embedding(embed_text)
+                    except Exception as e:
+                        logger.warning(f"Embedding-Fehler für Child-Chunk {chunk_data['chunk_index']}: {e}")
+                        return None
+                return DocumentChunk(
+                    document_id=doc_id,
+                    content=text_content,  # Store original text for display
+                    embedding=embedding,
+                    parent_chunk_id=parent_id,
+                    chunk_index=chunk_data["chunk_index"],
+                    page_number=chunk_data["metadata"].get("page_number"),
+                    section_title=", ".join(chunk_data["metadata"].get("headings", [])) or None,
+                    chunk_type=chunk_data["metadata"].get("chunk_type", "paragraph"),
+                    chunk_metadata=chunk_data["metadata"],
+                )
+
+            child_results = await asyncio.gather(*[_embed_child(cd, parent.id) for cd in group])
+            children = [r for r in child_results if r is not None]
+
+            all_objects.append(parent)
+            all_objects.extend(children)
+
+        return all_objects
+
+    # --------------------------------------------------------------------------
+    # Parent Resolution (for parent-child search)
+    # --------------------------------------------------------------------------
+
+    async def _resolve_parents(self, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Replace child chunk content with parent content, deduplicate by parent."""
+        if not results:
+            return results
+
+        # Collect parent IDs from child results
+        child_parent_map = {}
+        for r in results:
+            pid = r["chunk"].get("parent_chunk_id")
+            if pid:
+                child_parent_map.setdefault(pid, []).append(r)
+
+        if not child_parent_map:
+            return results  # No parent-child chunks, return as-is
+
+        # Fetch all parents in one query
+        parent_ids = list(child_parent_map.keys())
+        stmt = text("""
+            SELECT id, content, page_number, section_title
+            FROM document_chunks
+            WHERE id = ANY(:parent_ids)
+        """)
+        rows = (await self.db.execute(stmt, {"parent_ids": parent_ids})).fetchall()
+        parents = {row.id: row for row in rows}
+
+        # Deduplicate: keep highest-scoring child per parent
+        resolved = []
+        seen_parents = set()
+        for r in results:
+            pid = r["chunk"].get("parent_chunk_id")
+            if pid and pid in parents:
+                if pid in seen_parents:
+                    continue  # Skip duplicate parent
+                seen_parents.add(pid)
+                parent = parents[pid]
+                r["chunk"]["content"] = parent.content
+                r["chunk"]["page_number"] = parent.page_number
+                r["chunk"]["section_title"] = parent.section_title
+                r["chunk"]["chunk_type"] = "parent"
+            resolved.append(r)
+
+        return resolved
+
+    # --------------------------------------------------------------------------
+    # Reranking (dedicated model scores query-chunk pairs)
+    # --------------------------------------------------------------------------
+
+    async def _rerank(self, query: str, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Rerank results using a dedicated reranker model via Ollama embeddings.
+
+        Computes query and chunk embeddings with the reranker model, then scores
+        by cosine similarity. This provides a second-pass relevance check with
+        a different model than the storage embeddings.
+        """
+        rerank_top_k = settings.rag_rerank_top_k
+        if not settings.rag_rerank_enabled or not results:
+            return results[:rerank_top_k]
+
+        try:
+            client = await self._get_ollama_client()
+            model = settings.rag_rerank_model
+
+            # Get query embedding from reranker model
+            q_resp = await asyncio.wait_for(
+                client.embeddings(model=model, prompt=query),
+                timeout=settings.rag_embedding_timeout,
+            )
+            q_emb = q_resp.embedding
+
+            # Score each candidate chunk
+            scored = []
+            sem = asyncio.Semaphore(5)
+
+            async def _score(r):
+                content = r["chunk"]["content"][:1000]  # Cap for speed
+                async with sem:
+                    c_resp = await asyncio.wait_for(
+                        client.embeddings(model=model, prompt=content),
+                        timeout=settings.rag_embedding_timeout,
+                    )
+                # Cosine similarity
+                c_emb = c_resp.embedding
+                dot = sum(a * b for a, b in zip(q_emb, c_emb))
+                norm_q = sum(a * a for a in q_emb) ** 0.5
+                norm_c = sum(a * a for a in c_emb) ** 0.5
+                sim = dot / (norm_q * norm_c) if norm_q and norm_c else 0
+                return (sim, r)
+
+            scored = await asyncio.gather(*[_score(r) for r in results])
+            scored.sort(key=lambda x: x[0], reverse=True)
+
+            reranked = [r for _, r in scored[:rerank_top_k]]
+            logger.info(
+                f"📚 RAG Reranking: model={model}, input={len(results)}, "
+                f"output={len(reranked)}, top_score={scored[0][0]:.4f}"
+            )
+            return reranked
+
+        except Exception as e:
+            logger.warning(f"Reranking fehlgeschlagen, verwende Original-Reihenfolge: {e}")
+            return results[:rerank_top_k]
+
     # ==========================================================================
     # Similarity Search
     # ==========================================================================
@@ -267,15 +522,22 @@ class RAGService:
         top_k = top_k or settings.rag_top_k
         threshold = similarity_threshold or settings.rag_similarity_threshold
 
-        # Query-Embedding erstellen
+        # Query-Embedding erstellen (mit BM25-Fallback bei Fehler)
         try:
             query_embedding = await self.get_embedding(query)
         except Exception as e:
-            logger.error(f"Fehler beim Query-Embedding: {e}")
-            return []
+            logger.warning(f"Embedding fehlgeschlagen, Fallback auf BM25-only: {e}")
+            query_embedding = None
 
-        # Hybrid Search or Dense-only
-        if settings.rag_hybrid_enabled:
+        if query_embedding is None:
+            # BM25-only Fallback wenn Embedding-Modell nicht erreichbar
+            results = await self._search_bm25(query, top_k, knowledge_base_id)
+            logger.info(
+                f"📚 RAG BM25-only Fallback: query='{query[:50]}', kb_id={knowledge_base_id}, "
+                f"found={len(results)}"
+            )
+        elif settings.rag_hybrid_enabled:
+            # Hybrid Search (Dense + BM25 via RRF)
             candidate_k = top_k * 3  # Over-fetch for RRF fusion
             dense_results = await self._search_dense(
                 query_embedding, candidate_k, knowledge_base_id, threshold
@@ -293,10 +555,17 @@ class RAGService:
                 f"threshold={threshold}, found={len(results)}"
             )
 
-        # Context Window Expansion
-        window_size = min(settings.rag_context_window, settings.rag_context_window_max)
-        if window_size > 0 and results:
-            results = await self._expand_context_window(results, window_size)
+        # Reranking (second-pass relevance scoring with dedicated model)
+        if results:
+            results = await self._rerank(query, results)
+
+        # Parent-Child Resolution OR Context Window Expansion (mutually exclusive)
+        if settings.rag_parent_child_enabled and results:
+            results = await self._resolve_parents(results)
+        else:
+            window_size = min(settings.rag_context_window, settings.rag_context_window_max)
+            if window_size > 0 and results:
+                results = await self._expand_context_window(results, window_size)
 
         return results
 
@@ -336,6 +605,7 @@ class RAGService:
                 dc.section_title,
                 dc.chunk_type,
                 dc.chunk_metadata,
+                dc.parent_chunk_id,
                 d.filename,
                 d.title as doc_title,
                 1 - (dc.embedding <=> CAST(:embedding AS vector)) as similarity
@@ -370,6 +640,7 @@ class RAGService:
                     "page_number": row.page_number,
                     "section_title": row.section_title,
                     "chunk_type": row.chunk_type,
+                    "parent_chunk_id": getattr(row, "parent_chunk_id", None),
                 },
                 "document": {
                     "id": row.document_id,
@@ -422,6 +693,7 @@ class RAGService:
                 dc.section_title,
                 dc.chunk_type,
                 dc.chunk_metadata,
+                dc.parent_chunk_id,
                 d.filename,
                 d.title as doc_title,
                 ts_rank_cd(dc.search_vector, websearch_to_tsquery(:fts_config, :or_query)) as rank
@@ -452,6 +724,7 @@ class RAGService:
                     "page_number": row.page_number,
                     "section_title": row.section_title,
                     "chunk_type": row.chunk_type,
+                    "parent_chunk_id": getattr(row, "parent_chunk_id", None),
                 },
                 "document": {
                     "id": row.document_id,
