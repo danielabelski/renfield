@@ -877,7 +877,7 @@ async def reindex_fts(
 
 @router.post("/rag-eval")
 async def run_rag_evaluation(
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(get_db),
     user: User | None = Depends(get_optional_user),
     test_file: str | None = None,
 ):

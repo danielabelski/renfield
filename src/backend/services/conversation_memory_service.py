@@ -801,6 +801,31 @@ class ConversationMemoryService:
         await self.db.commit()
         return True
 
+    async def delete_all_for_user(
+        self,
+        user_id: int,
+        changed_by: str = "user",
+    ) -> int:
+        """Soft-delete ALL active memories for a user.
+
+        Counts total first, then processes in batches of 100 via
+        list_for_user + delete per item (with full audit history).
+        """
+        total = await self.get_count(user_id=user_id)
+        if total == 0:
+            return 0
+
+        deleted = 0
+        batch_size = 100
+        for _ in range(0, total, batch_size):
+            batch = await self.list_for_user(user_id, limit=batch_size)
+            for m in batch:
+                if await self.delete(m["id"], changed_by=changed_by):
+                    deleted += 1
+
+        logger.info(f"delete_all_for_user: {deleted}/{total} memories deleted for user_id={user_id}")
+        return deleted
+
     async def list_for_user(
         self,
         user_id: int,
