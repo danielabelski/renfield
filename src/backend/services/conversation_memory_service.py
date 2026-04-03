@@ -260,8 +260,9 @@ class ConversationMemoryService:
         # LLM call
         try:
             client = await self._get_ollama_client()
+            extraction_model = settings.memory_extraction_model or settings.ollama_model
             response = await client.chat(
-                model=settings.ollama_model,
+                model=extraction_model,
                 messages=[
                     {"role": "system", "content": system_msg},
                     {"role": "user", "content": prompt},
@@ -285,6 +286,7 @@ class ConversationMemoryService:
             content = item.get("content", "").strip()
             category = item.get("category", "").strip().lower()
             importance = item.get("importance", 0.5)
+            trigger_pattern = item.get("trigger_pattern")
 
             if not content:
                 continue
@@ -297,6 +299,13 @@ class ConversationMemoryService:
                 importance = max(0.1, min(1.0, float(importance)))
             except (TypeError, ValueError):
                 importance = 0.5
+
+            # Validate trigger_pattern if provided (procedural memories only)
+            if trigger_pattern and category == "procedural":
+                try:
+                    re.compile(trigger_pattern)
+                except re.error:
+                    trigger_pattern = None  # Invalid regex, discard
 
             if settings.memory_contradiction_resolution:
                 memory = await self._apply_contradiction_resolution(
@@ -314,6 +323,7 @@ class ConversationMemoryService:
                     user_id=user_id,
                     importance=importance,
                     source_session_id=session_id,
+                    trigger_pattern=trigger_pattern if category == "procedural" else None,
                 )
             if memory:
                 saved.append(memory)
@@ -426,6 +436,7 @@ class ConversationMemoryService:
                 content,
                 category,
                 importance,
+                confidence,
                 access_count,
                 created_at,
                 1 - (embedding <=> CAST(:embedding AS vector)) as similarity
@@ -433,7 +444,7 @@ class ConversationMemoryService:
             WHERE is_active = true
               AND embedding IS NOT NULL
               {user_filter}
-            ORDER BY (1 - (embedding <=> CAST(:embedding AS vector))) * importance DESC
+            ORDER BY (1 - (embedding <=> CAST(:embedding AS vector))) * importance * confidence DESC
             LIMIT :limit
         """)
 
@@ -600,7 +611,8 @@ class ConversationMemoryService:
         # --- 2. Procedural memories (scope: user + team + global) ---
         scope_filter = self._build_scope_filter(user_id, team_ids)
         procedural_sql = text(f"""
-            SELECT id, content, category, importance, access_count, created_at, source, scope
+            SELECT id, content, category, importance, access_count, created_at,
+                   source, scope, trigger_pattern
             FROM conversation_memories
             WHERE is_active = true
               AND category = 'procedural'
@@ -619,6 +631,16 @@ class ConversationMemoryService:
             for row in result.fetchall():
                 if row.id in seen_ids:
                     continue
+                # trigger_pattern matching: skip if pattern is set and doesn't match
+                pattern = getattr(row, "trigger_pattern", None)
+                if pattern:
+                    try:
+                        if not re.search(pattern, query, re.IGNORECASE):
+                            # Essential procedural memories (importance >= 0.9) always pass
+                            if (row.importance or 0) < settings.memory_essential_threshold:
+                                continue
+                    except re.error:
+                        pass  # Invalid regex — include the memory anyway
                 content_len = len(row.content)
                 if used_chars + content_len > budget:
                     break
@@ -750,6 +772,47 @@ class ConversationMemoryService:
         )
         counts["decayed"] += result.rowcount
 
+        # 3. Confidence decay for unaccessed LLM-inferred memories
+        confidence_cutoff = now - timedelta(days=30)
+        result = await self.db.execute(
+            update(ConversationMemory)
+            .where(
+                ConversationMemory.is_active == True,  # noqa: E712
+                ConversationMemory.source == "llm_inferred",
+                ConversationMemory.confidence > 0.3,
+                ConversationMemory.last_accessed_at != None,  # noqa: E711
+                ConversationMemory.last_accessed_at < confidence_cutoff,
+            )
+            .values(confidence=ConversationMemory.confidence * 0.95)
+        )
+        counts["confidence_decayed"] = result.rowcount
+
+        # Also decay never-accessed llm_inferred memories older than 30 days
+        result = await self.db.execute(
+            update(ConversationMemory)
+            .where(
+                ConversationMemory.is_active == True,  # noqa: E712
+                ConversationMemory.source == "llm_inferred",
+                ConversationMemory.confidence > 0.3,
+                ConversationMemory.last_accessed_at == None,  # noqa: E711
+                ConversationMemory.created_at < confidence_cutoff,
+            )
+            .values(confidence=ConversationMemory.confidence * 0.95)
+        )
+        counts["confidence_decayed"] += result.rowcount
+
+        # Deactivate memories with confidence below threshold
+        result = await self.db.execute(
+            update(ConversationMemory)
+            .where(
+                ConversationMemory.is_active == True,  # noqa: E712
+                ConversationMemory.source == "llm_inferred",
+                ConversationMemory.confidence <= 0.3,
+            )
+            .values(is_active=False)
+        )
+        counts["low_confidence_deactivated"] = result.rowcount
+
         await self.db.commit()
 
         total = sum(counts.values())
@@ -800,6 +863,31 @@ class ConversationMemoryService:
         memory.is_active = False
         await self.db.commit()
         return True
+
+    async def delete_all_for_user(
+        self,
+        user_id: int,
+        changed_by: str = "user",
+    ) -> int:
+        """Soft-delete ALL active memories for a user.
+
+        Counts total first, then processes in batches of 100 via
+        list_for_user + delete per item (with full audit history).
+        """
+        total = await self.get_count(user_id=user_id)
+        if total == 0:
+            return 0
+
+        deleted = 0
+        batch_size = 100
+        for _ in range(0, total, batch_size):
+            batch = await self.list_for_user(user_id, limit=batch_size)
+            for m in batch:
+                if await self.delete(m["id"], changed_by=changed_by):
+                    deleted += 1
+
+        logger.info(f"delete_all_for_user: {deleted}/{total} memories deleted for user_id={user_id}")
+        return deleted
 
     async def list_for_user(
         self,
@@ -1053,8 +1141,9 @@ class ConversationMemoryService:
 
         try:
             client = await self._get_ollama_client()
+            extraction_model = settings.memory_extraction_model or settings.ollama_model
             response = await client.chat(
-                model=settings.ollama_model,
+                model=extraction_model,
                 messages=[
                     {"role": "system", "content": system_msg},
                     {"role": "user", "content": prompt},

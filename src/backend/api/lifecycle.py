@@ -163,6 +163,32 @@ def _schedule_memory_cleanup():
                         from utils.metrics import record_memory_cleanup
 
                         record_memory_cleanup(counts)
+
+                # Episodic memory: cleanup + summarization
+                if settings.memory_episodic_enabled:
+                    from services.episodic_memory_service import EpisodicMemoryService
+                    from sqlalchemy import select, func
+                    from models.database import EpisodicMemory
+
+                    async with AsyncSessionLocal() as db_session:
+                        ep_svc = EpisodicMemoryService(db_session)
+                        ep_counts = await ep_svc.cleanup()
+                        ep_total = sum(ep_counts.values())
+                        if ep_total > 0:
+                            logger.info(f"Episodic cleanup: {ep_counts}")
+
+                        # Summarize old episodes for users above threshold
+                        result = await db_session.execute(
+                            select(EpisodicMemory.user_id)
+                            .where(EpisodicMemory.is_active == True)  # noqa: E712
+                            .group_by(EpisodicMemory.user_id)
+                            .having(func.count(EpisodicMemory.id) > settings.memory_episodic_summarize_threshold)
+                        )
+                        user_ids = [row[0] for row in result.fetchall() if row[0] is not None]
+                        for uid in user_ids:
+                            summarized = await ep_svc.summarize_old(uid)
+                            if summarized > 0:
+                                logger.info(f"Episodic summarization: {summarized} episodes for user {uid}")
             except asyncio.CancelledError:
                 break
             except Exception as e:
