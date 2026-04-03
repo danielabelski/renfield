@@ -65,14 +65,23 @@ app = FastAPI(
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Add security headers to all responses (OWASP best practices)."""
 
+    # Paths that may be embedded in iframes (e.g. Teams personal tabs).
+    # These get relaxed frame-ancestors and cross-origin policies.
+    EMBEDDABLE_PREFIXES = ("/tab/", "/api/tab/")
+
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
+        path = request.url.path
+        embeddable = any(path.startswith(p) for p in self.EMBEDDABLE_PREFIXES)
 
         # Prevent MIME type sniffing
         response.headers["X-Content-Type-Options"] = "nosniff"
 
         # Prevent clickjacking
-        response.headers["X-Frame-Options"] = "DENY"
+        if embeddable:
+            response.headers["X-Frame-Options"] = "ALLOW-FROM https://teams.microsoft.com"
+        else:
+            response.headers["X-Frame-Options"] = "DENY"
 
         # XSS Protection (legacy, but still useful for older browsers)
         response.headers["X-XSS-Protection"] = "1; mode=block"
@@ -87,22 +96,37 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         )
 
         # Spectre/Meltdown protection + SharedArrayBuffer for WASM (Safari)
-        response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
-        response.headers["Cross-Origin-Embedder-Policy"] = "require-corp"
-        response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+        if embeddable:
+            response.headers["Cross-Origin-Opener-Policy"] = "unsafe-none"
+            response.headers["Cross-Origin-Embedder-Policy"] = "unsafe-none"
+            response.headers["Cross-Origin-Resource-Policy"] = "cross-origin"
+        else:
+            response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+            response.headers["Cross-Origin-Embedder-Policy"] = "require-corp"
+            response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
 
-        # Content Security Policy (allow self and common CDNs for development)
-        # In production, this should be more restrictive
-        response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline'; "
-            "style-src 'self' 'unsafe-inline'; "
-            "img-src 'self' data: blob:; "
-            "font-src 'self' data:; "
-            "connect-src 'self' ws: wss:; "
-            "media-src 'self' blob:; "
-            "frame-ancestors 'none';"
-        )
+        # Content Security Policy
+        if embeddable:
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "script-src 'self' 'unsafe-inline' https://res.cdn.office.net; "
+                "style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data: blob:; "
+                "font-src 'self' data:; "
+                "connect-src 'self'; "
+                "frame-ancestors teams.microsoft.com *.microsoft.com *.skype.com;"
+            )
+        else:
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "script-src 'self' 'unsafe-inline'; "
+                "style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data: blob:; "
+                "font-src 'self' data:; "
+                "connect-src 'self' ws: wss:; "
+                "media-src 'self' blob:; "
+                "frame-ancestors 'none';"
+            )
 
         return response
 
