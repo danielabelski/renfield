@@ -245,6 +245,77 @@ class EpisodicMemoryService:
         ]
 
     # =========================================================================
+    # Dashboard queries (filter, paginate, topics)
+    # =========================================================================
+
+    async def list_for_user(
+        self,
+        user_id: int,
+        topic: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict]:
+        """List active episodes for a user with optional topic filter."""
+        query = (
+            select(EpisodicMemory)
+            .where(
+                EpisodicMemory.user_id == user_id,
+                EpisodicMemory.is_active == True,  # noqa: E712
+            )
+            .order_by(EpisodicMemory.created_at.desc())
+        )
+
+        if topic:
+            query = query.where(EpisodicMemory.topic == topic)
+
+        query = query.offset(offset).limit(limit)
+        result = await self.db.execute(query)
+        episodes = result.scalars().all()
+
+        return [
+            {
+                "id": e.id,
+                "summary": e.summary,
+                "topic": e.topic,
+                "entities": e.entities,
+                "tools_used": e.tools_used,
+                "outcome": e.outcome,
+                "importance": e.importance,
+                "created_at": e.created_at.isoformat() if e.created_at else None,
+            }
+            for e in episodes
+        ]
+
+    async def get_count(
+        self,
+        user_id: int,
+        topic: str | None = None,
+    ) -> int:
+        """Count active episodes with optional topic filter."""
+        query = select(func.count(EpisodicMemory.id)).where(
+            EpisodicMemory.user_id == user_id,
+            EpisodicMemory.is_active == True,  # noqa: E712
+        )
+        if topic:
+            query = query.where(EpisodicMemory.topic == topic)
+        result = await self.db.execute(query)
+        return result.scalar() or 0
+
+    async def get_distinct_topics(self, user_id: int) -> list[str]:
+        """Get distinct topic values for a user's active episodes."""
+        result = await self.db.execute(
+            select(EpisodicMemory.topic)
+            .where(
+                EpisodicMemory.user_id == user_id,
+                EpisodicMemory.is_active == True,  # noqa: E712
+                EpisodicMemory.topic != None,  # noqa: E711
+            )
+            .distinct()
+            .order_by(EpisodicMemory.topic)
+        )
+        return [row[0] for row in result.all()]
+
+    # =========================================================================
     # Summarize (batch episodes -> semantic facts)
     # =========================================================================
 
