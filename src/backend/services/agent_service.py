@@ -1160,7 +1160,7 @@ class AgentService:
                         from utils.hooks import run_hooks as _run_hooks_p
                         _hook_res = await _run_hooks_p(
                             "compact_mcp_result", tool=act["action"], result=res,
-                            parameters=act.get("parameters", {}), executor=self.executor,
+                            parameters=act.get("parameters", {}), executor=executor,
                         )
                         if _hook_res:
                             res = _hook_res[0]
@@ -1290,7 +1290,7 @@ class AgentService:
             from utils.hooks import run_hooks as _run_hooks
             _hook_results = await _run_hooks(
                 "compact_mcp_result", tool=action, result=result,
-                parameters=parameters, executor=self.executor,
+                parameters=parameters, executor=executor,
             )
             if _hook_results:
                 result = _hook_results[0]
