@@ -1156,6 +1156,15 @@ class AgentService:
                         from services.mcp_compact import compact_mcp_result as _compact
                         res = _compact(act["action"], res)
 
+                        # Run plugin hooks (same as sequential path)
+                        from utils.hooks import run_hooks as _run_hooks_p
+                        _hook_res = await _run_hooks_p(
+                            "compact_mcp_result", tool=act["action"], result=res,
+                            parameters=act.get("parameters", {}), executor=self.executor,
+                        )
+                        if _hook_res:
+                            res = _hook_res[0]
+
                         result_msg = _truncate(
                             res.get("message", no_result),
                             max_length=settings.agent_response_truncation,
@@ -1275,6 +1284,16 @@ class AgentService:
             # Apply MCP response compaction (field-level filtering)
             from services.mcp_compact import compact_mcp_result as _compact
             result = _compact(action, result)
+
+            # Run plugin hooks for post-tool-result processing
+            # (Reva uses this for duplicate detection, sanitization, auto-pagination)
+            from utils.hooks import run_hooks as _run_hooks
+            _hook_results = await _run_hooks(
+                "compact_mcp_result", tool=action, result=result,
+                parameters=parameters, executor=self.executor,
+            )
+            if _hook_results:
+                result = _hook_results[0]
 
             # Extract context variables from tool results (for follow-up queries)
             from services.context_extractor import extract_context_vars
