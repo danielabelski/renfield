@@ -31,6 +31,30 @@ class TestToolDefinition:
         assert tool.parameters == {"entity_id": "The entity ID"}
 
 
+class TestAgentToolRegistryConstruction:
+    """Test that construction parameters are exposed for plugins."""
+
+    @pytest.mark.unit
+    def test_server_filter_stored_as_attribute(self):
+        """The server_filter parameter must be exposed so plugins (e.g. the
+        register_tools hook) can scope their additions to the same set of
+        servers the caller selected for MCP/internal tools."""
+        registry = AgentToolRegistry(server_filter=["jira", "confluence"])
+        assert registry.server_filter == ["jira", "confluence"]
+
+    @pytest.mark.unit
+    def test_server_filter_default_none(self):
+        """When no server_filter is passed, the attribute is None (= all servers)."""
+        registry = AgentToolRegistry()
+        assert registry.server_filter is None
+
+    @pytest.mark.unit
+    def test_internal_filter_stored_as_attribute(self):
+        """The internal_filter parameter is exposed for the same reason."""
+        registry = AgentToolRegistry(internal_filter=["internal.knowledge_search"])
+        assert registry.internal_filter == ["internal.knowledge_search"]
+
+
 class TestAgentToolRegistryMCPTools:
     """Test MCP tool registration."""
 

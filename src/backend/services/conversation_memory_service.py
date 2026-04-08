@@ -919,6 +919,8 @@ class ConversationMemoryService:
                 "content": m.content,
                 "category": m.category,
                 "importance": m.importance,
+                "source": m.source,
+                "confidence": m.confidence,
                 "access_count": m.access_count,
                 "created_at": m.created_at.isoformat() if m.created_at else None,
                 "last_accessed_at": m.last_accessed_at.isoformat() if m.last_accessed_at else None,
