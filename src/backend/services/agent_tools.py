@@ -53,6 +53,14 @@ class AgentToolRegistry:
         """
         self._tools: dict[str, ToolDefinition] = {}
 
+        # Expose the construction filters as public attributes so the
+        # register_tools hook (and other plugins) can scope their additions
+        # the same way the built-in MCP/internal registration does.
+        # Without this, plugins have no way to know which sub-set of tools
+        # the caller intended for this registry — they would over-register.
+        self.server_filter = server_filter
+        self.internal_filter = internal_filter
+
         # Register MCP tools (includes HA, n8n, weather, search, etc.)
         if mcp_manager:
             self._register_mcp_tools(mcp_manager, server_filter=server_filter)
