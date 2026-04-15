@@ -526,6 +526,34 @@ async def lifespan(app: "FastAPI"):
                 "Set CORS_ORIGINS to your frontend domain(s) in production."
             )
 
+    # Stage 0: Bootstrap ha_glue. The ha_glue package itself is
+    # side-effect-free (the legacy compat re-export in models/database.py
+    # imports the package as part of attribute resolution, so any
+    # registration via __init__.py would bypass the smart_home gate
+    # below). Hook registration only happens when this explicit
+    # `bootstrap.register()` call fires.
+    #
+    # Gated on the smart_home feature flag so `RENFIELD_EDITION=pro`
+    # deployments don't activate HA behavior even though the package
+    # ships in the same monorepo. Wrapped in a broad try/except so the
+    # eventual X-idra/renfield platform-only deploy (no ha_glue
+    # installed) AND any future broken handler degrades cleanly.
+    #
+    # This is the ONE structural platform -> ha_glue import line.
+    # Phase 2/3 will move it to a PLUGIN_MODULE entry point and remove
+    # it from this file.
+    if settings.features["smart_home"]:
+        try:
+            from ha_glue.bootstrap import register as _ha_glue_register
+            _ha_glue_register()
+            logger.info("✅ ha_glue bootstrap loaded")
+        except ImportError:
+            logger.info("ha_glue not installed — running platform-only")
+        except Exception:  # noqa: BLE001 — never break startup on plugin error
+            logger.opt(exception=True).warning(
+                "ha_glue bootstrap raised — HA fallback disabled, continuing startup"
+            )
+
     # Stage 1: Sequential (auth depends on database)
     await _init_database()
     await _init_auth()

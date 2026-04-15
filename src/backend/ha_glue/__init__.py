@@ -23,17 +23,34 @@ by a CI lint in Phase 1 Week 4. Platform files that need data from
 ha_glue should use the hook system (`utils.hooks`) instead of direct
 imports.
 
-## Current state (Phase 1 Week 1 — models split only)
+## Current state (Phase 1 Week 1.2)
 
-As of 2026-04-14, only `ha_glue.models.database` is populated. The
-service and route extractions happen in Week 2; Alembic migration
-cutover in Week 3; CI lint gate in Week 4.
+- `ha_glue.models.database` — 9 SQLAlchemy classes + constants. Compat
+  re-export in `models/database.py` keeps legacy
+  `from models.database import Room` working.
+- `ha_glue.services.intent_fallback` — HA-keyword intent fallback
+  handler. Registered with the platform hook system by an explicit
+  call to `ha_glue.bootstrap.register()` from a platform startup file.
+- `ha_glue.bootstrap` — explicit hook-registration entry point.
 
-Consumers can already import from the new location:
+Service and route extractions for the rest of the ha-glue surface
+happen in Week 2; Alembic migration cutover in Week 3; CI lint gate
+in Week 4.
 
-    from ha_glue.models.database import Room, RoomDevice, PresenceEvent
+## Hook registration — explicit, NOT side-effect-on-import
 
-The legacy `from models.database import Room` path also still works
-via a compat re-export in `models/database.py`, which will be removed
-in Week 4 once every consumer has migrated.
+Importing this package is side-effect-free. Hook registration only
+happens when something explicitly calls `ha_glue.bootstrap.register()`.
+This is deliberate: the legacy compat re-export in
+`models/database.py::__getattr__` does `from ha_glue.models import
+database`, which imports the `ha_glue` package as part of attribute
+resolution. If `ha_glue/__init__.py` registered hooks as a side effect
+of import, every platform service that touched an ha-glue model
+through the compat shim would unconditionally activate HA behavior —
+even on `RENFIELD_EDITION=pro` deployments where the smart_home
+feature flag is False.
+
+Trigger the bootstrap explicitly from `api/lifecycle.py`, gated on
+`settings.features["smart_home"]`, and wrap in try/except so a
+missing `ha_glue` package degrades cleanly.
 """
