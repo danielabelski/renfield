@@ -309,7 +309,15 @@ class QueryOrchestrator:
         ]
         raw_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Yield steps grouped by sub-agent + collect results for synthesis
+        # Yield steps grouped by sub-agent + collect results for synthesis.
+        # IMPORTANT: per-sub-agent `final_answer` steps are suppressed
+        # here — they are intermediate artifacts, not the combined
+        # response. The user sees exactly one final answer: either the
+        # synthesizer's output (for 2+ successful sub-agents) or the
+        # single surviving sub-agent's answer (1 sub-agent, or fallback).
+        # Without this filter, the web chat would render 1 + N answers
+        # (each with its own greeting), which duplicates content and
+        # confuses the user.
         sub_results: list[dict] = sub_results_out if sub_results_out is not None else []
         for sq, result in zip(sub_queries, raw_results):
             if isinstance(result, Exception):
@@ -323,18 +331,13 @@ class QueryOrchestrator:
                 continue
 
             for step in result["steps"]:
+                if step.step_type == "final_answer":
+                    continue  # see note above
                 yield step
             sub_results.append(result)
 
-        # Synthesize combined answer
-        if len([r for r in sub_results if r.get("answer")]) >= 2:
-            synthesized = await self._synthesize(message, sub_results, ollama, lang)
-            if synthesized:
-                yield AgentStep(
-                    step_number=99,
-                    step_type="final_answer",
-                    content=synthesized,
-                )
+        async for step in self._emit_combined_answer(message, sub_results, ollama, lang):
+            yield step
 
     async def _run_sequential(
         self,
@@ -375,6 +378,8 @@ class QueryOrchestrator:
             )
             agent = AgentService(tool_registry, role=role)
 
+            # Same suppression rule as _run_parallel — only the
+            # combined answer should be surfaced to the user.
             final_answer = None
             async for step in agent.run(
                 message=query,
@@ -383,9 +388,10 @@ class QueryOrchestrator:
                 lang=lang,
                 **agent_kwargs,
             ):
-                yield step
                 if step.step_type == "final_answer":
                     final_answer = step.content
+                    continue
+                yield step
 
             sub_results.append({
                 "role": role_name,
@@ -393,8 +399,35 @@ class QueryOrchestrator:
                 "answer": final_answer or "",
             })
 
-        # Synthesize combined answer
-        if len(sub_results) >= 2:
+        async for step in self._emit_combined_answer(message, sub_results, ollama, lang):
+            yield step
+
+    async def _emit_combined_answer(
+        self,
+        message: str,
+        sub_results: list[dict],
+        ollama: "OllamaService",
+        lang: str,
+    ) -> "AsyncGenerator[AgentStep, None]":
+        """Yield a single combined ``final_answer`` for the orchestrated turn.
+
+        Logic:
+        1. Synthesize via LLM when ≥2 sub-agents returned a non-empty
+           answer — the combined deck needs narrative glue.
+        2. Fall back to the first non-empty sub-agent answer when only
+           one succeeded.
+        3. When *every* sub-agent failed (``non_empty`` is empty), emit
+           a visible error message so the user sees feedback and the
+           downstream chat_handler persists the turn. Returning silently
+           here would leave ``full_response=""``, which gates both the
+           WebSocket final bubble AND DB persistence — losing the whole
+           turn including the user's message.
+        """
+        from services.agent_service import AgentStep
+
+        non_empty = [r for r in sub_results if r.get("answer")]
+
+        if len(non_empty) >= 2:
             synthesized = await self._synthesize(message, sub_results, ollama, lang)
             if synthesized:
                 yield AgentStep(
@@ -402,6 +435,37 @@ class QueryOrchestrator:
                     step_type="final_answer",
                     content=synthesized,
                 )
+                return
+            # Synthesizer returned nothing — fall through to fallback.
+
+        if non_empty:
+            yield AgentStep(
+                step_number=99,
+                step_type="final_answer",
+                content=non_empty[0]["answer"],
+            )
+            return
+
+        # Every sub-agent failed. Surface a localized error so the user
+        # isn't left staring at an empty reply.
+        failed_roles = [r.get("role", "?") for r in sub_results]
+        if lang.startswith("de"):
+            msg = (
+                "Keine der angefragten Integrationen hat eine Antwort "
+                f"geliefert (betroffen: {', '.join(failed_roles)}). "
+                "Bitte versuche es in einem Moment erneut."
+            )
+        else:
+            msg = (
+                "None of the requested integrations returned an answer "
+                f"(affected: {', '.join(failed_roles)}). "
+                "Please try again in a moment."
+            )
+        yield AgentStep(
+            step_number=99,
+            step_type="final_answer",
+            content=msg,
+        )
 
     async def _synthesize(
         self,

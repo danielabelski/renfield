@@ -14,11 +14,27 @@ Each role defines:
 import asyncio
 import json
 import os
+import re
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Optional
 
 import yaml
 from loguru import logger
+
+# Anti-dashboard guard: ``my_dashboard`` is the personal-overview
+# sub_intent. Messages that request a deliverable (status report,
+# release details, explicit list/fetch) must NOT be mis-classified as
+# my_dashboard just because those very words appear in the sub-intent's
+# "NOT for" description clause — the keyword matcher can't parse
+# negation. Shared across dispatch paths (Teams transport + web-chat
+# hook) via _infer_sub_intent.
+_ANTI_DASHBOARD = re.compile(
+    r"\b(erstell\w*|bericht\w*|report\w*|status[\s-]*bericht|"
+    r"details?\s+(?:zu|von|to|of)|suche\w*|alle\s+releases|"
+    r"list(?:|e|en|s|ing)|zeig\s+mir\s+alle|schick\w*|"
+    r"sende\w*|generate\w*|deliveri\w*)\b",
+    re.IGNORECASE,
+)
 
 from services.prompt_manager import prompt_manager
 from utils.config import settings
@@ -245,11 +261,16 @@ class AgentRouter:
             if domain in self.roles:
                 role = self.roles[domain]
                 ids = [m.id for m in resolved.entity_matches]
+                sub_intent = self._infer_sub_intent(
+                    message, role.sub_intent_definitions or {}, lang,
+                ) if role.sub_intent_definitions else None
                 logger.info(
                     f"Router entity-id: '{message[:60]}' -> "
-                    f"'{domain}' (entities={ids})"
+                    f"'{domain}"
+                    f"{'/' + sub_intent if sub_intent else ''}' "
+                    f"(entities={ids})"
                 )
-                return replace(role, sub_intent=None)
+                return replace(role, sub_intent=sub_intent)
 
         # Layer 2: Scored continuity — accumulate signals, penalize domain switches
         # Ported from Reva's context_router.py::_layer_continuity (proven in production)
@@ -336,11 +357,16 @@ class AgentRouter:
 
                 if score >= 0.6:
                     role = self.roles[active_domain]
+                    sub_intent = self._infer_sub_intent(
+                        message, role.sub_intent_definitions or {}, lang,
+                    ) if role.sub_intent_definitions else None
                     logger.info(
                         f"Router continuity: '{message[:60]}' -> "
-                        f"'{active_domain}' (score={score:.2f}: {', '.join(signals)})"
+                        f"'{active_domain}"
+                        f"{'/' + sub_intent if sub_intent else ''}' "
+                        f"(score={score:.2f}: {', '.join(signals)})"
                     )
-                    return replace(role, sub_intent=None)
+                    return replace(role, sub_intent=sub_intent)
                 elif signals:
                     logger.debug(
                         f"Router continuity below threshold: '{message[:60]}' "
@@ -371,16 +397,28 @@ class AgentRouter:
         Returns:
             The classified AgentRole
         """
-        # Semantic fast path: try embedding-based classification first
+        # Semantic fast path: try embedding-based classification first.
+        # The router now also indexes sub_intent utterances, so a
+        # deliverable-style sub_intent (``my_dashboard``, ``status_report``)
+        # can win over the parent role and bypass the agent loop via the
+        # sub-intent dispatch hook.
         if self._semantic_router:
             try:
-                sem_role, sem_sim = await self._semantic_router.classify(message)
+                sem_role, sem_sub_intent, sem_sim = await self._semantic_router.classify(message)
                 if sem_role and sem_role in self.roles:
                     role = self.roles[sem_role]
+                    si_msg = f"/{sem_sub_intent}" if sem_sub_intent else ""
                     logger.info(
                         f"Router semantic fast-path: '{message[:60]}' -> "
-                        f"'{sem_role}' (sim={sem_sim:.3f})"
+                        f"'{sem_role}{si_msg}' (sim={sem_sim:.3f})"
                     )
+                    # Only propagate sub_intent when the parent role
+                    # actually defines it — otherwise silently drop to
+                    # avoid dispatching against a stale config.
+                    if sem_sub_intent and role.sub_intent_definitions and (
+                        sem_sub_intent in role.sub_intent_definitions
+                    ):
+                        return replace(role, sub_intent=sem_sub_intent)
                     return replace(role, sub_intent=None)
             except Exception as e:
                 logger.warning(f"Semantic router failed, falling back to LLM: {e}")
@@ -488,8 +526,17 @@ class AgentRouter:
     ) -> str | None:
         """Infer sub_intent by matching user message words against description keywords.
 
-        Used as fallback when the router LLM returns prose instead of JSON.
-        Returns the sub_intent name with the most keyword hits, or None.
+        Called from (a) the LLM fallback path when the router returns
+        prose instead of JSON, (b) the entity-id and continuity fast-
+        paths to keep sub_intent hints across follow-ups. Returns the
+        sub_intent name with the most keyword hits, or None.
+
+        Guard: ``my_dashboard`` is a personal-dashboard intent; messages
+        that clearly request a deliverable ("Statusbericht erstellen",
+        "details zu Release X", "schicke den Bericht") are rejected for
+        my_dashboard even if keywords superficially match — most of
+        those words also appear in my_dashboard's "NOT for" description
+        clause and would otherwise cause false positives.
         """
         msg_lower = message.lower()
         best_name: str | None = None
@@ -502,6 +549,8 @@ class AgentRouter:
             if hits > best_hits:
                 best_hits = hits
                 best_name = si_name
+        if best_name == "my_dashboard" and _ANTI_DASHBOARD.search(message):
+            return None
         return best_name if best_hits > 0 else None
 
     def _parse_classification(self, response_text: str) -> tuple[str | None, str | None]:
