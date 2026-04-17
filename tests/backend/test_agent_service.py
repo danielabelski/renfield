@@ -24,6 +24,30 @@ from services.agent_service import (
 )
 from services.agent_tools import AgentToolRegistry
 
+# Shared mock: tests configure ``ollama.client.chat`` with their response
+# sequences, but ``agent.run()`` calls ``agent_client.chat`` from
+# ``get_agent_client()``.  The fixture below bridges the two by returning
+# this shared mock whose ``.chat`` is wired up by ``_make_ollama_mock``.
+_shared_agent_client = MagicMock()
+_shared_agent_client.supports_native_tools = False
+
+
+@pytest.fixture(autouse=True)
+def _patch_get_agent_client(monkeypatch):
+    """Prevent ``import ollama`` and bridge test mocks to agent_client."""
+    _shared_agent_client.chat = AsyncMock(
+        return_value=MagicMock(message=MagicMock(content="{}"))
+    )
+    monkeypatch.setattr(
+        "services.agent_service.get_agent_client",
+        lambda *a, **kw: (_shared_agent_client, "http://mock:11434"),
+    )
+    monkeypatch.setattr(
+        "services.agent_service.client_supports_native_tools",
+        lambda c: False,
+    )
+
+
 # ============================================================================
 # Helper: collect all steps from the async generator
 # ============================================================================
@@ -509,7 +533,7 @@ class TestStepToWsMessage:
         assert msg["type"] == "agent_tool_result"
         assert msg["success"] is True
         assert msg["message"] == "12°C"
-        assert msg["data"]["temperature"] == 12
+        assert json.loads(msg["data"])["temperature"] == 12
 
     @pytest.mark.unit
     def test_final_answer_step(self):
@@ -580,6 +604,8 @@ class TestAgentServiceRun:
             return resp
 
         ollama.client.chat = mock_chat
+        _shared_agent_client.chat = mock_chat
+        _shared_agent_client.chat = mock_chat
         return ollama
 
     def _make_executor_mock(self, results=None):
@@ -712,6 +738,7 @@ class TestAgentServiceRun:
             return resp
 
         ollama.client.chat = mock_chat
+        _shared_agent_client.chat = mock_chat
         executor = self._make_executor_mock([
             {"success": True, "message": "22°C", "action_taken": True}
         ] * 10)
@@ -761,6 +788,7 @@ class TestAgentServiceRun:
             raise RuntimeError("Model not loaded")
 
         ollama.client.chat = failing_chat
+        _shared_agent_client.chat = failing_chat
         executor = self._make_executor_mock()
 
         agent = AgentService(registry, max_steps=5)
@@ -796,6 +824,7 @@ class TestAgentServiceRun:
             await asyncio.sleep(10)  # Very slow — will timeout
 
         ollama.client.chat = slow_then_fast_chat
+        _shared_agent_client.chat = slow_then_fast_chat
         executor = self._make_executor_mock()
 
         agent = AgentService(registry, max_steps=5, step_timeout=0.1)
@@ -832,6 +861,7 @@ class TestAgentServiceRun:
             return await original_chat(**kwargs)
 
         ollama.client.chat = capturing_chat
+        _shared_agent_client.chat = capturing_chat
 
         steps = await collect_steps(
             agent, message="Und morgen?", ollama=ollama, executor=executor,
@@ -876,6 +906,7 @@ class TestAgentServiceSafety:
             return resp
 
         ollama.client.chat = slow_but_within_step
+        _shared_agent_client.chat = slow_but_within_step
 
         executor = AsyncMock()
         executor.execute = AsyncMock(return_value={
@@ -923,6 +954,7 @@ class TestAgentServiceSafety:
             return resp
 
         ollama.client.chat = mock_chat
+        _shared_agent_client.chat = mock_chat
 
         answer = await agent._build_summary_answer(ctx, 3, "Wie ist das Wetter?", ollama, "test-model")
         assert answer.step_type == "final_answer"
@@ -961,6 +993,7 @@ class TestAgentServiceSafety:
             raise RuntimeError("Model crashed")
 
         ollama.client.chat = failing_chat
+        _shared_agent_client.chat = failing_chat
 
         answer = await agent._build_summary_answer(ctx, 2, "test", ollama, "test-model")
         assert answer.step_type == "final_answer"
@@ -1023,6 +1056,7 @@ class TestAgentServiceRetry:
             return resp
 
         ollama.client.chat = mock_chat
+        _shared_agent_client.chat = mock_chat
         executor = self._make_executor_mock()
 
         agent = AgentService(registry, max_steps=5)
@@ -1051,6 +1085,7 @@ class TestAgentServiceRetry:
             return resp
 
         ollama.client.chat = mock_chat
+        _shared_agent_client.chat = mock_chat
         executor = self._make_executor_mock()
 
         agent = AgentService(registry, max_steps=5)
@@ -1085,6 +1120,7 @@ class TestAgentServiceRetry:
             return resp
 
         ollama.client.chat = mock_chat
+        _shared_agent_client.chat = mock_chat
         executor = self._make_executor_mock([
             {"success": True, "message": "22°C", "action_taken": True, "data": {"temperature": 22}}
         ])
@@ -1132,6 +1168,7 @@ class TestToolResultDataInclusion:
             return resp
 
         ollama.client.chat = mock_chat
+        _shared_agent_client.chat = mock_chat
 
         executor = AsyncMock()
         executor.execute = AsyncMock(return_value={
@@ -1174,6 +1211,7 @@ class TestToolResultDataInclusion:
             return resp
 
         ollama.client.chat = mock_chat
+        _shared_agent_client.chat = mock_chat
 
         executor = AsyncMock()
         executor.execute = AsyncMock(return_value={
@@ -1237,6 +1275,7 @@ class TestAgentInfiniteLoopDetection:
             return resp
 
         ollama.client.chat = stuck_llm
+        _shared_agent_client.chat = stuck_llm
         executor = self._make_executor_mock()
 
         agent = AgentService(registry, max_steps=10)
@@ -1282,6 +1321,7 @@ class TestAgentCircuitBreakerIntegration:
             raise RuntimeError("LLM unavailable")
 
         ollama.client.chat = failing_llm
+        _shared_agent_client.chat = failing_llm
         executor = AsyncMock()
 
         agent = AgentService(registry, max_steps=5)
@@ -1323,6 +1363,7 @@ class TestAgentCircuitBreakerIntegration:
             return resp
 
         ollama.client.chat = working_llm
+        _shared_agent_client.chat = working_llm
         executor = AsyncMock()
 
         agent = AgentService(registry, max_steps=5)
@@ -1437,7 +1478,14 @@ class TestAgentMusicPlaybackChain:
         mock_mcp.get_all_tools.return_value = tools
 
         registry = AgentToolRegistry(mcp_manager=mock_mcp)
-        # Internal tools are registered automatically via _register_internal_tools()
+        # play_in_room and resolve_room_player moved to ha_glue hook;
+        # register them manually for the test.
+        from services.agent_tools import ToolDefinition
+        for name, desc in [
+            ("internal.play_in_room", "Play media in a room"),
+            ("internal.resolve_room_player", "Resolve room to player entity"),
+        ]:
+            registry._tools[name] = ToolDefinition(name=name, description=desc, parameters={})
         return registry
 
     @pytest.mark.unit
@@ -1490,6 +1538,7 @@ class TestAgentMusicPlaybackChain:
             return resp
 
         ollama.client.chat = mock_chat
+        _shared_agent_client.chat = mock_chat
 
         executor = AsyncMock()
         executor.execute = AsyncMock(side_effect=[
@@ -1533,19 +1582,6 @@ class TestAgentMusicPlaybackChain:
         assert tool_calls[0].tool == "mcp.jellyfin.search_media"
         assert tool_calls[1].tool == "mcp.jellyfin.get_stream_url"
         assert tool_calls[2].tool == "internal.play_in_room"
-
-    @pytest.mark.unit
-    def test_internal_tools_always_in_selection(self):
-        """Internal tools should always be included in keyword-filtered selection."""
-        registry = self._make_registry_with_music_tools()
-
-        # Query that only matches jellyfin keywords
-        selected = registry.select_relevant_tools("Suche Musik von Queen")
-        assert "internal.play_in_room" in selected
-        assert "internal.resolve_room_player" in selected
-        # Should also include jellyfin tools
-        assert any(k.startswith("mcp.jellyfin") for k in selected)
-
 
 class TestExtractBlobsMeta:
     """Test that blob extraction also stores metadata."""
@@ -1708,6 +1744,7 @@ class TestAgentBreaksOnRepeatedEmptyResults:
             return resp
 
         ollama.client.chat = mock_chat
+        _shared_agent_client.chat = mock_chat
 
         executor = AsyncMock()
         # Both calls return empty results (TotalRecordCount: 0)
