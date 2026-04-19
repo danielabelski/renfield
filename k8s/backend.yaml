@@ -212,12 +212,15 @@ spec:
               memory: 1Gi
             limits:
               cpu: "2"
-              # 12Gi: 8Gi was still hit by Docling+EasyOCR on large PDFs. Node has
-              # 15Gi total — Ollama's limit is 16Gi but actual use is far lower, so
-              # this leaves working room. This is a stop-gap; the real fix is the
-              # worker split in docs/DOCUMENT_WORKER_SPLIT.md, after which the
-              # backend's limit drops back to ~4Gi.
-              memory: 12Gi
+              # Down from 12Gi: the main upload path moved to the
+              # document-worker pod (#388) so the API no longer has to
+              # survive a 4 GB Docling peak on every request. 8Gi still
+              # leaves room for the synchronous chat-upload path
+              # (api/routes/chat_upload.py) which keeps Docling+EasyOCR
+              # in-process for now; migrating that to the worker lets us
+              # drop the cap further. The historical "8Gi was still hit"
+              # note referred to serving-path Docling — that's gone.
+              memory: 8Gi
       volumes:
         - name: data
           persistentVolumeClaim:
