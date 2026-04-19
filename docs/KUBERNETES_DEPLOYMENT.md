@@ -213,10 +213,14 @@ kubectl -n renfield create secret tls renfield-tls --cert=tls.crt --key=tls.key
 rm tls.{crt,key}
 
 # 5. MCP / agent config ConfigMap
+# `mail_accounts.default.yaml` is renamed to `mail_accounts.yaml` in the
+# ConfigMap — the mail MCP expects that exact filename. Swap in a real
+# accounts file here if you have one.
 kubectl -n renfield create configmap renfield-mcp-config \
   --from-file=config/mcp_servers.yaml \
   --from-file=config/agent_roles.yaml \
-  --from-file=config/kg_scopes.yaml
+  --from-file=config/kg_scopes.yaml \
+  --from-file=mail_accounts.yaml=config/mail_accounts.default.yaml
 
 # 6. Everything else via kustomize
 kubectl apply -k k8s/
@@ -245,6 +249,22 @@ When the new version contains migrations:
 kubectl -n renfield apply -f k8s/alembic-upgrade-job.yaml
 kubectl -n renfield logs -f job/alembic-upgrade
 kubectl -n renfield delete job alembic-upgrade
+```
+
+When the new version changes the MCP config set (new file in
+`config/`, new ConfigMap key referenced by a manifest), the
+`renfield-mcp-config` ConfigMap has to be rewritten before the
+manifests are applied — otherwise the pods get stuck in
+`ContainerCreating` on a missing subPath. The pattern:
+
+```bash
+kubectl -n renfield create configmap renfield-mcp-config \
+  --from-file=config/mcp_servers.yaml \
+  --from-file=config/agent_roles.yaml \
+  --from-file=config/kg_scopes.yaml \
+  --from-file=mail_accounts.yaml=config/mail_accounts.default.yaml \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n renfield rollout restart deploy/backend
 ```
 
 Ollama model pulls: drop the model into the NFS share at `192.168.1.9:/mnt/data/llm/.ollama/` and it becomes visible to both Ollama pods; the `ollama-model-prepull` Job can also be re-applied to pull a specific list.
