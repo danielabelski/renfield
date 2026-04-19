@@ -7,6 +7,7 @@ Pydantic schemas are defined in knowledge_schemas.py.
 """
 import hashlib
 import os
+import uuid
 from pathlib import Path
 
 import aiofiles
@@ -265,17 +266,26 @@ async def upload_document(
                     status_code=403,
                     detail="Permission required: rag.manage"
                 )
-    # Validierung: Dateiformat
+    # Validierung: Dateiformat — 415 Unsupported Media Type is the semantic
+    # match. Frontend reads the structured detail to render allowed-format
+    # copy; legacy clients that only read status codes also get the right
+    # signal.
     extension = Path(file.filename).suffix.lower().lstrip('.')
     allowed = settings.allowed_extensions_list
 
     if extension not in allowed:
         raise HTTPException(
-            status_code=400,
-            detail=f"Dateiformat '{extension}' nicht unterstützt. Erlaubt: {', '.join(allowed)}"
+            status_code=415,
+            detail={
+                "message": f"Dateiformat '{extension}' nicht unterstützt.",
+                "allowed": sorted(allowed),
+                "received": extension,
+            },
         )
 
-    # Validierung: Dateigröße
+    # Validierung: Dateigröße — 413 Content Too Large is the correct code.
+    # Include max_mb in the detail so the frontend can show the limit
+    # without hard-coding it.
     file.file.seek(0, 2)
     size = file.file.tell()
     file.file.seek(0)
@@ -283,8 +293,12 @@ async def upload_document(
     max_size = settings.max_file_size_mb * 1024 * 1024
     if size > max_size:
         raise HTTPException(
-            status_code=400,
-            detail=f"Datei zu groß ({size // 1024 // 1024}MB). Maximum: {settings.max_file_size_mb}MB"
+            status_code=413,
+            detail={
+                "message": f"Datei zu groß ({size // 1024 // 1024} MB).",
+                "max_mb": settings.max_file_size_mb,
+                "received_mb": size // 1024 // 1024,
+            },
         )
 
     # Datei-Inhalt lesen und SHA256-Hash berechnen
@@ -320,7 +334,6 @@ async def upload_document(
     upload_dir.mkdir(parents=True, exist_ok=True)
 
     # Eindeutigen Dateinamen generieren
-    import uuid
     safe_name = os.path.basename((file.filename or "unknown").replace("\x00", ""))
     unique_filename = f"{uuid.uuid4().hex}_{safe_name}"
     file_path = upload_dir / unique_filename
