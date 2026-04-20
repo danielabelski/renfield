@@ -14,7 +14,7 @@ Approach:
   `format_context_from_results`) are exercised through BOTH the legacy inline
   RAGService path and the new RAGRetrieval delegate path with the same
   mocked DB / Ollama responses, asserting identical output.
-- Flag routing test: confirms the `circles_use_new_rag` flag actually
+- Routing test: confirms RAGService.search / get_context unconditionally
   re-routes calls to RAGRetrieval (verified by patching the import target
   and asserting it gets called).
 """
@@ -62,64 +62,10 @@ def make_result(
 
 
 # =============================================================================
-# Static method parity: _reciprocal_rank_fusion
+# (TestRRFParity removed: RAGService._reciprocal_rank_fusion was deleted in
+# the post-Lane-C hygiene sprint. RAGRetrieval._reciprocal_rank_fusion is the
+# only copy and is exercised by test_rag_hybrid_search.py::TestReciprocalRankFusion.)
 # =============================================================================
-
-
-class TestRRFParity:
-    """The RRF algorithm must produce byte-identical output across the two classes."""
-
-    @pytest.mark.unit
-    def test_rrf_identical_for_overlapping_results(self):
-        """RAGService.RRF and RAGRetrieval.RRF agree on overlapping inputs."""
-        dense = [make_result(1, similarity=0.95), make_result(2, similarity=0.80)]
-        bm25 = [make_result(2, similarity=0.7), make_result(3, similarity=0.6)]
-
-        with patch("services.rag_service.settings") as legacy_settings, \
-             patch("services.rag_retrieval.settings") as new_settings:
-            for s in (legacy_settings, new_settings):
-                s.rag_hybrid_rrf_k = 60
-                s.rag_hybrid_dense_weight = 0.5
-                s.rag_hybrid_bm25_weight = 0.5
-
-            legacy = RAGService._reciprocal_rank_fusion(dense, bm25, top_k=10)
-            new = RAGRetrieval._reciprocal_rank_fusion(dense, bm25, top_k=10)
-
-        assert legacy == new, "RRF output must be identical across legacy and extracted paths"
-
-    @pytest.mark.unit
-    def test_rrf_identical_for_disjoint_results(self):
-        dense = [make_result(1), make_result(2)]
-        bm25 = [make_result(3), make_result(4)]
-
-        with patch("services.rag_service.settings") as legacy_settings, \
-             patch("services.rag_retrieval.settings") as new_settings:
-            for s in (legacy_settings, new_settings):
-                s.rag_hybrid_rrf_k = 60
-                s.rag_hybrid_dense_weight = 0.5
-                s.rag_hybrid_bm25_weight = 0.5
-
-            legacy = RAGService._reciprocal_rank_fusion(dense, bm25, top_k=10)
-            new = RAGRetrieval._reciprocal_rank_fusion(dense, bm25, top_k=10)
-
-        assert legacy == new
-
-    @pytest.mark.unit
-    def test_rrf_identical_with_asymmetric_weights(self):
-        dense = [make_result(1, similarity=0.95), make_result(2, similarity=0.85)]
-        bm25 = [make_result(2, similarity=0.9), make_result(3, similarity=0.5)]
-
-        with patch("services.rag_service.settings") as legacy_settings, \
-             patch("services.rag_retrieval.settings") as new_settings:
-            for s in (legacy_settings, new_settings):
-                s.rag_hybrid_rrf_k = 60
-                s.rag_hybrid_dense_weight = 0.7
-                s.rag_hybrid_bm25_weight = 0.3
-
-            legacy = RAGService._reciprocal_rank_fusion(dense, bm25, top_k=5)
-            new = RAGRetrieval._reciprocal_rank_fusion(dense, bm25, top_k=5)
-
-        assert legacy == new
 
 
 # =============================================================================
@@ -170,10 +116,8 @@ class TestFormatContextParity:
 
 class TestRouting:
     """
-    Lane C: RAGService.search and RAGService.get_context unconditionally route
-    through RAGRetrieval (which applies the circle-tier filter). The legacy
-    `circles_use_new_rag` flag is retained on the settings model for
-    back-compat but is now a no-op.
+    RAGService.search and RAGService.get_context unconditionally route through
+    RAGRetrieval (which applies the circle-tier filter).
     """
 
     @pytest.mark.asyncio
@@ -192,24 +136,6 @@ class TestRouting:
         ret_search.assert_called_once()
         assert ret_search.call_args.kwargs.get("user_id") == 42
         assert result is sentinel
-
-    @pytest.mark.asyncio
-    @pytest.mark.unit
-    async def test_search_routes_when_legacy_flag_off(self):
-        """The CIRCLES_USE_NEW_RAG flag is dead — both ON and OFF route."""
-        db = MagicMock()
-        service = RAGService(db)
-        sentinel = [make_result(42)]
-
-        with patch("services.rag_service.settings") as svc_settings, \
-             patch(
-                 "services.rag_retrieval.RAGRetrieval.search",
-                 new=AsyncMock(return_value=sentinel),
-             ) as ret_search:
-            svc_settings.circles_use_new_rag = False  # no-op now
-            await service.search("anything", top_k=5)
-
-        ret_search.assert_called_once()
 
     @pytest.mark.asyncio
     @pytest.mark.unit
