@@ -75,6 +75,7 @@ from services.mcp_streaming import (
     ProgressChunk,
 )
 from services.pairing_service import _canonical_bytes
+from utils.config import settings
 
 
 # Timeouts (seconds) — responder-side TTL is 60s (F3a), so we cap here.
@@ -211,13 +212,28 @@ class FederationQueryAsker:
         endpoint: str,
         query_text: str,
     ) -> QueryBrainInitiateResponse | None:
-        """Sign + POST the initiate request. Returns None on HTTP error."""
+        """Sign + POST the initiate request. Returns None on HTTP error.
+
+        F5a — first-hop queries carry `depth=settings.federation_max_depth`
+        and `path=[my_pubkey]`. Both travel through the signed canonical
+        payload so an on-path attacker can't strip them.
+
+        Cascade note: today Renfield never cascades transitively. If/when
+        we wire it, the cascader signs a FRESH envelope as the new
+        asker_pubkey (pair-anchor binding at the next hop requires it);
+        the original originator survives in `path[0]` as provenance +
+        cycle-defense, never as a trust claim. F5a does not commit to
+        any specific cascade design.
+        """
+        my_pubkey = self.identity.public_key_hex()
         unsigned = {
-            "version": 1,
-            "asker_pubkey": self.identity.public_key_hex(),
+            "version": 2,
+            "asker_pubkey": my_pubkey,
             "query": query_text,
             "nonce": secrets.token_hex(16),
             "timestamp": int(time.time()),
+            "depth": settings.federation_max_depth,
+            "path": [my_pubkey],
         }
         signature = self.identity.sign(_canonical_bytes(unsigned)).hex()
         req = QueryBrainInitiateRequest(**unsigned, signature=signature)
