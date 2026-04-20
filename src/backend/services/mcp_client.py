@@ -18,6 +18,7 @@ import os
 import random
 import re
 import time
+from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from enum import Enum
@@ -28,6 +29,7 @@ import httpx
 import yaml
 from loguru import logger
 
+from services.mcp_streaming import FinalResult, ProgressChunk
 from utils.config import settings
 
 # Optional jsonschema import (graceful degradation if not installed)
@@ -1215,6 +1217,58 @@ class MCPManager:
                 "message": f"Tool-Aufruf fehlgeschlagen: {e}",
                 "data": None,
             }
+
+    async def execute_tool_streaming(
+        self,
+        namespaced_name: str,
+        arguments: dict,
+        user_permissions: list[str] | None = None,
+        user_id: int | None = None,
+    ) -> AsyncIterator[ProgressChunk | FinalResult]:
+        """
+        Like `execute_tool` but yields an AsyncIterator of progress + result.
+
+        For tools with no native streaming support (the current default for
+        every MCP server in the fleet) this yields exactly one item — the
+        same `FinalResult` dict that `execute_tool` returns. Consumers can
+        treat the iterator as "fire-and-forget" for those.
+
+        For streaming-capable tools (Lane F1.3 — federation `query_brain`
+        being the first), intermediate `ProgressChunk` items appear before
+        the final dict. The chunk vocabulary is locked in
+        `services/mcp_streaming.PROGRESS_LABELS` so chunk consumers can
+        switch on `label` without parsing free-form strings.
+
+        Consumer contract (locked):
+            The iterator yields zero or more `ProgressChunk` followed by
+            exactly one `FinalResult` (dict). Discriminate via
+            `isinstance(chunk, ProgressChunk)` — `FinalResult` is a plain
+            `dict` alias and does not support isinstance checks.
+
+        Yields:
+            ProgressChunk*, FinalResult — exactly one FinalResult is the
+            final yield for every successful call. Errors also surface as
+            a FinalResult (`success=False`) so consumers don't need a
+            separate exception path.
+
+        Cancellation:
+            If the consumer aborts the iterator (`break`, `aclose()`,
+            GC) AFTER the first `__anext__()` but before the final yield,
+            the underlying tool call is allowed to complete in the
+            background but its result is discarded. If `aclose()` is
+            called BEFORE the first `__anext__()`, the underlying tool
+            is never invoked — creating the generator does not start
+            work, the first `__anext__()` does.
+        """
+        # F1.2: thin wrapper. F1.3 will detect streaming-capable tools and
+        # yield real ProgressChunks before the final dict.
+        result = await self.execute_tool(
+            namespaced_name=namespaced_name,
+            arguments=arguments,
+            user_permissions=user_permissions,
+            user_id=user_id,
+        )
+        yield result
 
     def get_all_tools(self) -> list[MCPToolInfo]:
         """Return all discovered MCP tools."""
