@@ -45,6 +45,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.federation_cert_pin import probe_peer_cert_fingerprint
+
 from models.database import (
     Circle,
     CircleMembership,
@@ -154,6 +156,89 @@ def _clear_nonce_cache_for_tests() -> None:
 
 
 # =============================================================================
+# F5e — TOFU auto-pin helper
+# =============================================================================
+
+
+# Pair-time probe timeout is tighter than the runtime F5d default:
+# LAN + Tailscale LAN peers handshake in <500ms; 2s is enough margin
+# without making the user wait on a stalled probe. A failed probe
+# still succeeds the pairing (no pin) — worst case is federation
+# queries later fall back to default CA validation.
+_TOFU_PROBE_TIMEOUT_SECONDS = 2.0
+
+
+async def _with_tofu_fingerprint(endpoints: list[Any] | None) -> dict:
+    """
+    Build a `transport_config` dict from the peer's advertised endpoints,
+    optionally enriched with a TLS cert SHA-256 captured at pair time.
+
+    TOFU semantics: the first time we see this peer (which is pair time),
+    we trust whatever cert their endpoint presents and record its SHA-256
+    as a pin. All subsequent federation requests verify against this
+    pin via F5d. If the peer rotates their cert, the next query fails
+    with a clear "fingerprint mismatch" and the operator re-pairs to
+    refresh the pin.
+
+    Best-effort: probe failures (non-HTTPS, connection timeout, plain
+    TCP servers) just skip the pin — transport_config omits
+    `tls_fingerprint` and F5d falls back to default CA validation
+    (which won't work for self-signed deploys, but the operator at
+    least sees "couldn't probe" in the pairing logs).
+
+    An empty endpoints list is logged separately — pairing succeeds
+    but no federation query to this peer will succeed until an endpoint
+    is added. The distinction matters so operators can tell "probe
+    failed" apart from "the other side never advertised an endpoint".
+    """
+    config: dict = {"endpoints": endpoints or []}
+    if not endpoints:
+        logger.warning(
+            "Pairing: peer advertised no endpoints — federation queries "
+            "to them will fail until an endpoint is added to their "
+            "PeerUser.transport_config"
+        )
+        return config
+
+    first_url = _first_https_url(endpoints)
+    if not first_url:
+        return config
+
+    fingerprint = await probe_peer_cert_fingerprint(
+        first_url, timeout=_TOFU_PROBE_TIMEOUT_SECONDS,
+    )
+    if fingerprint:
+        config["tls_fingerprint"] = fingerprint
+        logger.info(
+            f"Pairing TOFU: pinned peer cert {fingerprint[:16]}… for {first_url}"
+        )
+    else:
+        logger.warning(
+            f"Pairing TOFU: could not probe cert for {first_url} — "
+            f"pinning skipped. Federation queries may fail until the "
+            f"operator sets `tls_fingerprint` manually or re-pairs."
+        )
+    return config
+
+
+def _first_https_url(endpoints: list[Any] | None) -> str | None:
+    """Extract the first https:// URL from a list of endpoint entries.
+    Entries tolerated: bare strings, `{"url": ...}`, `{"endpoint_url": ...}`.
+    Anything else (None, non-str/dict, protocol-less hostnames, ws://)
+    is skipped. Scheme match is case-insensitive."""
+    for ep in endpoints or []:
+        if isinstance(ep, str):
+            url = ep
+        elif isinstance(ep, dict):
+            url = ep.get("url") or ep.get("endpoint_url")
+        else:
+            continue
+        if url and str(url).lower().startswith("https://"):
+            return str(url)
+    return None
+
+
+# =============================================================================
 # Service
 # =============================================================================
 
@@ -225,12 +310,18 @@ class PairingService:
             raise PairingError("Tier must be between 0 and 4")
 
         # Persist the initiator as our peer + as a member of our circle at the chosen tier.
+        # F5e — TOFU-capture the initiator's TLS fingerprint at pair time
+        # so subsequent queries to them are pinned automatically. Best-
+        # effort: non-HTTPS endpoints, unreachable hosts, and certs that
+        # can't be retrieved all return None and we skip pinning
+        # (logged by the probe helper).
+        transport_config = await _with_tofu_fingerprint(offer.offered_endpoints)
         await self._upsert_peer_user(
             owner_user_id=current_user.id,
             remote_pubkey=offer.initiator_pubkey,
             remote_display_name=offer.display_name,
             remote_user_id=offer.initiator_user_id,
-            transport_config={"endpoints": offer.offered_endpoints},
+            transport_config=transport_config,
         )
         # Ensure the responder has a circles row (needed for membership FK).
         await _get_or_create_circle(self.db, current_user.id)
@@ -287,12 +378,14 @@ class PairingService:
         if not (0 <= their_tier_for_me <= 4):
             raise PairingError("Tier must be between 0 and 4")
 
+        # F5e — TOFU-capture the responder's TLS fingerprint.
+        transport_config = await _with_tofu_fingerprint(response.accepted_endpoints)
         peer = await self._upsert_peer_user(
             owner_user_id=current_user.id,
             remote_pubkey=response.responder_pubkey,
             remote_display_name=response.responder_display_name,
             remote_user_id=response.responder_user_id,
-            transport_config={"endpoints": response.accepted_endpoints},
+            transport_config=transport_config,
         )
         await _get_or_create_circle(self.db, current_user.id)
         await self._upsert_circle_membership(
