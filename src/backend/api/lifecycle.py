@@ -258,6 +258,56 @@ def _schedule_federation_audit_cleanup():
     logger.info("Federation Audit Cleanup Scheduler gestartet (stündlich, retention=90d)")
 
 
+def _schedule_paperless_sweepers(app):
+    """PR 4 — hourly sweepers for the Paperless learning loop.
+
+    Two independent cleanup tasks:
+
+    1. UI-edit sweeper: turn user edits in the Paperless UI into
+       learning examples. Requires mcp_manager to be wired.
+    2. Abandoned-confirm sweeper: drop stale ``pending_confirms``
+       rows (> 24 h). Pure DB-only, no MCP dependency.
+    """
+    # Run-first, sleep-after: a process that restarts every 59 min
+    # would otherwise never sweep. The upfront work waits 60 s so MCP
+    # manager and DB sessions are ready; subsequent iterations run the
+    # full hourly cadence.
+    async def ui_edit_loop():
+        await asyncio.sleep(60)
+        while True:
+            try:
+                mgr = getattr(app.state, "mcp_manager", None)
+                if mgr is not None:
+                    from services.paperless_ui_edit_sweeper import run_sweep_tick
+                    await run_sweep_tick(mcp_manager=mgr)
+                await asyncio.sleep(3600)  # 1 hour
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"Paperless UI-edit sweep failed: {e}")
+                await asyncio.sleep(3600)
+
+    async def abandoned_confirm_loop():
+        await asyncio.sleep(60)
+        while True:
+            try:
+                from services.paperless_ui_edit_sweeper import run_abandoned_confirm_sweep
+                await run_abandoned_confirm_sweep()
+                await asyncio.sleep(3600)  # 1 hour
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"Paperless abandoned-confirm sweep failed: {e}")
+                await asyncio.sleep(3600)
+
+    _startup_tasks.append(asyncio.create_task(ui_edit_loop()))
+    _startup_tasks.append(asyncio.create_task(abandoned_confirm_loop()))
+    logger.info(
+        "Paperless sweepers gestartet "
+        "(ui_edit + abandoned_confirm, stündlich)"
+    )
+
+
 def _schedule_notification_poller(app):
     """Start the MCP notification poller for servers with notifications enabled."""
     if not settings.notification_poller_enabled:
@@ -550,6 +600,7 @@ async def lifespan(app: "FastAPI"):
     _schedule_memory_cleanup()
     _schedule_upload_cleanup()
     _schedule_federation_audit_cleanup()
+    _schedule_paperless_sweepers(app)
 
     # Presence / paperless audit / media follow / conversation handoff /
     # Zeroconf satellite discovery are bootstrapped by ha_glue via its

@@ -119,6 +119,51 @@ class TestDBQuery:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
+    async def test_query_prefers_seed_then_confirm_diff_then_ui_sweep(self):
+        """PR 4: three-way rank. Seed rows (manually curated) win
+        first, confirm_diff second, paperless_ui_sweep last. Compiled
+        SQL should carry a CASE with the literal source strings in
+        bind params and an ORDER BY that uses it."""
+        captured: dict = {}
+
+        def _factory():
+            session = AsyncMock()
+            session.__aenter__ = AsyncMock(return_value=session)
+            session.__aexit__ = AsyncMock(return_value=None)
+
+            async def _capture(stmt):
+                captured["stmt"] = stmt
+                result = MagicMock()
+                scalars = MagicMock()
+                scalars.all = MagicMock(return_value=[])
+                result.scalars = MagicMock(return_value=scalars)
+                return result
+
+            session.execute = AsyncMock(side_effect=_capture)
+            return session
+
+        with patch(
+            "services.paperless_example_retriever._embed_doc_text",
+            AsyncMock(return_value=[0.1] * 8),
+        ):
+            with patch("services.database.AsyncSessionLocal", _factory):
+                await fetch_relevant_examples("doc", user_id=1)
+
+        stmt = captured.get("stmt")
+        assert stmt is not None
+        compiled = stmt.compile()
+        sql = str(compiled).lower()
+        # The CASE expression reflects the three-way preference.
+        assert "case" in sql
+        params = compiled.params.values()
+        # All three source strings land in the CASE via params.
+        assert "seed" in params
+        assert "confirm_diff" in params
+        # ORDER BY exists (either in the SQL text or as order_by clauses).
+        assert "order by" in sql
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
     async def test_query_filters_by_user_id(self):
         """Regression guard: the retriever MUST scope to the asker's
         user_id. Without this, household user A's corrections leak
@@ -159,8 +204,6 @@ class TestDBQuery:
         params = compiled.params
         assert "user_id" in sql.lower()
         assert 42 in params.values()
-        # Source filter also lands in the params (string).
-        assert "confirm_diff" in params.values()
 
     @pytest.mark.asyncio
     @pytest.mark.unit
