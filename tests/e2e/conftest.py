@@ -6,8 +6,27 @@ Target: https://renfield.local (production, self-signed certs).
 """
 
 import os
+import sys
 import pytest
 from playwright.sync_api import sync_playwright
+
+# Make `from tests.e2e.helpers import ...` work in every environment —
+# pytest's rootdir varies (repo root when run via `make test-e2e-browser`,
+# `/tests/e2e/areas` when invoked inside the backend container). This
+# conftest is always imported before any test module, so inserting the
+# parent directory of `tests/` onto sys.path guarantees the
+# `tests.e2e.helpers` import path resolves.
+_REPO_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..")
+)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+# In the backend container the repo root isn't mounted — only `/tests`
+# is. When that's the case, expose `/tests` so `import e2e.helpers...`
+# works as a fallback. We re-export the same modules under that name.
+_TESTS_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _TESTS_ROOT not in sys.path:
+    sys.path.insert(0, _TESTS_ROOT)
 
 BASE_URL = "https://renfield.local"
 SCREENSHOTS_DIR = os.path.join(os.path.dirname(__file__), "screenshots")
@@ -21,7 +40,15 @@ def _playwright_instance():
 
 @pytest.fixture(scope="session")
 def browser(_playwright_instance):
-    browser = _playwright_instance.chromium.launch(headless=True)
+    # --ignore-certificate-errors applies the cert bypass to WebSocket
+    # upgrades too, which `ignore_https_errors=True` on the context
+    # does NOT cover in headless Chromium. Without it, renfield.local's
+    # self-signed cert silently kills the wss:// handshake and the
+    # chat page sits on "Verbinde..." forever.
+    browser = _playwright_instance.chromium.launch(
+        headless=True,
+        args=["--ignore-certificate-errors"],
+    )
     yield browser
     browser.close()
 
