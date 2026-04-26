@@ -479,21 +479,52 @@ class RAGService:
         return [r for r in results if r is not None]
 
     async def _ingest_parent_child(self, doc_id: int, chunks: list[dict], sem: asyncio.Semaphore) -> list[DocumentChunk]:
-        """Parent-child chunking: small embedded children reference larger context parents."""
+        """Parent-child chunking: small embedded children reference larger context parents.
+
+        Two-phase batched flow (W3 fix):
+          1. Build all parents up-front (no embedding), `add_all` them, single
+             `flush()` to assign every parent.id in one DB round trip.
+          2. Embed every child concurrently in one `asyncio.gather()`, using
+             the now-populated parent.id values.
+
+        Replaces the previous per-group `db.add(parent)` + `db.flush()` loop
+        which made N+1 DB round trips for N parent groups AND serialized child
+        embedding (group N's embeddings couldn't start until group N-1's
+        flush completed). The caller's outer `add_all(chunk_objects)`
+        idempotently re-adds parents — already in the session, so no double
+        INSERT.
+        """
         # Group consecutive child chunks into parents
         children_per_parent = max(1, settings.rag_parent_chunk_size // max(settings.rag_child_chunk_size, 1))
-        all_objects: list[DocumentChunk] = []
 
+        # Phase 1: build all parents (no embedding). Filter blank-text
+        # children once up front so `child_count` metadata, parent_text
+        # construction, and the child-embedding gather all see the same
+        # set — eliminates the metadata overcount that the per-group loop
+        # carried (where child_count = raw len(group) but blanks dropped
+        # out at embedding time, so the live row count was lower).
+        parent_groups: list[tuple[DocumentChunk, list[dict]]] = []
         for group_start in range(0, len(chunks), children_per_parent):
-            group = chunks[group_start:group_start + children_per_parent]
+            raw_group = chunks[group_start:group_start + children_per_parent]
+            if not raw_group:
+                continue
+
+            blanks_dropped = sum(
+                1 for c in raw_group
+                if not (c.get("text") and c["text"].strip())
+            )
+            group = [c for c in raw_group if c.get("text") and c["text"].strip()]
             if not group:
-                continue
+                continue  # whole group was blank — skip entirely
 
-            # Create parent chunk (concatenated text, no embedding)
-            parent_text = "\n\n".join(c["text"] for c in group if c["text"] and c["text"].strip())
-            if not parent_text.strip():
-                continue
+            if blanks_dropped:
+                logger.debug(
+                    f"Parent group at chunk_index={group_start} dropped "
+                    f"{blanks_dropped} blank-text children "
+                    f"({len(group)} retained out of {len(raw_group)})"
+                )
 
+            parent_text = "\n\n".join(c["text"] for c in group)
             first_meta = group[0]["metadata"]
             parent = DocumentChunk(
                 document_id=doc_id,
@@ -503,41 +534,63 @@ class RAGService:
                 page_number=first_meta.get("page_number"),
                 section_title=", ".join(first_meta.get("headings", [])) or None,
                 chunk_type="parent",
+                # child_count now reflects what actually ends up in the DB,
+                # not the pre-filter raw input size.
                 chunk_metadata={"child_count": len(group)},
             )
-            self.db.add(parent)
-            await self.db.flush()  # Get parent.id for children
+            parent_groups.append((parent, group))
 
-            # Create child chunks with embeddings
-            async def _embed_child(chunk_data, parent_id):
-                text_content = chunk_data["text"]
-                if not text_content or not text_content.strip():
+        if not parent_groups:
+            return []
+
+        # Phase 2: single batched insert for all parents — 1 round trip,
+        # populates parent.id for every parent in the list.
+        parents = [p for p, _ in parent_groups]
+        self.db.add_all(parents)
+        await self.db.flush()
+
+        # Phase 3: embed every child concurrently, capturing the now-set parent.id.
+        # `group` is already non-blank-filtered in phase 1, so no blank
+        # guard needed here — None returns from `_embed_child` only on real
+        # embedding failures, not on text-shape rejection.
+        async def _embed_child(chunk_data: dict, parent_id: int) -> DocumentChunk | None:
+            text_content = chunk_data["text"]
+            embed_text = chunk_data.get("text_for_embedding", text_content)
+            async with sem:
+                try:
+                    embedding = await self.get_embedding(embed_text)
+                except Exception as e:
+                    logger.warning(f"Embedding-Fehler für Child-Chunk {chunk_data['chunk_index']}: {e}")
                     return None
-                embed_text = chunk_data.get("text_for_embedding", text_content)
-                async with sem:
-                    try:
-                        embedding = await self.get_embedding(embed_text)
-                    except Exception as e:
-                        logger.warning(f"Embedding-Fehler für Child-Chunk {chunk_data['chunk_index']}: {e}")
-                        return None
-                return DocumentChunk(
-                    document_id=doc_id,
-                    content=text_content,  # Store original text for display
-                    embedding=embedding,
-                    parent_chunk_id=parent_id,
-                    chunk_index=chunk_data["chunk_index"],
-                    page_number=chunk_data["metadata"].get("page_number"),
-                    section_title=", ".join(chunk_data["metadata"].get("headings", [])) or None,
-                    chunk_type=chunk_data["metadata"].get("chunk_type", "paragraph"),
-                    chunk_metadata=chunk_data["metadata"],
-                )
+            return DocumentChunk(
+                document_id=doc_id,
+                content=text_content,
+                embedding=embedding,
+                parent_chunk_id=parent_id,
+                chunk_index=chunk_data["chunk_index"],
+                page_number=chunk_data["metadata"].get("page_number"),
+                section_title=", ".join(chunk_data["metadata"].get("headings", [])) or None,
+                chunk_type=chunk_data["metadata"].get("chunk_type", "paragraph"),
+                chunk_metadata=chunk_data["metadata"],
+            )
 
-            child_results = await asyncio.gather(*[_embed_child(cd, parent.id) for cd in group])
-            children = [r for r in child_results if r is not None]
+        child_tasks = [
+            _embed_child(cd, parent.id)
+            for parent, group in parent_groups
+            for cd in group
+        ]
+        child_results = await asyncio.gather(*child_tasks)
 
+        # Reassemble [parent, ...its children, parent, ...its children, ...] —
+        # gather's order matches input order, so child_results[i:i+len(group)]
+        # are this parent's children. Drop None results (embedding failures).
+        all_objects: list[DocumentChunk] = []
+        cursor = 0
+        for parent, group in parent_groups:
             all_objects.append(parent)
-            all_objects.extend(children)
-
+            group_children = child_results[cursor:cursor + len(group)]
+            all_objects.extend(c for c in group_children if c is not None)
+            cursor += len(group)
         return all_objects
 
 
