@@ -1,10 +1,27 @@
 """
 Konfiguration und Settings
 """
+import os
 from functools import lru_cache
 
+from loguru import logger
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings
+
+
+# W13 — Names of fields whose Settings-class default is a placeholder
+# meant to fail loudly when running against any real environment. The
+# `Settings.warn_on_changeme_defaults()` validator reads each name's
+# CURRENT default off `Settings.model_fields[name].default` at runtime
+# and compares to the resolved value — no hand-maintained mirror string
+# that can silently drift if someone changes the default literal.
+#
+# Update this list when introducing a new placeholder-defaulted secret.
+_CHANGEME_FIELDS: tuple[str, ...] = (
+    "postgres_password",
+    "secret_key",
+    "default_admin_password",
+)
 
 
 class Settings(BaseSettings):
@@ -131,6 +148,12 @@ class Settings(BaseSettings):
     agent_router_model: str | None = None  # Dedicated router model (default: ollama_intent_model)
     agent_router_url: str | None = None    # Dedicated Ollama URL for router (default: agent_ollama_url)
     agent_orchestrator_enabled: bool = False  # Enable cross-MCP query orchestration (opt-in)
+    # W5 — previously hardcoded timeouts now configurable
+    agent_preselect_timeout: float = Field(default=10.0, ge=1.0, le=60.0)
+    """Timeout for tool pre-selection LLM call in agent_service.py:_preselect_tools.
+    Short JSON-only response, deterministic — keep low to fail fast."""
+    orchestrator_synthesis_timeout: float = Field(default=30.0, ge=5.0, le=300.0)
+    """Timeout for orchestrator's synthesis call (combine sub-agent results into one answer)."""
 
     # MCP Client (Model Context Protocol)
     mcp_enabled: bool = False             # Opt-in, disabled by default
@@ -139,6 +162,15 @@ class Settings(BaseSettings):
     mcp_connect_timeout: float = 10.0     # Connection timeout per server (seconds)
     mcp_call_timeout: float = 30.0        # Tool call timeout (seconds)
     mcp_max_response_size: int = Field(default=131072, ge=1024, le=524288)  # 128KB max response — accommodates list_correspondents on real corpora (~70KB at ~900 entries) without truncating mid-payload
+
+    # W5 — previously hardcoded timeouts now configurable
+    geocode_http_timeout: float = Field(default=8.0, ge=1.0, le=30.0)
+    """HTTP timeout for the Nominatim geocode httpx client in mcp_client.py."""
+    federation_synthesis_timeout: float = Field(default=30.0, ge=5.0, le=59.0)
+    """Federation responder synthesis timeout. Hard upper bound 59s because the
+    responder TTL is 60s and synthesis must fit inside that along with
+    retrieval and the poll-reply round trip. The Field constraint enforces
+    this, not just the comment."""
 
     # Agent Advanced
     agent_history_limit: int = Field(default=20, ge=1, le=100)       # Max history steps in agent loop
@@ -166,6 +198,12 @@ class Settings(BaseSettings):
 
     # Embedding
     rag_embedding_timeout: float = 30.0       # Timeout in seconds for embedding calls
+
+    # W5 — RAG eval LLM timeouts (previously hardcoded as 60 / 30 in rag_eval_service.py)
+    rag_eval_answer_timeout: float = Field(default=60.0, ge=10.0, le=300.0)
+    """Timeout for the eval pipeline's answer-generation LLM call."""
+    rag_eval_score_timeout: float = Field(default=30.0, ge=5.0, le=180.0)
+    """Timeout for the eval pipeline's per-criterion LLM-as-judge scoring call."""
 
     # Context Window Retrieval
     rag_context_window: int = 1               # Adjacent chunks per direction (0=disabled)
@@ -437,6 +475,52 @@ class Settings(BaseSettings):
             self.database_url = (
                 f"postgresql://{self.postgres_user}:{self.postgres_password.get_secret_value()}"
                 f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def warn_on_changeme_defaults(self) -> "Settings":
+        """W13 — Emit a loud WARNING for any secret/password field still set
+        to its placeholder default.
+
+        For each field name in `_CHANGEME_FIELDS`, compare the current
+        resolved value to the field's class-level default (read live from
+        `Settings.model_fields[name].default`). If they match, the env
+        override didn't take effect — i.e. the placeholder is in use.
+
+        Gated to non-development environments so dev/test runs aren't
+        spammed with a warning that exists to catch production-deploy
+        regressions. Trigger condition: `RENFIELD_ENV` is set to anything
+        other than the default `"development"` (e.g. `"production"`,
+        `"staging"`, or `"prod"`). Tests can opt in to the warning path
+        by setting RENFIELD_ENV explicitly.
+        """
+        env = os.getenv("RENFIELD_ENV", "development").lower()
+        if env in {"development", "dev", "test"}:
+            return self
+
+        offenders: list[str] = []
+        for field_name in _CHANGEME_FIELDS:
+            field_info = type(self).model_fields.get(field_name)
+            if field_info is None:
+                continue  # field renamed/removed — silent skip is intentional
+            placeholder_default = field_info.default
+            if isinstance(placeholder_default, SecretStr):
+                placeholder_default = placeholder_default.get_secret_value()
+            value = getattr(self, field_name, None)
+            if value is None:
+                continue
+            current = value.get_secret_value() if isinstance(value, SecretStr) else value
+            if current == placeholder_default:
+                offenders.append(field_name)
+
+        if offenders:
+            logger.warning(
+                f"⚠ INSECURE DEFAULT(S) IN USE — RENFIELD_ENV={env!r} but the "
+                f"following fields are still on their class-level placeholder "
+                f"default: {', '.join(offenders)}. Set them via env vars "
+                "(POSTGRES_PASSWORD, SECRET_KEY, DEFAULT_ADMIN_PASSWORD) or "
+                "Docker Secrets."
             )
         return self
 

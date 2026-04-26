@@ -756,7 +756,7 @@ class AgentService:
                     options=preselect_options,
                     **classification_kwargs,
                 ),
-                timeout=10.0,
+                timeout=settings.agent_preselect_timeout,
             )
             response_text = extract_response_content(raw_response) or ""
 
