@@ -363,6 +363,36 @@ def _serialize_for_prompt(data: any, budget_chars: int = 0) -> str:
     return serialized
 
 
+# LLM option defaults — used as fallback if prompts/agent.yaml lacks the key.
+# YAML always wins when present (keys defined at the bottom of agent.yaml).
+# Centralizing the defaults here so they aren't duplicated as inline literals
+# at each call site, where they previously read like the source of truth.
+_DEFAULT_LLM_OPTIONS = {
+    "temperature": 0.1, "top_p": 0.2, "num_predict": 2048, "num_ctx": 32768,
+}
+_DEFAULT_LLM_OPTIONS_RETRY = {
+    "temperature": 0.3, "top_p": 0.4, "num_predict": 2048, "num_ctx": 32768,
+}
+_DEFAULT_LLM_OPTIONS_SUMMARY = {
+    "temperature": 0.3, "num_predict": 1500, "num_ctx": 32768,
+}
+_DEFAULT_LLM_OPTIONS_TOOL_PRESELECT = {
+    "temperature": 0, "num_predict": 120, "num_ctx": 4096,
+}
+
+
+def _llm_options_or_default(prompt_key: str, fallback: dict) -> dict:
+    """Resolve LLM options from prompts/agent.yaml, falling back to a default.
+
+    Uses explicit `is None` rather than truthiness so an empty/falsy YAML
+    value (`{}`, `None` from a missing key, etc.) is distinguished — an
+    explicit `{}` from YAML is honoured (no inherited options),
+    while a missing key falls through to the in-code fallback.
+    """
+    cfg = prompt_manager.get_config("agent", prompt_key)
+    return cfg if cfg is not None else fallback
+
+
 # Fields that contain large binary data (base64-encoded)
 _BLOB_FIELDS = {"content_base64"}
 
@@ -716,11 +746,14 @@ class AgentService:
 
         try:
             classification_kwargs = get_classification_chat_kwargs(agent_model)
+            preselect_options = _llm_options_or_default(
+                "llm_options_tool_preselect", _DEFAULT_LLM_OPTIONS_TOOL_PRESELECT,
+            )
             raw_response = await asyncio.wait_for(
                 agent_client.chat(
                     model=agent_model,
                     messages=[{"role": "user", "content": preselect_prompt}],
-                    options={"temperature": 0, "num_predict": 120, "num_ctx": 4096},
+                    options=preselect_options,
                     **classification_kwargs,
                 ),
                 timeout=10.0,
@@ -1163,13 +1196,10 @@ class AgentService:
             content=prompt_manager.get("agent", "thinking_message", lang=lang),
         )
 
-        # Get LLM options from config
-        llm_options = prompt_manager.get_config("agent", "llm_options") or {
-            "temperature": 0.1, "top_p": 0.2, "num_predict": 2048, "num_ctx": 32768
-        }
-        llm_options_retry = prompt_manager.get_config("agent", "llm_options_retry") or {
-            "temperature": 0.3, "top_p": 0.4, "num_predict": 2048, "num_ctx": 32768
-        }
+        # Get LLM options from config (YAML wins; module-level constants are
+        # the fallback if a key is missing from prompts/agent.yaml).
+        llm_options = _llm_options_or_default("llm_options", _DEFAULT_LLM_OPTIONS)
+        llm_options_retry = _llm_options_or_default("llm_options_retry", _DEFAULT_LLM_OPTIONS_RETRY)
         json_system_message = prompt_manager.get("agent", "json_system_message", lang=lang)
 
         # Native function calling — opt-in per role AND requires the agent client
@@ -1722,10 +1752,10 @@ class AgentService:
             results=results_text
         )
 
-        # Get LLM options for summary
-        llm_options_summary = prompt_manager.get_config("agent", "llm_options_summary") or {
-            "temperature": 0.3, "num_predict": 1500, "num_ctx": 32768
-        }
+        # Get LLM options for summary (YAML wins; module-level constant is fallback)
+        llm_options_summary = _llm_options_or_default(
+            "llm_options_summary", _DEFAULT_LLM_OPTIONS_SUMMARY,
+        )
         summary_system = prompt_manager.get("agent", "summary_system_message", lang=lang)
 
         client = agent_client or ollama.client
