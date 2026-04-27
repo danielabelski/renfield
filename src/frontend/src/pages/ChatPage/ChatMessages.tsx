@@ -1,0 +1,363 @@
+import { useRef, useEffect } from 'react';
+import type { ReactElement } from 'react';
+import { useTranslation } from 'react-i18next';
+import { Volume2, Loader, FileText, AlertCircle, CheckCircle, Search, CheckCircle2, XCircle, ChevronRight, Radio } from 'lucide-react';
+import AdaptiveCardRenderer from '../../components/AdaptiveCardRenderer';
+import IntentCorrectionButton from '../../components/IntentCorrectionButton';
+import AttachmentQuickActions from './AttachmentQuickActions';
+import EmailForwardDialog from './EmailForwardDialog';
+import { useChatContext } from './context/ChatContext';
+
+const IMAGE_URL_RE = /https?:\/\/[^\s)]+?\/Items\/[^\s)]+?\/Images\/[^\s)]+|https?:\/\/[^\s)]+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s)]*)?/i;
+
+function isImageUrl(url: string): boolean {
+  return IMAGE_URL_RE.test(url);
+}
+
+type ContentPart =
+  | { type: 'text'; content: string }
+  | { type: 'link'; label: string; url: string }
+  | { type: 'image'; url: string };
+
+function renderMessageContent(text: string): ReactElement {
+  // Combined pattern: markdown links [text](url), image URLs, or plain URLs
+  const pattern = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|https?:\/\/[^\s)]+?\/Items\/[^\s)]+?\/Images\/[^\s)]+|https?:\/\/[^\s)]+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s)]*)?|https?:\/\/[^\s)]+/gi;
+
+  const parts: ContentPart[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push({ type: 'text', content: text.slice(lastIndex, match.index) });
+    }
+    if (match[1] && match[2]) {
+      // Markdown link [text](url)
+      parts.push({ type: 'link', label: match[1], url: match[2] });
+    } else if (isImageUrl(match[0])) {
+      parts.push({ type: 'image', url: match[0] });
+    } else {
+      // Plain URL
+      parts.push({ type: 'link', label: match[0], url: match[0] });
+    }
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < text.length) {
+    parts.push({ type: 'text', content: text.slice(lastIndex) });
+  }
+
+  if (parts.length === 1 && parts[0].type === 'text') {
+    return <p className="whitespace-pre-wrap">{text}</p>;
+  }
+
+  return (
+    <div className="whitespace-pre-wrap">
+      {parts.map((part, i) =>
+        part.type === 'image' ? (
+          <img
+            key={i}
+            src={part.url}
+            alt="Album Art"
+            className="rounded-lg max-w-[200px] max-h-[200px] my-2 shadow-md"
+            loading="lazy"
+            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+          />
+        ) : part.type === 'link' ? (
+          <a
+            key={i}
+            href={part.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-primary-600 dark:text-primary-400 underline hover:text-primary-800 dark:hover:text-primary-300"
+          >{part.label}</a>
+        ) : (
+          <span key={i}>{part.content}</span>
+        )
+      )}
+    </div>
+  );
+}
+
+export default function ChatMessages() {
+  const { t } = useTranslation();
+  const {
+    messages, loading, historyLoading, speakText, handleFeedbackSubmit,
+    actionLoading, actionResult, indexToKb, sendToPaperless, handleSummarize,
+    handleSendViaEmail, emailDialog, confirmSendViaEmail, cancelEmailDialog,
+    sendMessage,
+  } = useChatContext();
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+
+  // Auto-scroll to bottom when messages change
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  return (
+    <div
+      className="flex-1 overflow-y-auto card space-y-4 mb-4 mx-4 md:mx-0"
+      role="log"
+      aria-live="polite"
+      aria-label={t('chat.conversations')}
+      aria-relevant="additions"
+    >
+      {/* History Loading State */}
+      {historyLoading && (
+        <div className="flex items-center justify-center py-8">
+          <Loader className="w-6 h-6 text-gray-500 dark:text-gray-400 animate-spin mr-2" aria-hidden="true" />
+          <span className="text-gray-500 dark:text-gray-400">{t('chat.loadingConversation')}</span>
+        </div>
+      )}
+
+      {/* Empty State */}
+      {!historyLoading && messages.length === 0 && (
+        <div className="text-center py-16">
+          <img src="/logo-icon.svg" alt="" className="w-20 h-20 mx-auto mb-6 opacity-30" aria-hidden="true" />
+          <h2 className="font-display text-2xl text-gray-400 dark:text-gray-500 mb-2">{t('chat.startConversation')}</h2>
+          <p className="text-sm text-gray-400 dark:text-gray-500 mb-6">
+            {t('chat.useTextOrMic')}
+          </p>
+          <div className="flex flex-wrap justify-center gap-2">
+            {(((): string[] => {
+              try {
+                const custom = import.meta.env.VITE_CHAT_STARTERS;
+                if (custom) return JSON.parse(custom) as string[];
+              } catch { /* fall through */ }
+              return [t('chat.exampleWeather'), t('chat.exampleLight'), t('chat.exampleMusic')];
+            })()).map((example: string) => (
+              <button
+                key={example}
+                onClick={() => sendMessage?.(example, false)}
+                className="px-4 py-2 rounded-full text-sm border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:border-accent-400 hover:text-accent-600 dark:hover:border-accent-500 dark:hover:text-accent-400 transition-colors"
+              >
+                {example}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Messages */}
+      {messages.map((message, index) => (
+        <div
+          key={index}
+          className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+          role="article"
+          aria-label={message.role === 'user' ? t('chat.yourMessage') : t('chat.assistantResponse')}
+        >
+          <div
+            className={`max-w-[70%] px-4 py-2 rounded-lg ${
+              message.role === 'user'
+                ? 'bg-primary-600 text-white'
+                : 'bg-gray-100 text-gray-900 dark:bg-gray-700 dark:text-gray-100'
+            }`}
+          >
+            {/* Agent Steps (collapsible) */}
+            {message.agentSteps && message.agentSteps.length > 0 && (() => {
+              const toolCalls = message.agentSteps.filter(s => s.type === 'tool_call');
+              const results = message.agentSteps.filter(s => s.type === 'tool_result');
+              const hasError = results.some(s => !s.success);
+              const isStillRunning = toolCalls.some(
+                tc => !message.agentSteps.find(s => s.type === 'tool_result' && s.step === tc.step)
+              );
+
+              return (
+                <details className="mb-2 group" open={isStillRunning || undefined}>
+                  <summary className="flex items-center gap-1.5 text-sm cursor-pointer select-none list-none text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300">
+                    <ChevronRight className="w-4 h-4 flex-shrink-0 transition-transform group-open:rotate-90" aria-hidden="true" />
+                    {isStillRunning ? (
+                      <>
+                        <Loader className="w-4 h-4 animate-spin text-accent-500 dark:text-accent-400" aria-hidden="true" />
+                        <span>{t('chat.agentThinking')}</span>
+                      </>
+                    ) : (
+                      <>
+                        {hasError
+                          ? <XCircle className="w-4 h-4 flex-shrink-0 text-red-500 dark:text-red-400" aria-hidden="true" />
+                          : <CheckCircle2 className="w-4 h-4 flex-shrink-0 text-green-500 dark:text-green-400" aria-hidden="true" />
+                        }
+                        <span>{t('chat.agentStepsCount', { count: toolCalls.length })}</span>
+                      </>
+                    )}
+                  </summary>
+                  <div className="mt-1.5 ml-5 space-y-1 border-l-2 border-accent-400 dark:border-accent-600 pl-2.5 bg-gray-100/50 dark:bg-gray-800/50 rounded-lg p-2.5">
+                    {message.agentSteps.map((step, stepIdx) => (
+                      <div key={stepIdx} className="flex items-start gap-1.5 text-sm">
+                        {step.type === 'tool_call' && (
+                          <>
+                            <Search className="w-4 h-4 mt-0.5 flex-shrink-0 text-accent-500 dark:text-accent-400" aria-hidden="true" />
+                            <span className="text-gray-600 dark:text-gray-300">
+                              <span className="font-medium">{step.tool?.split('.').pop()}</span>
+                              {step.reason && <span className="ml-1 text-gray-400 dark:text-gray-500">— {step.reason}</span>}
+                            </span>
+                            {!message.agentSteps.find(s => s.type === 'tool_result' && s.step === step.step) && (
+                              <Loader className="w-4 h-4 mt-0.5 animate-spin text-accent-500 dark:text-accent-400" aria-hidden="true" />
+                            )}
+                          </>
+                        )}
+                        {step.type === 'tool_result' && (
+                          <>
+                            {step.success
+                              ? <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0 text-green-500 dark:text-green-400" aria-hidden="true" />
+                              : <XCircle className="w-4 h-4 mt-0.5 flex-shrink-0 text-red-500 dark:text-red-400" aria-hidden="true" />
+                            }
+                            <span className={`${step.success ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                              {step.tool?.split('.').pop()}{step.success ? '' : ` — ${step.message || 'failed'}`}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              );
+            })()}
+
+            {/* F4c — federation progress: one status line per remote peer */}
+            {message.federationProgress && Object.keys(message.federationProgress).length > 0 && (
+              <ul className="mb-2 space-y-1" aria-live="polite">
+                {Object.entries(message.federationProgress).map(([pubkey, entry]) => (
+                  <li
+                    key={pubkey}
+                    className="flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-300"
+                  >
+                    <Radio className="w-4 h-4 flex-shrink-0 text-accent-500 dark:text-accent-400 animate-pulse" aria-hidden="true" />
+                    <span>
+                      {t(`chat.federationProgress.${entry.label}`, {
+                        name: entry.peer_display_name,
+                        defaultValue: t('chat.federationProgress.fallback', { name: entry.peer_display_name }),
+                      })}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {message.role === 'assistant' ? renderMessageContent(message.content) : <p className="whitespace-pre-wrap">{message.content}</p>}
+
+            {/* Adaptive Card (from WebSocket card message) */}
+            {message.card && (
+              <div className="mt-2">
+                <AdaptiveCardRenderer card={message.card} />
+              </div>
+            )}
+
+            {/* Attachment chips */}
+            {message.attachments && message.attachments.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {message.attachments.map(att => (
+                  <div
+                    key={att.id}
+                    className={`flex items-center space-x-1 px-2 py-1 rounded text-xs ${
+                      att.status === 'completed'
+                        ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300'
+                        : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'
+                    }`}
+                  >
+                    <FileText className="w-3 h-3 flex-shrink-0" aria-hidden="true" />
+                    <span className="truncate max-w-[140px]">{att.filename}</span>
+                    {att.file_size && (
+                      <span className="text-[10px] opacity-70">
+                        ({att.file_size < 1024 * 1024
+                          ? `${Math.round(att.file_size / 1024)} KB`
+                          : `${(att.file_size / (1024 * 1024)).toFixed(1)} MB`
+                        })
+                      </span>
+                    )}
+                    {att.indexing
+                      ? <span title={t('chat.documentIndexing')} className="inline-flex"><Loader className="w-3 h-3 flex-shrink-0 animate-spin" aria-hidden="true" /></span>
+                      : att.indexed
+                        ? <span className="inline-flex items-center px-1 rounded text-[9px] font-semibold bg-green-200 text-green-900 dark:bg-green-800 dark:text-green-100" title={t('chat.documentIndexed')}>KB</span>
+                        : att.status === 'completed'
+                          ? <CheckCircle className="w-3 h-3 flex-shrink-0" aria-hidden="true" />
+                          : <AlertCircle className="w-3 h-3 flex-shrink-0" aria-hidden="true" />
+                    }
+                    <AttachmentQuickActions
+                      attachment={att}
+                      onIndexToKb={indexToKb}
+                      onSendToPaperless={sendToPaperless}
+                      onSendViaEmail={handleSendViaEmail}
+                      onSummarize={handleSummarize}
+                      actionLoading={actionLoading}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* TTS Button for assistant messages */}
+            {message.role === 'assistant' && !message.streaming && speakText && (
+              <button
+                onClick={() => speakText(message.content)}
+                className="mt-2 text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-white flex items-center space-x-1"
+                aria-label={t('chat.readAloud')}
+              >
+                <Volume2 className="w-3 h-3" aria-hidden="true" />
+                <span>{t('chat.readAloud')}</span>
+              </button>
+            )}
+
+            {/* Intent info + Correction Button */}
+            {message.role === 'assistant' && !message.streaming && message.intentInfo && (
+              <IntentCorrectionButton
+                messageText={message.userQuery || ''}
+                detectedIntent={message.intentInfo.intent}
+                detectedConfidence={message.intentInfo.confidence}
+                feedbackType="intent"
+                onCorrect={handleFeedbackSubmit}
+                proactive={message.feedbackRequested === true}
+              />
+            )}
+          </div>
+        </div>
+      ))}
+
+      {/* Loading Indicator */}
+      {loading && (
+        <div className="flex justify-start" role="status" aria-label="Renfield denkt nach">
+          <div className="bg-gray-200 dark:bg-gray-700 px-4 py-3 rounded-lg flex items-center space-x-1.5">
+            <span className="w-2 h-2 rounded-full bg-gray-400 dark:bg-gray-500 animate-typing-dot" />
+            <span className="w-2 h-2 rounded-full bg-gray-400 dark:bg-gray-500 animate-typing-dot" />
+            <span className="w-2 h-2 rounded-full bg-gray-400 dark:bg-gray-500 animate-typing-dot" />
+            <span className="sr-only">{t('chat.thinkingStatus')}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Quick action result toast */}
+      {actionResult && (
+        <div
+          className={`mx-auto px-3 py-1.5 rounded text-xs font-medium ${
+            actionResult.success
+              ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300'
+              : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'
+          }`}
+          role="status"
+        >
+          {actionResult.success
+            ? (actionResult.type === 'indexing' ? t('chat.indexingSuccess')
+              : actionResult.type === 'email' ? t('chat.emailSuccess')
+              : t('chat.paperlessSuccess'))
+            : (actionResult.type === 'indexing' ? t('chat.indexingFailed')
+              : actionResult.type === 'email' ? t('chat.emailFailed')
+              : t('chat.paperlessFailed'))
+          }
+        </div>
+      )}
+
+      {/* Email Forward Dialog */}
+      {emailDialog && (
+        <EmailForwardDialog
+          open={!!emailDialog}
+          filename={emailDialog.filename}
+          onConfirm={confirmSendViaEmail}
+          onCancel={cancelEmailDialog}
+        />
+      )}
+
+      {/* Scroll anchor */}
+      <div ref={messagesEndRef} />
+    </div>
+  );
+}
