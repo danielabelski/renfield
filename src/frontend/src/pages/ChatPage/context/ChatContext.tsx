@@ -31,6 +31,11 @@ import type { Conversation } from '../../../types/chat';
 import { useConfirmDialog } from '../../../components/ConfirmDialog';
 
 const SESSION_STORAGE_KEY = 'renfield_current_session';
+// How long sendMessageInternal waits for the WebSocket handshake before
+// falling back to /api/chat/send. Long enough to cover normal handshake
+// latency on first paint, short enough to stay within human-perceptible
+// time-to-first-byte for clients where the WS is genuinely blocked.
+const WS_HANDSHAKE_GRACE_MS = 3000;
 
 type WakeWordStatus = 'idle' | 'listening' | 'recording' | 'activated';
 
@@ -351,6 +356,16 @@ export function ChatProvider({ children }: ChatProviderProps) {
   const sendMessageInternalRef = useRef<(text: string, fromVoice?: boolean) => Promise<void>>(
     async () => undefined,
   );
+
+  // AbortController used to cancel any in-flight WebSocket-handshake wait
+  // (see sendMessageInternal). Aborted on unmount so we don't continue to
+  // touch state from a destroyed component.
+  const wsWaitAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    return () => {
+      wsWaitAbortRef.current?.abort();
+    };
+  }, []);
 
   // Handle wake word detection
   const handleWakeWordDetected = useCallback(async (keyword: string, score: number) => {
@@ -690,7 +705,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
   }, []);
 
   // WebSocket hook
-  const { wsConnected, sendMessage: wsSendMessage, isReady } = useChatWebSocket({
+  const { wsConnected, sendMessage: wsSendMessage, isReady, whenReady } = useChatWebSocket({
     onStreamChunk: handleStreamChunk,
     onStreamDone: handleStreamDone,
     onAction: handleAction,
@@ -856,16 +871,35 @@ export function ChatProvider({ children }: ChatProviderProps) {
       });
     }
 
-    if (isReady()) {
-      const message = {
-        type: 'text',
-        content: text,
-        session_id: sessionId,
-        use_rag: useRag,
-        knowledge_base_id: selectedKnowledgeBase,
-        ...(completedIds.length > 0 && { attachment_ids: completedIds }),
-      };
-      wsSendMessage(message);
+    // Brief grace period for the WebSocket handshake before falling back
+    // to REST. The two paths are not equivalent: the WS handler runs the
+    // full pipeline (cross-MCP orchestrator, sub-agents, Adaptive Card
+    // protocol); /api/chat/send is a leaner ranked-intents path that
+    // never invokes the orchestrator. Without this wait, a client that
+    // submits within the first ~50 ms of page load races its own WS
+    // handshake and silently lands on REST — producing inferior answers
+    // for cross-domain queries. The wait resolves immediately when the
+    // socket is already OPEN, so steady-state UX is unaffected.
+    wsWaitAbortRef.current?.abort();
+    const ac = new AbortController();
+    wsWaitAbortRef.current = ac;
+    if (!isReady()) {
+      await whenReady(WS_HANDSHAKE_GRACE_MS, ac.signal);
+    }
+
+    const wsMessage = {
+      type: 'text',
+      content: text,
+      session_id: sessionId,
+      use_rag: useRag,
+      knowledge_base_id: selectedKnowledgeBase,
+      ...(completedIds.length > 0 && { attachment_ids: completedIds }),
+    };
+
+    // wsSendMessage re-checks readyState before .send() and returns false
+    // if the socket isn't OPEN, so we close the race between whenReady()
+    // resolving true and the actual transmit.
+    if (isReady() && wsSendMessage(wsMessage)) {
       setRagSources([]);
     } else {
       try {
@@ -882,7 +916,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
         setLoading(false);
       }
     }
-  }, [sessionId, messages.length, useRag, selectedKnowledgeBase, isReady, wsSendMessage, addConversation, attachments, t]);
+  }, [sessionId, messages.length, useRag, selectedKnowledgeBase, isReady, whenReady, wsSendMessage, addConversation, attachments, t]);
 
   // Wire ref so handleTranscription (declared above) can call sendMessageInternal
   useEffect(() => {
