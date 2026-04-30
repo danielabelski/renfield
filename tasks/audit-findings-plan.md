@@ -185,9 +185,8 @@ Status nach Branch `audit/k1-k7` (PR aus diesem Branch schliesst K1-K7 komplett)
 - `ChatPage/index.jsx` passes 12 props to ChatInput
 - Fix: Extract chat input state into Context
 
-### E14. ESLint React version hardcoded as 18.2
-- `.eslintrc.cjs` says 18.2 but React 19.2.3 is installed
-- Fix: Update to `detect` or `19`
+### E14. ESLint React version hardcoded as 18.2 — RESOLVED (already)
+- Verified during E17 sweep: `src/frontend/.eslintrc.cjs:22` already reads `version: 'detect'`. The audit's "hardcoded 18.2" claim was stale; nothing to change.
 
 ### E15. tsconfig strict mode disabled
 - `tsconfig.json` has `strict: false`
@@ -198,9 +197,11 @@ Status nach Branch `audit/k1-k7` (PR aus diesem Branch schliesst K1-K7 komplett)
 - `piper_voice` — renamed to `piper_default_voice` (env: `PIPER_DEFAULT_VOICE`) to make its role explicit: fallback voice when the requested language has no entry in `piper_voices`. Not dead code, just a misleading name.
 - `ollama_model` — re-classified: NOT dead. It is the global model fallback referenced by 13+ services as `settings.X_model or settings.ollama_model` (chat_handler, knowledge_graph_service, kg_retrieval, conversation_memory_service, agent_service, agent_router, orchestrator, notification_service, federation_query_responder, paperless_audit_service, ollama_service, main health check). The original audit's claim that `ollama_chat_model` replaces it is wrong — the two coexist as fallback-chain roles.
 
-### E17. Redis URL not parameterized in docker-compose
-- `docker-compose.yml:77` — hardcoded `redis://redis:6379`
-- Fix: Use `${REDIS_URL:-redis://redis:6379}`
+### E17. Redis URL not parameterized in docker-compose — RESOLVED
+- All 6 platform `REDIS_URL` instances across `docker-compose.yml` (2), `docker-compose.prod.yml` (2), `docker-compose.prod-cpu.yml` (1), `docker-compose.dev.yml` (1) now use `${REDIS_URL:-redis://redis:6379}`, matching the existing `OLLAMA_URL` pattern.
+- Out of scope: Evolution-API's `CACHE_REDIS_URI: redis://redis:6379/3` (docker-compose.yml:267) keeps its service-specific DB-index suffix; parameterizing it as `${REDIS_URL:-…}/3` would break a future external-Redis deploy where `REDIS_URL` already includes a DB index. If that ever lands, introduce a dedicated `EVOLUTION_REDIS_URI` setting.
+- Out of scope: `k8s/configmap.yaml:11` keeps `redis://redis:6379` hardcoded — k8s configmaps are environment-specific by convention; override per environment if needed.
+- Out of scope: `.github/workflows/ci.yml` uses `redis://localhost:6379` for GitHub Actions service containers, which is correct for that runtime.
 
 ### E18. Frigate MQTT defaults hardcoded
 - `integrations/frigate.py:74` — broker="localhost", port=1883
@@ -256,7 +257,7 @@ Status nach Branch `audit/k1-k7` (PR aus diesem Branch schliesst K1-K7 komplett)
 - [ ] W11: Add Prettier
 - [ ] E11: React Query for data fetching
 - [x] E12: i18n hardcoded strings — ErrorBoundary/ConfirmDialog cleared by W10; ChatMessages alt + 5 dev logs translated; RoomOutputSettings filed as separate follow-up
-- [ ] E14: ESLint React version
+- [x] E14: ESLint React version — verified `'detect'` already in `.eslintrc.cjs:22` (audit was stale)
 
 ### Phase 5: Cleanup
 - [x] E16: Legacy config fields — `plugins_*`/`music_enabled`/`spotify_*` already gone; `piper_voice` renamed to `piper_default_voice`; `ollama_model` re-classified as intentional fallback infrastructure (not dead)
