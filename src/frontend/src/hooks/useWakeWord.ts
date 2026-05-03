@@ -53,7 +53,7 @@ interface UseWakeWordOptions {
 }
 
 // Hook return type
-interface UseWakeWordResult {
+export interface UseWakeWordResult {
   isEnabled: boolean;
   isListening: boolean;
   isLoading: boolean;
