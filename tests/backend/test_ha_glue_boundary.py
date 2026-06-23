@@ -72,6 +72,13 @@ ALLOWED_IMPORTERS = frozenset({
     # lazy-pattern rule as the compat shim above. Surfaced once the boundary
     # test's BACKEND_ROOT was fixed to resolve the real source tree.
     "services/whisper_prompt_builder.py",
+    # (2) Lazy, exception-guarded fallback — daypart_service._resolve_tz() does a
+    # function-body `from ha_glue.utils.config import ha_glue_settings` inside a
+    # try/except solely to source a timezone when `settings.daypart_timezone` is
+    # empty. Deferred + guarded ("ha_glue may be absent" → falls back to UTC), so
+    # a platform-only deploy never reaches it. Same lazy-pattern rule as the shims
+    # above.
+    "services/daypart_service.py",
 })
 
 

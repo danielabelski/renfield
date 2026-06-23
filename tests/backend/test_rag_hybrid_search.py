@@ -320,37 +320,52 @@ class TestFTSReindex:
         db = AsyncMock()
         return RAGService(db)
 
+    @staticmethod
+    def _mock_engine():
+        """Mock async engine for reindex_fts: `async with engine.connect() as conn:
+        conn = await conn.execution_options(...); await conn.execute(text(...))`.
+        Returns (engine, conn) so tests can assert on conn.execute."""
+        conn = AsyncMock()
+        conn.execution_options = AsyncMock(return_value=conn)
+        conn.execute = AsyncMock()
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=conn)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        engine = MagicMock()
+        engine.connect = MagicMock(return_value=cm)
+        return engine, conn
+
     @pytest.mark.unit
-    async def test_reindex_fts_returns_count(self, rag_service):
-        """reindex_fts returns the count of updated chunks."""
-        mock_result = MagicMock()
-        mock_result.rowcount = 42
-        rag_service.db.execute = AsyncMock(return_value=mock_result)
+    async def test_reindex_fts_rebuilds_gin_index(self, rag_service):
+        """reindex_fts issues REINDEX INDEX CONCURRENTLY on the GIN index.
 
-        with patch("services.rag_service.settings") as mock_settings:
-            mock_settings.rag_hybrid_fts_config = "simple"
-
+        Post-pc20260529 the search_vector is a GENERATED STORED column, so
+        there is no app-side row repopulation — reindex_fts just rebuilds the
+        GIN index via a fresh AUTOCOMMIT engine connection (REINDEX CONCURRENTLY
+        cannot run inside a transaction)."""
+        engine, conn = self._mock_engine()
+        with patch("services.database.engine", engine):
             result = await rag_service.reindex_fts()
 
-        assert result["updated_count"] == 42
-        assert result["fts_config"] == "simple"
+        assert result["status"] == "ok"
+        assert result["index"] == "idx_document_chunks_search_vector_gin"
+        assert "duration_ms" in result
+        # AUTOCOMMIT isolation + a REINDEX CONCURRENTLY statement were issued.
+        conn.execution_options.assert_awaited_once_with(isolation_level="AUTOCOMMIT")
+        sql = str(conn.execute.await_args[0][0])
+        assert "REINDEX INDEX CONCURRENTLY" in sql
+        assert "idx_document_chunks_search_vector_gin" in sql
 
     @pytest.mark.unit
-    async def test_reindex_fts_uses_config(self, rag_service):
-        """reindex_fts uses the configured FTS config."""
-        mock_result = MagicMock()
-        mock_result.rowcount = 0
-        rag_service.db.execute = AsyncMock(return_value=mock_result)
+    async def test_reindex_fts_runs_outside_transaction(self, rag_service):
+        """The rebuild must use a dedicated AUTOCOMMIT connection, not self.db
+        (whose request-scoped session is in an autobegun transaction)."""
+        engine, conn = self._mock_engine()
+        with patch("services.database.engine", engine):
+            await rag_service.reindex_fts()
 
-        with patch("services.rag_service.settings") as mock_settings:
-            mock_settings.rag_hybrid_fts_config = "german"
-
-            result = await rag_service.reindex_fts()
-
-        assert result["fts_config"] == "german"
-        # Verify SQL was called with german config
-        call_args = rag_service.db.execute.call_args
-        assert call_args[0][1]["fts_config"] == "german"
+        engine.connect.assert_called_once()
+        conn.execution_options.assert_awaited_once_with(isolation_level="AUTOCOMMIT")
 
 
 # =============================================================================
@@ -380,7 +395,9 @@ class TestBM25OrQuery:
         call_args = rag_retrieval.db.execute.call_args
         params = call_args[0][1]
         assert params["or_query"] == "Rechnungen OR 2022 OR Stirkenbend"
-        assert params["fts_config"] == "german"
+        # NOTE: `fts_config` is no longer a bound param — search now runs against
+        # the GENERATED STORED `search_vector` column (fixed config baked in at
+        # the column definition), so the query doesn't parameterize the config.
 
     @pytest.mark.unit
     async def test_bm25_single_word_query(self, rag_retrieval):

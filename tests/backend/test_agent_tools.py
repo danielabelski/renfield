@@ -11,16 +11,20 @@ import pytest
 from services.agent_tools import AgentToolRegistry, ToolDefinition
 
 # The registry always registers the platform-owned internal tools in
-# __init__ via _register_internal_tools(). There are three of them:
-#   internal.knowledge_search
-#   internal.forward_attachment_to_paperless
-#   internal.paperless_commit_upload
-# Tests that count tools or assert an "empty" registry must account for
-# these baseline entries.
+# __init__ via _register_internal_tools() — the union of KNOWLEDGE_TOOL,
+# MEMORY_LIST_TOOL, CHAT_UPLOAD_TOOLS and WIDGET_TOOLS. Tests that count
+# tools or assert an "empty" registry must account for these baseline
+# entries. Keep this set in sync when a platform internal.* tool is added
+# (ha_glue-registered tools come via the register_tools hook and are NOT
+# in this baseline).
 INTERNAL_TOOL_NAMES = {
-    "internal.knowledge_search",
-    "internal.forward_attachment_to_paperless",
-    "internal.paperless_commit_upload",
+    "internal.knowledge_search",          # KNOWLEDGE_TOOL
+    "internal.list_my_memories",          # MEMORY_LIST_TOOL
+    "internal.forward_attachment_to_paperless",  # CHAT_UPLOAD_TOOLS
+    "internal.paperless_commit_upload",   # CHAT_UPLOAD_TOOLS
+    "internal.render_table",              # WIDGET_TOOLS
+    "internal.render_list",               # WIDGET_TOOLS
+    "internal.weather_widget",            # WIDGET_TOOLS
 }
 NUM_INTERNAL_TOOLS = len(INTERNAL_TOOL_NAMES)
 
