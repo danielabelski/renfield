@@ -28,7 +28,8 @@
     "continue": "Continue",
     "back": "Back",
     "done": "Done",
-    "clear": "Clear"
+    "clear": "Clear",
+    "daysShort": "{{days}}d"
   },
   "nav": {
     "chat": "Chat",
@@ -771,7 +772,57 @@
     "selectAll": "Select all",
     "clear": "Clear",
     "systemRole": "System Role",
-    "systemRoleInfo": "This is a system role. You can modify its permissions but cannot rename or delete it."
+    "systemRoleInfo": "This is a system role. You can modify its permissions but cannot rename or delete it.",
+    "categories": {
+      "knowledgeBases": {
+        "name": "Knowledge Bases",
+        "description": "Access to knowledge base documents"
+      },
+      "homeAssistant": {
+        "name": "Home Assistant",
+        "description": "Smart home device control"
+      },
+      "cameras": {
+        "name": "Cameras",
+        "description": "Camera and video access"
+      },
+      "conversations": {
+        "name": "Conversations",
+        "description": "Chat history access"
+      },
+      "roomsDevices": {
+        "name": "Rooms & Devices",
+        "description": "Room and device management"
+      },
+      "speakers": {
+        "name": "Speakers",
+        "description": "Voice profile management"
+      },
+      "administration": {
+        "name": "Administration",
+        "description": "System administration"
+      }
+    },
+    "permDesc": {
+      "kb_none": "No access to knowledge bases",
+      "kb_own": "Access only own knowledge bases",
+      "kb_shared": "Access own and shared knowledge bases",
+      "kb_all": "Full access to all knowledge bases",
+      "ha_none": "No access to Home Assistant",
+      "ha_read": "View device states only",
+      "ha_control": "Control devices (on/off)",
+      "ha_full": "Full control including services",
+      "cam_none": "No camera access",
+      "cam_view": "View camera events",
+      "cam_full": "Full camera access including snapshots",
+      "chat_own": "Access only own conversations",
+      "chat_all": "Access all conversations",
+      "rooms_read": "View rooms and devices",
+      "rooms_manage": "Manage rooms and devices",
+      "speakers_own": "Manage own speaker profile",
+      "speakers_all": "Manage all speaker profiles",
+      "admin": "Full system administration"
+    }
   },
   "integrations": {
     "title": "Integrations",
@@ -1800,6 +1851,21 @@
       "degraded": "Degraded",
       "down": "Down",
       "unknown": "Unknown"
+    }
+  },
+  "routing": {
+    "title": "Routing Dashboard",
+    "subtitle": "Recent routing decisions across all channels",
+    "classificationLayers": "Classification Layers",
+    "empty": "No routing traces found",
+    "col": {
+      "time": "Time",
+      "message": "Message",
+      "domain": "Domain",
+      "layer": "Layer",
+      "confidence": "Confidence",
+      "entities": "Entities",
+      "feedback": "Feedback"
     }
   }
 }

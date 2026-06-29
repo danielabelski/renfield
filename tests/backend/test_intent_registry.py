@@ -59,6 +59,46 @@ class TestIntentDef:
         assert intent.get_examples("de") == ["Beispiel 1", "Beispiel 2"]
         assert intent.get_examples("en") == ["Example 1", "Example 2"]
 
+    def test_get_description_italian(self):
+        """Italian description is returned when provided (#628)."""
+        intent = IntentDef(
+            name="test.intent",
+            description_de="Deutsche Beschreibung",
+            description_en="English description",
+            description_it="Descrizione italiana",
+        )
+        assert intent.get_description("it") == "Descrizione italiana"
+
+    def test_get_description_italian_falls_back_to_german(self):
+        """Italian falls back to German when no Italian string is set (#628)."""
+        intent = IntentDef(
+            name="test.intent",
+            description_de="Deutsche Beschreibung",
+            description_en="English description",
+        )
+        assert intent.get_description("it") == "Deutsche Beschreibung"
+
+    def test_get_examples_italian(self):
+        """Italian examples returned when set, else fall back to German (#628)."""
+        with_it = IntentDef(
+            name="test.intent",
+            description_de="Test",
+            description_en="Test",
+            examples_de=["Beispiel"],
+            examples_en=["Example"],
+            examples_it=["Esempio"],
+        )
+        assert with_it.get_examples("it") == ["Esempio"]
+
+        without_it = IntentDef(
+            name="test.intent",
+            description_de="Test",
+            description_en="Test",
+            examples_de=["Beispiel"],
+            examples_en=["Example"],
+        )
+        assert without_it.get_examples("it") == ["Beispiel"]
+
 
 class TestIntegrationIntents:
     """Tests for IntegrationIntents dataclass."""
@@ -85,6 +125,27 @@ class TestIntegrationIntents:
         )
         assert integration.get_title("en") == "Test Integration EN"
 
+    def test_get_title_italian(self):
+        """Italian title returned when set, else fall back to German (#628)."""
+        with_it = IntegrationIntents(
+            integration_name="test",
+            title_de="Test Integration",
+            title_en="Test Integration EN",
+            intents=[],
+            is_enabled_func=lambda: True,
+            title_it="Integrazione Test",
+        )
+        assert with_it.get_title("it") == "Integrazione Test"
+
+        without_it = IntegrationIntents(
+            integration_name="test",
+            title_de="Test Integration",
+            title_en="Test Integration EN",
+            intents=[],
+            is_enabled_func=lambda: True,
+        )
+        assert without_it.get_title("it") == "Test Integration"
+
 
 class TestCoreIntegrationDefinitions:
     """Tests for core integration definitions."""
@@ -96,6 +157,16 @@ class TestCoreIntegrationDefinitions:
         intent_names = [i.name for i in KNOWLEDGE_INTENTS.intents]
         assert "knowledge.search" in intent_names
         assert "knowledge.ask" in intent_names
+
+    def test_core_intents_have_italian(self):
+        """Core knowledge + general intents carry Italian descriptions (#628)."""
+        assert KNOWLEDGE_INTENTS.get_title("it") == "BASE DI CONOSCENZA (RAG)"
+        by_name = {i.name: i for i in KNOWLEDGE_INTENTS.intents}
+        assert by_name["knowledge.search"].get_description("it") == "Cerca nella conoscenza di base"
+        assert by_name["knowledge.ask"].get_description("it") == "Chiedi alla conoscenza di base"
+
+        general = GENERAL_INTENTS.intents[0]
+        assert general.get_description("it") == "Conversazione normale (nessun intento)"
 
     def test_general_intents_always_enabled(self):
         """Test general intents are always enabled."""

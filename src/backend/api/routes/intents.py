@@ -74,7 +74,7 @@ class IntentPromptResponse(BaseModel):
 
 @router.get("/status", response_model=IntentRegistryStatusResponse)
 async def get_intent_status(
-    lang: str = Query("de", description="Language for descriptions (de/en)"),
+    lang: str = Query("de", description="Language for descriptions (de/en/it)"),
     _user: User = Depends(require_permission(Permission.ADMIN)),
 ):
     """
@@ -148,7 +148,7 @@ async def get_intent_status(
 
 @router.get("/prompt", response_model=IntentPromptResponse)
 async def get_intent_prompt(
-    lang: str = Query("de", description="Language for prompt (de/en)"),
+    lang: str = Query("de", description="Language for prompt (de/en/it)"),
     _user: User = Depends(require_permission(Permission.ADMIN)),
 ):
     """

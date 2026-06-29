@@ -137,7 +137,7 @@ Siehe [SATELLITE_CAMERA.md](SATELLITE_CAMERA.md) für Setup und Modellvergleich.
 DEFAULT_LANGUAGE=de
 
 # Unterstützte Sprachen (kommasepariert)
-SUPPORTED_LANGUAGES=de,en
+SUPPORTED_LANGUAGES=de,en,it
 
 # Whisper STT Modell
 WHISPER_MODEL=base
@@ -151,7 +151,7 @@ PIPER_DEFAULT_VOICE=de_DE-thorsten-high
 
 **Defaults:**
 - `DEFAULT_LANGUAGE`: `de`
-- `SUPPORTED_LANGUAGES`: `de,en`
+- `SUPPORTED_LANGUAGES`: `de,en,it`
 - `WHISPER_MODEL`: `base`
 - `PIPER_VOICES`: `de:de_DE-thorsten-high,en:en_US-amy-medium`
 - `PIPER_DEFAULT_VOICE`: `de_DE-thorsten-high` (Fallback, wenn die Sprache nicht in `PIPER_VOICES` ist)
@@ -1882,7 +1882,7 @@ OLLAMA_MODEL=qwen3:14b
 # Sprache & Voice
 # -----------------------------------------------------------------------------
 DEFAULT_LANGUAGE=de
-SUPPORTED_LANGUAGES=de,en
+SUPPORTED_LANGUAGES=de,en,it
 WHISPER_MODEL=base
 PIPER_VOICES=de:de_DE-thorsten-high,en:en_US-amy-medium
 PIPER_DEFAULT_VOICE=de_DE-thorsten-high  # Fallback for languages not in PIPER_VOICES

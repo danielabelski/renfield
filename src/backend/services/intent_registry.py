@@ -39,13 +39,20 @@ class IntentDef:
     parameters: list[IntentParam] = field(default_factory=list)
     examples_de: list[str] = field(default_factory=list)
     examples_en: list[str] = field(default_factory=list)
+    # Optional Italian; falls back to German when not provided.
+    description_it: str | None = None
+    examples_it: list[str] = field(default_factory=list)
 
     def get_description(self, lang: str = "de") -> str:
-        """Get description in specified language."""
+        """Get description in specified language (falls back to German)."""
+        if lang == "it" and self.description_it:
+            return self.description_it
         return self.description_en if lang == "en" else self.description_de
 
     def get_examples(self, lang: str = "de") -> list[str]:
-        """Get examples in specified language."""
+        """Get examples in specified language (falls back to German)."""
+        if lang == "it" and self.examples_it:
+            return self.examples_it
         return self.examples_en if lang == "en" else self.examples_de
 
 
@@ -57,9 +64,13 @@ class IntegrationIntents:
     title_en: str
     intents: list[IntentDef]
     is_enabled_func: callable  # Function that returns True if integration is enabled
+    # Optional Italian; falls back to German when not provided.
+    title_it: str | None = None
 
     def get_title(self, lang: str = "de") -> str:
-        """Get section title in specified language."""
+        """Get section title in specified language (falls back to German)."""
+        if lang == "it" and self.title_it:
+            return self.title_it
         return self.title_en if lang == "en" else self.title_de
 
 
@@ -71,23 +82,28 @@ KNOWLEDGE_INTENTS = IntegrationIntents(
     integration_name="knowledge",
     title_de="WISSENSDATENBANK (RAG)",
     title_en="KNOWLEDGE BASE (RAG)",
+    title_it="BASE DI CONOSCENZA (RAG)",
     is_enabled_func=lambda: settings.rag_enabled,
     intents=[
         IntentDef(
             name="knowledge.search",
             description_de="Suche in der Wissensdatenbank",
             description_en="Search knowledge base",
+            description_it="Cerca nella conoscenza di base",
             parameters=[IntentParam("query", "Suchanfrage", required=True)],
             examples_de=["Suche nach Rezepten", "Finde Informationen über Python"],
             examples_en=["Search for recipes", "Find information about Python"],
+            examples_it=["Cerca ricette", "Trova informazioni su Python"],
         ),
         IntentDef(
             name="knowledge.ask",
             description_de="Frage an die Wissensdatenbank",
             description_en="Ask knowledge base",
+            description_it="Chiedi alla conoscenza di base",
             parameters=[IntentParam("question", "Die Frage", required=True)],
             examples_de=["Was steht in meinen Notizen über Docker?"],
             examples_en=["What do my notes say about Docker?"],
+            examples_it=["Cosa dicono i miei appunti su Docker?"],
         ),
     ],
 )
@@ -96,14 +112,17 @@ GENERAL_INTENTS = IntegrationIntents(
     integration_name="general",
     title_de="ALLGEMEIN",
     title_en="GENERAL",
+    title_it="GENERALE",
     is_enabled_func=lambda: True,  # Always enabled
     intents=[
         IntentDef(
             name="general.conversation",
             description_de="Normale Konversation (kein spezifischer Intent)",
             description_en="Normal conversation (no specific intent)",
+            description_it="Conversazione normale (nessun intento)",
             examples_de=["Wie geht es dir?", "Erzähl mir einen Witz"],
             examples_en=["How are you?", "Tell me a joke"],
+            examples_it=["Come stai?", "Raccontami una barzelletta"],
         ),
     ],
 )

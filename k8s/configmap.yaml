@@ -106,6 +106,9 @@ data:
 
   # Feature flags
   DEFAULT_LANGUAGE: "de"
+  # UI languages selectable + persistable (backend validates the language
+  # preference against this list). 'it' added with the Italian locale (#628).
+  SUPPORTED_LANGUAGES: "de,en,it"
   AGENT_ENABLED: "true"
   MCP_ENABLED: "true"
   MEMORY_ENABLED: "true"

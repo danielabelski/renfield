@@ -28,7 +28,8 @@
     "continue": "Weiter",
     "back": "Zurück",
     "done": "Fertig",
-    "clear": "Leeren"
+    "clear": "Leeren",
+    "daysShort": "{{days}}d"
   },
   "nav": {
     "chat": "Chat",
@@ -771,7 +772,57 @@
     "selectAll": "Alle auswählen",
     "clear": "Leeren",
     "systemRole": "Systemrolle",
-    "systemRoleInfo": "Dies ist eine Systemrolle. Du kannst Berechtigungen ändern, aber nicht umbenennen oder löschen."
+    "systemRoleInfo": "Dies ist eine Systemrolle. Du kannst Berechtigungen ändern, aber nicht umbenennen oder löschen.",
+    "categories": {
+      "knowledgeBases": {
+        "name": "Wissensdatenbanken",
+        "description": "Zugriff auf Dokumente der Wissensdatenbank"
+      },
+      "homeAssistant": {
+        "name": "Home Assistant",
+        "description": "Steuerung von Smart-Home-Geräten"
+      },
+      "cameras": {
+        "name": "Kameras",
+        "description": "Kamera- und Videozugriff"
+      },
+      "conversations": {
+        "name": "Unterhaltungen",
+        "description": "Zugriff auf den Chatverlauf"
+      },
+      "roomsDevices": {
+        "name": "Räume & Geräte",
+        "description": "Verwaltung von Räumen und Geräten"
+      },
+      "speakers": {
+        "name": "Sprecher",
+        "description": "Verwaltung von Sprachprofilen"
+      },
+      "administration": {
+        "name": "Administration",
+        "description": "Systemadministration"
+      }
+    },
+    "permDesc": {
+      "kb_none": "Kein Zugriff auf Wissensdatenbanken",
+      "kb_own": "Nur Zugriff auf eigene Wissensdatenbanken",
+      "kb_shared": "Zugriff auf eigene und geteilte Wissensdatenbanken",
+      "kb_all": "Voller Zugriff auf alle Wissensdatenbanken",
+      "ha_none": "Kein Zugriff auf Home Assistant",
+      "ha_read": "Nur Gerätezustände ansehen",
+      "ha_control": "Geräte steuern (an/aus)",
+      "ha_full": "Volle Kontrolle inklusive Diensten",
+      "cam_none": "Kein Kamerazugriff",
+      "cam_view": "Kameraereignisse ansehen",
+      "cam_full": "Voller Kamerazugriff inklusive Schnappschüssen",
+      "chat_own": "Nur Zugriff auf eigene Unterhaltungen",
+      "chat_all": "Zugriff auf alle Unterhaltungen",
+      "rooms_read": "Räume und Geräte ansehen",
+      "rooms_manage": "Räume und Geräte verwalten",
+      "speakers_own": "Eigenes Sprachprofil verwalten",
+      "speakers_all": "Alle Sprachprofile verwalten",
+      "admin": "Vollständige Systemadministration"
+    }
   },
   "integrations": {
     "title": "Integrationen",
@@ -1800,6 +1851,21 @@
       "degraded": "Eingeschränkt",
       "down": "Ausgefallen",
       "unknown": "Unbekannt"
+    }
+  },
+  "routing": {
+    "title": "Routing-Dashboard",
+    "subtitle": "Aktuelle Routing-Entscheidungen über alle Kanäle",
+    "classificationLayers": "Klassifizierungs-Ebenen",
+    "empty": "Keine Routing-Einträge gefunden",
+    "col": {
+      "time": "Zeit",
+      "message": "Nachricht",
+      "domain": "Domäne",
+      "layer": "Ebene",
+      "confidence": "Konfidenz",
+      "entities": "Entitäten",
+      "feedback": "Feedback"
     }
   }
 }

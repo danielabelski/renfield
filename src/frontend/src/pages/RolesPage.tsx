@@ -26,6 +26,9 @@ import {
 } from '../api/resources/roles';
 
 interface PermissionCategoryDef {
+  // i18n slug → roles.categories.<slug>.{name,description}. The English
+  // strings below stay as the t() fallback (defaultValue).
+  slug: string;
   description: string;
   permissions: string[];
   feature?: string;
@@ -41,36 +44,53 @@ interface RoleFormData {
 // Categories with a 'feature' key are only shown when that feature is enabled
 const PERMISSION_CATEGORIES: Record<string, PermissionCategoryDef> = {
   'Knowledge Bases': {
+    slug: 'knowledgeBases',
     description: 'Access to knowledge base documents',
     permissions: ['kb.none', 'kb.own', 'kb.shared', 'kb.all']
   },
   'Home Assistant': {
+    slug: 'homeAssistant',
     description: 'Smart home device control',
     permissions: ['ha.none', 'ha.read', 'ha.control', 'ha.full'],
     feature: 'smart_home'
   },
   'Cameras': {
+    slug: 'cameras',
     description: 'Camera and video access',
     permissions: ['cam.none', 'cam.view', 'cam.full'],
     feature: 'cameras'
   },
   'Conversations': {
+    slug: 'conversations',
     description: 'Chat history access',
     permissions: ['chat.own', 'chat.all']
   },
   'Rooms & Devices': {
+    slug: 'roomsDevices',
     description: 'Room and device management',
     permissions: ['rooms.read', 'rooms.manage']
   },
   'Speakers': {
+    slug: 'speakers',
     description: 'Voice profile management',
     permissions: ['speakers.own', 'speakers.all']
   },
   'Administration': {
+    slug: 'administration',
     description: 'System administration',
     permissions: ['admin']
   }
 };
+
+// Map a permission code ('kb.none') to its i18n description key, with the
+// English PERMISSION_DESCRIPTIONS entry as the t() fallback.
+const permDescription = (
+  t: (key: string, opts?: Record<string, unknown>) => string,
+  perm: string,
+): string =>
+  t(`roles.permDesc.${perm.replace(/\./g, '_')}`, {
+    defaultValue: PERMISSION_DESCRIPTIONS[perm] ?? perm,
+  });
 
 // Permission descriptions
 const PERMISSION_DESCRIPTIONS: Record<string, string> = {
@@ -335,7 +355,7 @@ export default function RolesPage() {
                     )}
                     <div className="flex flex-wrap gap-1 mt-2">
                       {role.permissions.slice(0, 5).map((perm) => (
-                        <span key={perm} title={PERMISSION_DESCRIPTIONS[perm]}>
+                        <span key={perm} title={permDescription(t, perm)}>
                           <Badge color="gray">{perm}</Badge>
                         </span>
                       ))}
@@ -424,7 +444,7 @@ export default function RolesPage() {
             <div className="space-y-2 max-h-96 overflow-y-auto pr-2">
               {Object.entries(PERMISSION_CATEGORIES).filter(([, { feature }]) =>
                 !feature || isFeatureEnabled(feature)
-              ).map(([category, { description, permissions }]) => {
+              ).map(([category, { slug, description, permissions }]) => {
                 const isExpanded = expandedCategories[category];
                 const selectedCount = getCategoryPermissionCount(category, formData.permissions);
 
@@ -443,8 +463,8 @@ export default function RolesPage() {
                           <ChevronRight className="w-4 h-4 text-gray-500 dark:text-gray-400" />
                         )}
                         <div className="text-left">
-                          <p className="text-gray-900 dark:text-white font-medium">{category}</p>
-                          <p className="text-gray-400 dark:text-gray-500 text-xs">{description}</p>
+                          <p className="text-gray-900 dark:text-white font-medium">{t(`roles.categories.${slug}.name`, { defaultValue: category })}</p>
+                          <p className="text-gray-400 dark:text-gray-500 text-xs">{t(`roles.categories.${slug}.description`, { defaultValue: description })}</p>
                         </div>
                       </div>
                       <span className={`text-sm px-2 py-0.5 rounded ${
@@ -493,7 +513,7 @@ export default function RolesPage() {
                               <div>
                                 <p className="text-gray-900 dark:text-white text-sm font-medium">{perm}</p>
                                 <p className="text-gray-400 dark:text-gray-500 text-xs">
-                                  {PERMISSION_DESCRIPTIONS[perm]}
+                                  {permDescription(t, perm)}
                                 </p>
                               </div>
                             </label>

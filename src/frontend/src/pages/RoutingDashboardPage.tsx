@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { RefreshCw, CheckCircle2, XCircle } from 'lucide-react';
 import {
   useRoutingTracesQuery,
@@ -15,6 +16,7 @@ const LAYER_COLORS: Record<Layer, string> = {
 };
 
 export default function RoutingDashboardPage() {
+  const { t } = useTranslation();
   const [domainFilter, setDomainFilter] = useState('');
 
   const tracesQuery = useRoutingTracesQuery(domainFilter);
@@ -34,10 +36,10 @@ export default function RoutingDashboardPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
-            Routing Dashboard
+            {t('routing.title')}
           </h1>
           <p className="text-sm text-gray-500 dark:text-gray-400">
-            Recent routing decisions across all channels
+            {t('routing.subtitle')}
           </p>
         </div>
         <button
@@ -46,7 +48,7 @@ export default function RoutingDashboardPage() {
           className="btn-secondary flex items-center gap-2"
         >
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          Refresh
+          {t('common.refresh')}
         </button>
       </div>
 
@@ -69,7 +71,7 @@ export default function RoutingDashboardPage() {
 
       {stats?.by_layer && (
         <div className="card">
-          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">Classification Layers</h2>
+          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">{t('routing.classificationLayers')}</h2>
           <div className="flex flex-wrap gap-2">
             {Object.entries(stats.by_layer).map(([layer, count]) => (
               <span
@@ -87,13 +89,13 @@ export default function RoutingDashboardPage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
-              <th className="pb-2 pr-4">Time</th>
-              <th className="pb-2 pr-4">Message</th>
-              <th className="pb-2 pr-4">Domain</th>
-              <th className="pb-2 pr-4">Layer</th>
-              <th className="pb-2 pr-4">Confidence</th>
-              <th className="pb-2 pr-4">Entities</th>
-              <th className="pb-2">Feedback</th>
+              <th className="pb-2 pr-4">{t('routing.col.time')}</th>
+              <th className="pb-2 pr-4">{t('routing.col.message')}</th>
+              <th className="pb-2 pr-4">{t('routing.col.domain')}</th>
+              <th className="pb-2 pr-4">{t('routing.col.layer')}</th>
+              <th className="pb-2 pr-4">{t('routing.col.confidence')}</th>
+              <th className="pb-2 pr-4">{t('routing.col.entities')}</th>
+              <th className="pb-2">{t('routing.col.feedback')}</th>
             </tr>
           </thead>
           <tbody>
@@ -134,7 +136,7 @@ export default function RoutingDashboardPage() {
             {traces.length === 0 && (
               <tr>
                 <td colSpan={7} className="py-8 text-center text-gray-400">
-                  {loading ? 'Loading...' : 'No routing traces found'}
+                  {loading ? t('common.loading') : t('routing.empty')}
                 </td>
               </tr>
             )}
