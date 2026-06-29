@@ -577,6 +577,54 @@ ersetzt werden — guenstiger, stromsparender, kein SD-Karten-Risiko.
 
 ---
 
+## Bekannte Probleme & Fixes (Ansatz A: USB am Pi)
+
+Operative Stolpersteine beim Aufbau des ersten bare-metal XVF3800-Satelliten
+(Fitnessraum, Pi Zero 2 W). Alle im `xvf3800-usb`-Provisioning codifiziert.
+
+### Satellit hängt beim Audio-Start (PyAudio `Pa_Initialize`) — die ALSA-`pulse`-Plugin-Falle
+
+**Symptom:** Satellit registriert sich beim Backend, fällt dann alle ~40 s ohne
+Heartbeat weg, kein Capture, `audio_rms = None`. `py-spy` zeigt den Main-Thread
+dauerhaft in `pyaudio.__init__` (`Pa_Initialize`).
+
+**Ursache:** PortAudios `Pa_Initialize` enumeriert ALLE ALSA-PCMs, inkl. `pulse`
+(aus `libasound2-plugins`). Der Satellit läuft als headless systemd-Service ohne
+PulseAudio/PipeWire-Server und ohne User-Session → `libpulse` dreht ewig in
+`pa_get_runtime_dir → pa_msleep → nanosleep`. Mit `gdb -p <pid> -batch -ex bt`
+sichtbar (Pfad über `_snd_pcm_pulse_open`); `py-spy` zeigt nur den Python-Frame.
+
+**Fix:** Die `pulse`-Bridge in `/etc/asound.conf` neutralisieren — der Satellit
+nutzt `hw:Array` direkt und braucht Pulse nie:
+```
+pcm.!pulse { type null }
+ctl.!pulse { type null }
+```
+Im Template `asoundrc-xvf3800-usb.j2` enthalten (zusammen mit dem Verzicht auf
+dmix/dsnoop — als alleinige Audio-App reicht `asym plug→hw:Array`, und dmix/dsnoop
+schleppen System-V-IPC-sem/shm mit, die bei root-Erstanlage auf 0600 owner-locked
+`Pa_Initialize` ebenfalls deadlocken; Cleanup braucht `ipcrm -s` UND `-m`).
+
+### Firmware flashen (USB/UAC2 vs. I2S)
+
+Der XVF3800 hat zwei sich ausschließende Firmwares: **USB/UAC2** (enumeriert als
+USB-Mikrofon — gebraucht) und **I2S Master** (kein USB). Ein nicht enumerierendes
+Board braucht meist die UAC2-Firmware. Flashen via `dfu-util` über den **XMOS
+USB-C-Port** (neben der 3.5-mm-Klinke, NICHT der ESP32S3-Port). Wenn das Board
+gar nicht als DFU erscheint: **Safe Mode** = Mute-Taste beim Einstecken halten.
+Firmware + Anleitung liegen unter `src/satellite/hardware/xvf3800/firmware/`:
+```
+dfu-util -R -e -a 1 -D respeaker_xvf3800_usb_dfu_firmware_v2.0.9.bin
+```
+
+### dwc_otg vs. dwc2 (Pi Zero) — kein Faktor
+
+Der Pi Zero nutzt standardmäßig den Legacy-`dwc_otg`-Treiber (vs. esszimmers
+Orange-Pi-xHCI). Verdacht auf USB-Audio-Probleme bestätigte sich NICHT:
+`dtoverlay=dwc2,dr_mode=host` ändert nichts — der `pulse`-Fix wirkt auf `dwc_otg`.
+
+---
+
 ## Referenzen
 
 - [Seeed Studio Produktseite (ESP32S3-Variante)](https://www.seeedstudio.com/ReSpeaker-XVF3800-4-Mic-Array-With-XIAO-ESP32S3-p-6489.html)
