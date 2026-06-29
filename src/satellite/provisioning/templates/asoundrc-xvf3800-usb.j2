@@ -3,33 +3,27 @@
 
 defaults.pcm.rate_converter "samplerate"
 
+# The satellite is the SOLE audio app on this device, so capture and playback
+# open the XVF3800's independent USB substreams directly via plug (format/rate
+# conversion only). We deliberately do NOT use dmix/dsnoop here: those allocate
+# System V IPC semaphore+shm objects that, if first created by a root process
+# (e.g. a one-off `sudo` audio probe), end up owner-locked at perms 0600 and
+# then deadlock PortAudio's Pa_Initialize for the (non-root) satellite user.
 pcm.!default {
     type asym
-    playback.pcm "xvf_play"
-    capture.pcm "xvf_cap"
+    playback.pcm { type plug slave.pcm "hw:Array" }
+    capture.pcm  { type plug slave.pcm "hw:Array" }
 }
 
-pcm.xvf_play {
-    type plug
-    slave.pcm "dmixed"
-}
-
-pcm.xvf_cap {
-    type plug
-    slave.pcm "dsnooped"
-}
-
-pcm.dmixed {
-    type dmix
-    slave.pcm "hw:Array"
-    ipc_key 555555
-}
-
-pcm.dsnooped {
-    type dsnoop
-    slave {
-        pcm "hw:Array"
-        channels 1
-    }
-    ipc_key 666666
-}
+# Neutralize the ALSA -> PulseAudio bridge.
+#
+# CRITICAL on bare-metal Pis where libasound2-plugins ships the "pulse" PCM:
+# the satellite runs as a headless systemd service with NO PulseAudio/PipeWire
+# server and no user session. When PortAudio's Pa_Initialize enumerates every
+# ALSA PCM (including "pulse"), libpulse spins forever inside
+# pa_get_runtime_dir -> pa_msleep -> nanosleep trying to reach a server that
+# will never exist — hanging the whole satellite at audio init (verified by a
+# gdb backtrace through _snd_pcm_pulse_open). The satellite captures hw:Array
+# directly and never needs the Pulse bridge, so route it to a null device.
+pcm.!pulse { type null }
+ctl.!pulse { type null }

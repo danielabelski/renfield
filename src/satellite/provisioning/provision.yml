@@ -23,7 +23,9 @@
   handlers:
     - name: reboot after driver install
       ansible.builtin.reboot:
-        reboot_timeout: 120
+        # Pi Zero 2 W boots slowly (~130-150s with USB re-enumeration) — 120s
+        # timed out mid-provision on the fitnessraum XVF3800 swap.
+        reboot_timeout: 300
         msg: "Rebooting after audio driver installation"
 
     - name: reload systemd
@@ -313,6 +315,23 @@
       notify: reboot after driver install
 
     # --- XVF3800 USB: xvf_host binary + udev rule ---
+
+    # The XVF3800 is a USB audio device — no I2S HAT overlay. If this board was
+    # previously an I2S HAT (e.g. a 4-mic→XVF3800 swap), strip the stale overlay
+    # so it doesn't register a phantom card at boot; a reboot applies the change.
+    - name: Remove stale I2S HAT overlays from config.txt (USB mic)
+      tags: [driver]
+      when: hat_type == "xvf3800-usb"
+      ansible.builtin.lineinfile:
+        path: /boot/firmware/config.txt
+        regexp: "^dtoverlay={{ item }}"
+        state: absent
+      loop:
+        - seeed-4mic-voicecard
+        - seeed-2mic-voicecard
+        - respeaker-2mic-v2_0
+        - wm8960-soundcard
+      notify: reboot after driver install
 
     - name: Create bin directory for xvf_host
       tags: [driver]
