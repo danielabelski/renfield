@@ -1,25 +1,92 @@
 #!/bin/bash
 # Renfield satellite network watchdog (managed by Ansible — do not edit on host).
 #
-# Recovers a *wedged network stack* — the failure the SoC hardware watchdog
-# CANNOT catch: the kernel + systemd stay healthy (so /dev/watchdog keeps being
-# pet) but Wi-Fi/IP is dead and the satellite can't reach the backend. The
-# app-level reconnect (server.max_disconnected_seconds) only restarts the
-# process; if the whole stack is wedged that doesn't help, so as a last resort
-# we reboot the board.
+# Two independent recovery tiers, each for a failure the SoC hardware watchdog
+# CANNOT catch (the kernel + systemd stay healthy, so /dev/watchdog keeps being
+# pet):
 #
-# Decision signal = reachability of the DEFAULT GATEWAY, not the backend: a
-# down backend (e.g. a rolling redeploy) is not the Pi's fault and must NOT
-# trigger a reboot. Only when the Pi can't reach its own gateway is the local
-# network genuinely dead.
+#   Tier 1 — wedged network stack.  Wi-Fi/IP is dead and the Pi can't even reach
+#   its own default gateway.  Last resort: reboot the board.  The decision
+#   signal is the GATEWAY, not the backend: a down backend (e.g. a rolling
+#   redeploy) is not the Pi's fault and must NOT trigger a reboot.
+#
+#   Tier 2 — wedged satellite link.  The OS + Wi-Fi are healthy (gateway
+#   reachable) but the satellite *process* is running yet has NO connection to
+#   the backend and isn't recovering on its own (the app-level reconnect /
+#   server.max_disconnected_seconds failed to clear a stuck socket / DNS / async
+#   strand).  This is the "stayed dark for hours until someone power-cycled it"
+#   case.  We do NOT reboot for it (still not the Pi's fault if the backend is
+#   genuinely down) — we just restart the satellite service, which is cheap and
+#   clears a wedged process.  A long threshold means a normal redeploy +
+#   reconnect never trips it; only a sustained wedge does.
 set -u
 
 TARGET="${1:-}"
 THRESHOLD="${2:-5}"               # consecutive failures (timer cadence ≈ 1/min) → reboot
 MAX_REBOOTS="${3:-3}"             # give up after this many reboots — a gateway that's
                                   # been down for hours won't be fixed by rebooting
-STATE=/run/renfield-net-watchdog.fails             # fail counter (tmpfs, clears on reboot)
-BUDGET=/var/lib/renfield/net-watchdog-reboots      # reboot budget (persists across reboots)
+# Tier-2 (backend-link) parameters:
+SVC="${4:-renfield-satellite.service}"   # unit whose backend link we watch / restart
+BACKEND_PORT="${5:-443}"                 # wss ingress port the satellite connects to
+BACKEND_THRESHOLD="${6:-10}"             # consecutive checks (~1/min) with the service
+                                         # UP but no backend link → restart it. Keep
+                                         # comfortably above server.max_disconnected_seconds
+                                         # so the app's own reconnect gets first crack.
+MAX_RESTARTS="${7:-3}"                   # restart budget before giving up until it returns
+
+# State/budget paths (env-overridable for tests; production defaults below).
+# *.fails live on tmpfs (clear on reboot); *budget paths persist across reboots.
+STATE="${RENFIELD_WD_STATE:-/run/renfield-net-watchdog.fails}"
+BUDGET="${RENFIELD_WD_BUDGET:-/var/lib/renfield/net-watchdog-reboots}"
+BSTATE="${RENFIELD_WD_BSTATE:-/run/renfield-net-watchdog.backend-fails}"
+BBUDGET="${RENFIELD_WD_BBUDGET:-/var/lib/renfield/net-watchdog-restarts}"
+UPTIME_FILE="${RENFIELD_WD_UPTIME_FILE:-/proc/uptime}"
+
+# --- Tier 2 helper: is the satellite actually talking to the backend? ---------
+# True iff the service's MAIN process holds an ESTABLISHED connection to the
+# backend ingress on $BACKEND_PORT. Matching the service PID (not just any
+# :443 socket) avoids a false-healthy from unrelated TLS traffic (apt, etc.).
+backend_link_ok() {
+    command -v ss >/dev/null 2>&1 || return 0   # no ss → can't judge; assume OK (never act)
+    local pid
+    pid=$(systemctl show -p MainPID --value "$SVC" 2>/dev/null || echo 0)
+    { [ -z "$pid" ] || [ "$pid" = "0" ]; } && return 1
+    ss -tnp state established "( dport = :$BACKEND_PORT )" 2>/dev/null \
+        | grep -q "pid=$pid,"
+}
+
+# Runs only when the gateway is reachable (Tier 1 passed). Restarts a wedged
+# satellite service; never reboots.
+check_backend_link() {
+    # Service not supposed to be running (stopped/disabled) → nothing to watch.
+    systemctl is-active --quiet "$SVC" 2>/dev/null || { rm -f "$BSTATE"; return; }
+
+    if backend_link_ok; then
+        rm -f "$BSTATE" "$BBUDGET"          # connected → clear counter + refill budget
+        return
+    fi
+
+    local bfails
+    bfails=$(( $(cat "$BSTATE" 2>/dev/null || echo 0) + 1 ))
+    echo "$bfails" > "$BSTATE"
+    logger -t renfield-net-watchdog "satellite up but no backend link ($bfails/$BACKEND_THRESHOLD)"
+    [ "$bfails" -lt "$BACKEND_THRESHOLD" ] && return
+
+    # Threshold reached. Spend from the persistent restart budget so a backend
+    # that stays down for hours can't restart-loop the service forever; a
+    # restored link refills it.
+    local restarts
+    restarts=$(( $(cat "$BBUDGET" 2>/dev/null || echo 0) + 1 ))
+    if [ "$restarts" -gt "$MAX_RESTARTS" ]; then
+        logger -t renfield-net-watchdog "no backend link after $MAX_RESTARTS restarts — giving up until it returns"
+        return
+    fi
+    mkdir -p "$(dirname "$BBUDGET")"
+    echo "$restarts" > "$BBUDGET"
+    rm -f "$BSTATE"                          # reset the per-attempt counter
+    logger -t renfield-net-watchdog "restarting $SVC — wedged with no backend link ($restarts/$MAX_RESTARTS)"
+    systemctl restart "$SVC"
+}
 
 # Derive the IPv4 default gateway if no explicit target was given.
 if [ -z "$TARGET" ]; then
@@ -28,14 +95,17 @@ fi
 # No gateway known (boot race / no route) — can't decide, stay hands-off.
 [ -z "$TARGET" ] && exit 0
 
-# Don't reboot during the first 10 min of uptime: let the network settle after a
-# boot and bound how fast a reboot loop could cycle.
-up=$(cut -d. -f1 /proc/uptime 2>/dev/null || echo 0)
+# Don't act during the first 10 min of uptime: let the network settle after a
+# boot (and the satellite get its first backend connection) and bound how fast a
+# reboot loop could cycle. Applies to BOTH tiers.
+up=$(cut -d. -f1 "$UPTIME_FILE" 2>/dev/null || echo 0)
 [ "$up" -lt 600 ] && exit 0
 
 if ping -c 2 -W 3 "$TARGET" >/dev/null 2>&1; then
-    # Network healthy → clear the fail counter AND refill the reboot budget.
+    # Network healthy → clear the gateway fail counter AND refill the reboot
+    # budget, then check the higher-level backend link (Tier 2).
     rm -f "$STATE" "$BUDGET"
+    check_backend_link
     exit 0
 fi
 

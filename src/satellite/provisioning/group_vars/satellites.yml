@@ -56,6 +56,18 @@ net_watchdog_fail_threshold: 5
 net_watchdog_max_reboots: 3        # stop rebooting after this many — a gateway down
                                    # for hours won't be fixed by it; a good ping refills
 
+# Tier-2 backend-link watchdog (same timer/script): when the gateway IS reachable
+# but the satellite process is running yet holds NO connection to the backend
+# ingress for backend_watchdog_fail_threshold consecutive ~1-min checks, restart
+# the satellite service (NOT a reboot — a down backend isn't the Pi's fault).
+# Recovers the "service up but wedged, stayed dark for hours until power-cycled"
+# failure that neither the HW nor the gateway watchdog catches. Threshold is kept
+# above server.max_disconnected_seconds so the app's own reconnect tries first.
+backend_watchdog_service: "renfield-satellite.service"
+backend_watchdog_port: 443                # wss ingress port the satellite connects to
+backend_watchdog_fail_threshold: 10       # ~10 min wedged → restart the service
+backend_watchdog_max_restarts: 3          # stop after this many — a restored link refills
+
 # Wake word
 wakeword_model: "hey_renfield"
 wakeword_threshold: 0.5
