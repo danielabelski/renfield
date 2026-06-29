@@ -520,7 +520,7 @@ export default function KnowledgePage() {
               </div>
               <div>
                 <div className="text-2xl font-bold text-gray-900 dark:text-white">{stats.knowledge_base_count}</div>
-                <div className="text-sm text-gray-500 dark:text-gray-400">Knowledge Bases</div>
+                <div className="text-sm text-gray-500 dark:text-gray-400">{t('knowledge.knowledgeBases')}</div>
               </div>
             </div>
           </div>
@@ -532,7 +532,7 @@ export default function KnowledgePage() {
         <div className="card">
           <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
             <FolderOpen className="w-5 h-5 text-primary-400" />
-            Knowledge Bases
+            {t('knowledge.knowledgeBases')}
           </h2>
           <div className="flex flex-wrap gap-2">
             <button

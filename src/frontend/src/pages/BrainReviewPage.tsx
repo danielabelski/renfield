@@ -115,7 +115,7 @@ export default function BrainReviewPage() {
               }`}
               aria-pressed={days === d}
             >
-              {d}d
+              {t('common.daysShort', { days: d })}
             </button>
           ))}
         </div>
