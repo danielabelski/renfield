@@ -8,4 +8,6 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart={{ satellite_base_dir }}/bin/renfield-net-watchdog.sh "{{ net_watchdog_target | default('') }}" {{ net_watchdog_fail_threshold | default(5) }} {{ net_watchdog_max_reboots | default(3) }}
+# Args: <gateway-target> <fail-threshold> <max-reboots> (Tier 1) then
+#       <service-unit> <backend-port> <backend-threshold> <max-restarts> (Tier 2)
+ExecStart={{ satellite_base_dir }}/bin/renfield-net-watchdog.sh "{{ net_watchdog_target | default('') }}" {{ net_watchdog_fail_threshold | default(5) }} {{ net_watchdog_max_reboots | default(3) }} "{{ backend_watchdog_service | default('renfield-satellite.service') }}" {{ backend_watchdog_port | default(443) }} {{ backend_watchdog_fail_threshold | default(10) }} {{ backend_watchdog_max_restarts | default(3) }}
