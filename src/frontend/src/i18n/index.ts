@@ -4,8 +4,10 @@ import LanguageDetector from 'i18next-browser-languagedetector';
 
 import de from './locales/de.json';
 import en from './locales/en.json';
+import it from './locales/it.json';
 import dePro from './locales/de.pro.json';
 import enPro from './locales/en.pro.json';
+import itPro from './locales/it.pro.json';
 
 /**
  * Recursively merge two plain-object trees. Source values win when keys
@@ -55,6 +57,7 @@ function deepMerge<T extends Record<string, unknown>>(base: T, overlay: Record<s
 const edition = (import.meta.env.VITE_APP_EDITION || 'community') as 'community' | 'pro';
 const deResources = edition === 'pro' ? deepMerge(de, dePro as Record<string, unknown>) : de;
 const enResources = edition === 'pro' ? deepMerge(en, enPro as Record<string, unknown>) : en;
+const itResources = edition === 'pro' ? deepMerge(it, itPro as Record<string, unknown>) : it;
 
 i18n
   .use(LanguageDetector)
@@ -62,10 +65,11 @@ i18n
   .init({
     resources: {
       de: { translation: deResources },
-      en: { translation: enResources }
+      en: { translation: enResources },
+      it: { translation: itResources }
     },
     fallbackLng: 'de',
-    supportedLngs: ['de', 'en'],
+    supportedLngs: ['de', 'en', 'it'],
     detection: {
       order: ['localStorage', 'navigator'],
       caches: ['localStorage'],

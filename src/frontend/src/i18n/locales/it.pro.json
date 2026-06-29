@@ -1,0 +1,50 @@
+{
+  "_comment": "Versione 'pro' tradotta in italiano per Renfield.",
+  "auth": {
+    "personalAssistant": "AI per la Gestione dei Rilasci",
+    "tenantPrefix": "Accedi a",
+    "signInWithSso": "Accedi con Microsoft"
+  },
+  "nav": {
+    "brain": "Conoscenza (classica)",
+    "memory": "Note",
+    "brainReview": "Coda di revisione",
+    "circles": "Visibilità"
+  },
+  "memory": {
+    "title": "Note",
+    "subtitle": "Contesto a lungo termine per rilasci, ticket e decisioni"
+  },
+  "circles": {
+    "tier": {
+      "0": "Personale",
+      "1": "Confidenziale",
+      "2": "Team",
+      "3": "Organizzazione"
+    },
+    "tierDescription": {
+      "0": "Visibile solo a me.",
+      "1": "Visibile ai destinatari confidenziali.",
+      "2": "Visibile al mio team.",
+      "3": "Visibile all'intera organizzazione."
+    },
+    "brainTitle": "Base di conoscenza",
+    "brainSubtitle": "Cerca tra documenti, ticket, rilasci e contesto acquisito.",
+    "brainSearchPlaceholder": "Prova \"apri rilasci\" o \"PROJ-1234\"...",
+    "brainEmpty": "Digita una query qui sopra per cercare. Prova \"apri rilasci\", \"i miei ticket\" o \"retro Sprint 23\".",
+    "brainNoMatches": "Nessuna voce trovata nella conoscenza. Prova una query più ampia o una formulazione diversa.",
+    "tierAriaLabel": "Visibilità {{tier}}: {{label}}",
+    "tierPickerLabel": "Scegli la visibilità",
+    "settingsTitle": "Visibilità e Membri",
+    "settingsSubtitle": "Gestisci i livelli di visibilità e chi è invitato in ognuno di essi.",
+    "defaultCaptureTier": "Visibilità predefinita",
+    "defaultCaptureHint": "Le nuove voci vengono acquisite con questa visibilità per impostazione predefinita.",
+    "noMembers": "Nessun membro ancora nei tuoi livelli di visibilità.",
+    "removeMemberConfirm": "Rimuovere {{name}} da tutti i livelli di visibilità?",
+    "peersSubtitle": "Istanze {{appName}} accoppiate da altri membri dell'organizzazione.",
+    "peersManageHint": "Accoppi nuovi peer dalla pagina delle impostazioni di visibilità:",
+    "pairingSubtitle": "Accoppia il tuo {{appName}} con quello di un altro membro dell'organizzazione per query federate.",
+    "pairInitiateStep3Instruction": "Quasi fatto — quale visibilità vuoi concedere a {{name}}?",
+    "pairAcceptStep2Instruction": "Accetta l'accoppiamento con {{name}}. Quale visibilità vuoi concedere loro?"
+  }
+}
