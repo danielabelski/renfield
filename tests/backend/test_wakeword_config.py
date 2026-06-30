@@ -410,6 +410,13 @@ class TestWakeWordConfigManager:
         assert all("id" in kw and "label" in kw for kw in keywords)
 
     @pytest.mark.unit
+    def test_renfield_de_is_a_valid_keyword(self, manager):
+        """The German per-language wake word is registered + accepted by validation."""
+        assert "renfield_de" in VALID_KEYWORDS
+        ids = {kw["id"] for kw in manager.get_available_keywords()}
+        assert "renfield_de" in ids
+
+    @pytest.mark.unit
     def test_handle_config_ack_success(self, manager):
         """Test handling successful config acknowledgment"""
         manager.subscribe(MagicMock(), device_id="satellite-1", device_type="satellite")
