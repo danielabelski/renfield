@@ -36,6 +36,11 @@ AVAILABLE_KEYWORDS = [
         "description": "Custom trained wake word (ONNX)"
     },
     {
+        "id": "renfield_de",
+        "label": "Renfield (Deutsch)",
+        "description": "German single-word wake word — per-language model (ONNX)"
+    },
+    {
         "id": "alexa",
         "label": "Alexa",
         "description": "Pre-trained wake word (32-bit ONNX, recommended)"

@@ -1,0 +1,29 @@
+augmentation_batch_size: 16
+augmentation_rounds: 1
+background_paths:
+- ./background_clips
+background_paths_duplication_rate:
+- 1
+batch_n_per_class:
+  ACAV100M_sample: 1024
+  adversarial_negative: 75
+  positive: 75
+custom_negative_phrases: []
+false_positive_validation_data_path: ./validation_set_features.npy
+feature_data_files:
+  ACAV100M_sample: ./neg_features.npy
+layer_size: 48
+max_negative_weight: 700
+model_name: renfield_de
+model_type: dnn
+n_samples: 8000
+n_samples_val: 1500
+output_dir: ./my_custom_model
+piper_sample_generator_path: ./piper-sample-generator
+rir_paths:
+- ./mit_rirs
+steps: 50000
+target_false_positives_per_hour: 0.5
+target_phrase:
+- Renfield
+tts_batch_size: 50
