@@ -28,7 +28,10 @@ openWakeWord model on a k8s GPU pod. The shipped German model `renfield_de.onnx`
 - **Real voice beat the synthetic metric**: 9/9 detections of a spoken German
   "Renfield" at 0.50–0.99. The synthetic TTS-on-TTS recall understates real-world
   recall — trust an on-device test over the offline number.
-- `md5(renfield_de.onnx) = 6bdd7c61f31d2089220c8404716977cc`
+- v1 `md5 = 6bdd7c61f31d2089220c8404716977cc` — **DO NOT SHIP.** It false-fired
+  ~500×/hr fleet-wide in real rooms (see FP hardening below).
+- **Deployed = v3** (`md5 = 5cef9bd7991fa48780272488e2869886`), hardened with
+  real-ambient hard-negatives: **0 false wakes** fleet-wide, recall intact.
 
 ## The GPU pod
 
@@ -72,6 +75,44 @@ The blocker was Blackwell (sm_120) + CUDA versions. What works:
   FPs. Sweep: weight 200 ≈ 79 %/~100 fp-hr; 500 ≈ 73 %/65; **700 ≈ 76 %/16.6**
   (the chosen point, concentrated voices). Tune per language.
 - **Validate on a real voice in the room**, not just the offline number.
+
+## Real-ambient false-positive hardening (v2/v3 — REQUIRED before shipping)
+
+**The synthetic FP metric lied by ~30×.** v1 measured ~16 fp/hr @0.9 on synthetic
+speech, but in the real house it false-fired **~500×/hr fleet-wide** — a constant
+wake→empty-transcription storm. Synthetic negatives do not represent your rooms.
+
+The fix (scripts: `gen_hard_negs.py`, `validate_ambient.py`, `measure_wav.py`,
+`renfield_de_v2.yaml`, `renfield_de_v3.yaml`):
+
+1. **Record real room ambient** on each satellite (~10 min; `arecord -D default
+   -f S16_LE -r 16000 -c 1`). XVF3800/USB mics are exclusive → stop the service
+   to record; HAT mics allow concurrent capture via the shared `default` device.
+2. **`gen_hard_negs.py`** embeds each wav (`AudioFeatures._get_embeddings` →
+   `(frames,96)`) and splits each room **75/25 by time**: first 75% → windowed
+   `(N,16,96)` training **hard-negatives**; last 25% → concatenated **held-out
+   FP-validation** (`real_ambient_features.npy`). The split avoids train/val leakage.
+3. **Retrain** with the ambient as a heavily-sampled `hard_negative` feature class
+   AND as `false_positive_validation_data_path` (so the FP target optimizes against
+   REAL noise). Denser windowing (`step=1`) + `max_negative_weight` 1000→1500 helped.
+4. **`validate_ambient.py`** scores the held-out ambient (model ONNX is fixed
+   batch=1 → score one 16-frame window at a time) + recall on positive clips.
+
+Results (held-out real ambient): v1 **336/h** → v2 **36/h** → v3 **18/h** @0.9,
+recall steady ~70-75%. Real-voice live test after deploy: **0 false wakes**, the
+storm gone, "Renfield" still detected.
+
+**Per-satellite mic gain is a first-class FP lever — check it before over-training.**
+The per-room breakdown (`validate_ambient` split by room) was decisive: v3 fired on
+**zero** HAT-mic ambient (peak <0.005) — **100% of residual FP was the one XVF3800
+satellite**, whose AGC we'd cranked (`PP_AGCDESIREDLEVEL=0.03`) for far-field reach.
+That gain amplified the room's noise floor to speech amplitude. Halving it to
+**0.015** dropped that satellite's peak 0.96→0.29 (0 false wakes) while still
+detecting a normal "Renfield" across the room. Lesson: don't fight an over-gained
+mic with more training data — fix the gain (it's the dominant FP knob on XVF3800
+sats), then let the model handle the rest. The gain lives in the gitignored
+`host_vars/satellite-<room>.yml` (`xvf3800_tuning.PP_AGCDESIREDLEVEL`), persisted
+on-device with `xvf_host SAVE_CONFIGURATION 1`.
 
 ## Train a new language (e.g. EN-US, EN-UK, IT)
 
