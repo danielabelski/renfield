@@ -66,8 +66,17 @@ export default function SettingsPage() {
     }
   }, [syncStatus]);
 
+  // Compare the keyword set order/whitespace-insensitively — the value is a
+  // comma-joined set, so "a,b" and "b,a" (or an API-set value with spaces) are
+  // the same selection and must not read as dirty.
+  const keywordSet = (s: string) => new Set(s.split(',').map((k) => k.trim()).filter(Boolean));
+  const sameKeywords = (a: string, b: string) => {
+    const sa = keywordSet(a);
+    const sb = keywordSet(b);
+    return sa.size === sb.size && [...sa].every((k) => sb.has(k));
+  };
   const hasChanges = settings
-    ? keyword !== settings.keyword ||
+    ? !sameKeywords(keyword, settings.keyword) ||
       threshold !== settings.threshold ||
       cooldownMs !== settings.cooldown_ms
     : false;

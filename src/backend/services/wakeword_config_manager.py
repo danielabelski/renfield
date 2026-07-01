@@ -109,9 +109,11 @@ class WakeWordConfig:
         `keyword` may be a comma-separated set (e.g. "renfield_de,renfield_en,
         renfield_it") so several per-language models can load on a satellite at
         once — the detector already accepts a list. A single keyword (no comma)
-        yields a one-element list, so this is backward-compatible.
+        yields a one-element list, so this is backward-compatible. Deduped
+        (order-preserving) so a raw-API "renfield_de,renfield_de" can't tell a
+        satellite to load the same model twice.
         """
-        return [k.strip() for k in self.keyword.split(",") if k.strip()]
+        return list(dict.fromkeys(k.strip() for k in self.keyword.split(",") if k.strip()))
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization"""

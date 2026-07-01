@@ -434,6 +434,13 @@ class TestWakeWordConfigManager:
         assert WakeWordConfig(keyword="alexa", threshold=0.5, cooldown_ms=2000).keyword_list == ["alexa"]
 
     @pytest.mark.unit
+    def test_keyword_list_dedupes_preserving_order(self):
+        """A repeated keyword (raw-API input) loads each model once, order kept."""
+        cfg = WakeWordConfig(keyword="renfield_de,renfield_en,renfield_de", threshold=0.8, cooldown_ms=2000)
+        assert cfg.keyword_list == ["renfield_de", "renfield_en"]
+        assert cfg.to_satellite_config()["wake_words"] == ["renfield_de", "renfield_en"]
+
+    @pytest.mark.unit
     async def test_update_config_accepts_multi_keyword(self, manager, db_session):
         """update_config accepts + persists a multi-language keyword set."""
         cfg = await manager.update_config(db_session, keyword="renfield_de,renfield_en,renfield_it")

@@ -67,6 +67,24 @@ export const WAKEWORD_CONFIG: WakeWordConfigType = {
       description: 'Custom trained wake word'
     },
     {
+      id: 'renfield_de',
+      label: 'Renfield (Deutsch)',
+      model: 'renfield_de.onnx',
+      description: 'German single-word wake word'
+    },
+    {
+      id: 'renfield_en',
+      label: 'Renfield (English)',
+      model: 'renfield_en.onnx',
+      description: 'English (US+UK) single-word wake word'
+    },
+    {
+      id: 'renfield_it',
+      label: 'Renfield (Italiano)',
+      model: 'renfield_it.onnx',
+      description: 'Italian single-word wake word'
+    },
+    {
       id: 'hey_jarvis',
       label: 'Hey Jarvis',
       model: 'hey_jarvis_v0.1.onnx',
