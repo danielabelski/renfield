@@ -55,9 +55,12 @@ class TokenBlacklist:
             redis = self._get_redis()
             return await redis.exists(f"{BLACKLIST_PREFIX}{jti}") > 0
         except Exception as e:
-            logger.error(f"Failed to check token blacklist: {e}")
-            # Fail open — if Redis is down, don't block all requests
-            return False
+            logger.error(f"Token blacklist check failed — failing CLOSED: {e}")
+            # Fail CLOSED: if the revocation store is unreachable we cannot prove
+            # the token is NOT revoked, so treat it as revoked rather than honor
+            # an unverifiable token. A Redis outage then rejects requests (loud,
+            # operator-visible) instead of silently accepting revoked JWTs. (#698)
+            return True
 
 
 # Singleton instance

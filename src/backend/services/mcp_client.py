@@ -1226,7 +1226,9 @@ class MCPManager:
         Returns None if allowed, or an error message string if denied.
 
         Permission resolution order:
-        1. user_permissions is None → allow (AUTH_ENABLED=false, backwards-compatible)
+        1. user_permissions is None → allow ONLY when AUTH_ENABLED=false; when
+           auth is enabled a None (unresolved/failed-to-load) is denied — fail
+           closed so a permission-load failure cannot grant full MCP access (#690).
         2. "mcp.*" in user_permissions → allow (admin wildcard)
         3. tool_permissions has mapping for this tool → check specific permission
         4. permissions defined (server-level) → check if user has at least one
@@ -1234,6 +1236,17 @@ class MCPManager:
         6. No match → denied
         """
         if user_permissions is None:
+            # None is ambiguous: it means EITHER AUTH_ENABLED=false (single-user
+            # mode, no permission model → allow) OR the caller could not resolve
+            # the authenticated user's permissions (DB load failure, unresolved
+            # user). Fail OPEN only in the former; fail CLOSED in the latter so a
+            # transient load failure never escalates to full tool access. (#690)
+            from utils.config import settings
+            if settings.auth_enabled:
+                return (
+                    f"Permission denied: permissions could not be resolved for "
+                    f"{tool_info.namespaced_name}"
+                )
             return None
 
         server_name = tool_info.server_name

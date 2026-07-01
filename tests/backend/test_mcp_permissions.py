@@ -165,6 +165,25 @@ class TestCheckToolPermission:
         assert result is None
 
     @pytest.mark.unit
+    def test_none_permissions_fails_closed_when_auth_enabled(self, monkeypatch):
+        """#690: with AUTH_ENABLED=true, an unresolved (None) permission set is
+        DENIED — a permission-load failure must not grant full MCP access."""
+        monkeypatch.setattr("utils.config.settings.auth_enabled", True)
+        manager, tool = _make_manager_with_tool()
+        result = manager._check_tool_permission(tool, None)
+        assert result is not None  # denied (error string)
+        assert "denied" in result.lower()
+
+    @pytest.mark.unit
+    def test_empty_permissions_denied_when_auth_enabled(self, monkeypatch):
+        """#690: an authenticated user with no permissions ([]) is denied, not
+        allowed — the fail-closed fallback the caller sets on load failure."""
+        monkeypatch.setattr("utils.config.settings.auth_enabled", True)
+        manager, tool = _make_manager_with_tool()
+        result = manager._check_tool_permission(tool, [])
+        assert result is not None  # denied
+
+    @pytest.mark.unit
     def test_admin_wildcard_allows_all(self):
         """mcp.* in user_permissions → allow all MCP tools."""
         manager, tool = _make_manager_with_tool()

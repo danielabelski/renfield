@@ -1226,6 +1226,12 @@ async def websocket_endpoint(
                             user_personality_prompt = user_obj.personality_prompt
                 except Exception as e:
                     logger.warning(f"⚠️ Failed to load user permissions: {e}")
+                    # Fail closed: an authenticated turn whose permissions could
+                    # not be loaded must NOT fall through to the None=allow-all
+                    # path. Empty list = no permissions = deny. (#690, defense in
+                    # depth alongside the auth-aware gate in mcp_client.)
+                    if settings.auth_enabled:
+                        user_permissions = []
 
             # Fire chat_context_established hook so domain-specific consumers
             # (e.g. ha_glue's BLE voice-presence registration) can react to
