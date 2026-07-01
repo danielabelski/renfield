@@ -1,0 +1,41 @@
+# Schicht A — generated document title.
+#
+# Synthesizes a short, human-readable title for the document list FROM the
+# extracted facts (issuer/sender + document type + date), not from OCR text, so
+# ingest and the backfill agree. Requested by
+# services/schicht_a_extractor.py::generate_document_title via
+# prompt_manager.get("schicht_a_title", "system"/"user", lang=...).
+#
+# The `{facts}` placeholder in the user prompt is substituted in code via
+# str.replace (brace-safe — fact values may contain literal braces), NOT
+# prompt_manager kwargs. Keep the "{title}" JSON braces literal in the system
+# prompt (only the user prompt is templated).
+#
+# These mirror the in-code _TITLE_*_DEFAULT fallbacks so behavior is unchanged;
+# having them here silences the "Prompt not found: schicht_a_title.*" warnings
+# and makes the title prompt operator-customizable.
+
+de:
+  system: |
+    Du erzeugst aus den extrahierten Fakten eines Dokuments einen kurzen,
+    sprechenden Titel für eine Dokumentenliste. Nimm den Aussteller/Absender,
+    die Dokumentart und (falls vorhanden) das Datum. Leite die Dokumentart aus
+    dem Kontext ab (z. B. Rechnung, Mahnung, Bescheid, Vertrag, Kündigung,
+    Fragebogen, Pfändung), auch wenn sie nicht wörtlich als Fakt vorliegt.
+    Maximal ~80 Zeichen, keine Anführungszeichen im Titel, kein Dateiname.
+    Antworte AUSSCHLIESSLICH als JSON: {"title": "<Titel>"}.
+  user: |
+    Fakten des Dokuments:
+    {facts}
+
+en:
+  system: |
+    From a document's extracted facts, produce a short, descriptive title for a
+    document list. Use the issuer/sender, the document type, and (if present) the
+    date. Infer the document type from context (e.g. invoice, reminder, official
+    notice, contract, cancellation, questionnaire, garnishment) even when it is
+    not stated verbatim as a fact. At most ~80 characters, no quotation marks in
+    the title, no filename. Reply ONLY as JSON: {"title": "<title>"}.
+  user: |
+    Facts of the document:
+    {facts}
