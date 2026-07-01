@@ -1028,18 +1028,27 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def fail_closed_on_insecure_jwt_key(self) -> "Settings":
-        """Security (review M1): refuse to boot when JWT auth is enabled but the
-        signing key is still the in-repo placeholder default.
+        """Security (review M1 + #692): refuse to boot when the JWT signing key
+        is insecure and it matters.
 
-        A WARNING is insufficient for this case: the placeholder is public (it
-        ships in the repo), so with AUTH_ENABLED=true anyone can forge a valid
-        admin JWT (HS256 over the known key) — a full auth bypass. This check is
-        independent of RENFIELD_ENV (closing the "forgot to set it" gap) and only
-        fires when auth is actually on, so AUTH_ENABLED=false single-user /
-        household deployments and dev/test are unaffected.
+        A WARNING is insufficient: the placeholder is public (ships in the repo),
+        so a known/weak key lets anyone forge a valid admin JWT (HS256 over the
+        key) — a full auth bypass the moment auth is used. Enforced when EITHER
+        ``AUTH_ENABLED=true`` OR ``RENFIELD_ENV`` declares a real deployment
+        (production/prod/staging) — the latter closes the "auth is off today but
+        the key is still weak" gap (#692). Insecure = the placeholder default OR
+        shorter than 32 chars (too little entropy for HS256).
+
+        Dev/test and the current single-user household deploy (AUTH_ENABLED=false
+        with RENFIELD_ENV unset → "development") are unaffected: the guard only
+        arms once an operator declares production, at which point a strong
+        SECRET_KEY must already be provisioned.
         """
-        if not self.auth_enabled:
+        env = os.getenv("RENFIELD_ENV", "development").lower()
+        is_real_env = env in {"production", "prod", "staging"}
+        if not (self.auth_enabled or is_real_env):
             return self
+
         field_info = type(self).model_fields.get("secret_key")
         placeholder = field_info.default if field_info else None
         if isinstance(placeholder, SecretStr):
@@ -1048,13 +1057,20 @@ class Settings(BaseSettings):
             self.secret_key.get_secret_value()
             if isinstance(self.secret_key, SecretStr)
             else self.secret_key
-        )
+        ) or ""
+
+        reason = None
         if placeholder is not None and current == placeholder:
+            reason = "still the placeholder default (public — it ships in the repo)"
+        elif len(current) < 32:
+            reason = f"too short ({len(current)} chars; need >= 32 for HS256 entropy)"
+
+        if reason:
             raise ValueError(
-                "SECRET_KEY is still the placeholder default while "
-                "AUTH_ENABLED=true — refusing to start. The default key is public "
-                "(it ships in the repo), so anyone could forge an admin JWT. Set "
-                "SECRET_KEY to a strong random value (env var or Docker secret)."
+                f"SECRET_KEY is insecure: {reason}. (AUTH_ENABLED={self.auth_enabled}, "
+                f"RENFIELD_ENV={env!r}) — refusing to start. A weak/known key lets an "
+                "attacker forge JWTs. Set SECRET_KEY to a strong random value "
+                "(>= 32 random chars, env var or Docker secret)."
             )
         return self
 
