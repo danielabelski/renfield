@@ -38,16 +38,28 @@ engine = create_async_engine(
 # hook must be revisited.
 @event.listens_for(engine.sync_engine, "checkin")
 def _release_leaked_advisory_locks_on_checkin(dbapi_connection, connection_record):
-    """Release any held advisory locks when a connection returns to the pool."""
-    cursor = dbapi_connection.cursor()
+    """Release any held advisory locks when a connection returns to the pool.
+
+    Best-effort and MUST NEVER raise — a checkin hook that throws breaks pool
+    return for every caller. A connection checked in after its event loop has
+    closed (e.g. across async-test boundaries) can have a None/dead
+    ``dbapi_connection``, so cursor creation itself is inside the guard.
+    """
+    if dbapi_connection is None:
+        return
+    cursor = None
     try:
+        cursor = dbapi_connection.cursor()
         cursor.execute("SELECT pg_advisory_unlock_all();")
     except Exception as e:
-        # Best-effort: never block checkin on cleanup failure. Worst case
-        # is the original leak symptom comes back, which we'll see in logs.
+        # Worst case is the original leak symptom comes back, visible in logs.
         logger.warning(f"checkin: pg_advisory_unlock_all failed (swallowed): {type(e).__name__}: {e}")
     finally:
-        cursor.close()
+        if cursor is not None:
+            try:
+                cursor.close()
+            except Exception:
+                pass
 
 
 # Session Factory

@@ -866,16 +866,31 @@ def _ensure_ha_glue_routes(app):
 
 
 @pytest.fixture
-async def app_with_test_db(override_get_db, mock_ha_client):
+async def app_with_test_db(override_get_db, mock_ha_client, async_engine, monkeypatch):
     """FastAPI app with test database and mocked services"""
+    import services.database as _db_mod
     from main import app
     from services.database import get_db
 
     # Mount the ha_glue routers that the lifespan would normally register.
     _ensure_ha_glue_routes(app)
 
-    # Override database
+    # Override the request-scoped DB dependency (Depends(get_db)).
     app.dependency_overrides[get_db] = override_get_db
+
+    # Some routes deliberately open their OWN session via AsyncSessionLocal
+    # instead of Depends(get_db) — e.g. streaming exports that must outlive the
+    # request-scoped session (api/routes/trajectories.export_jsonl). Those bypass
+    # the dependency override and would hit the REAL Postgres engine; under
+    # full-suite ordering that engine's pooled connection is bound to a prior
+    # test's already-closed event loop → "attached to a different loop". Point
+    # AsyncSessionLocal at the StaticPool test engine so these paths use the same
+    # hermetic in-memory DB as the rest of the suite. (Routes import it lazily
+    # in-function, so patching the module attribute takes effect at call time.)
+    test_sessionmaker = async_sessionmaker(
+        async_engine, class_=AsyncSession, expire_on_commit=False
+    )
+    monkeypatch.setattr(_db_mod, "AsyncSessionLocal", test_sessionmaker)
 
     yield app
 

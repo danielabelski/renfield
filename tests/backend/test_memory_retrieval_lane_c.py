@@ -64,6 +64,11 @@ class TestRetrieveRankerRouting:
     async def test_default_ranker_uses_single_stage_sql(self, mr, captured_db):
         with patch("services.memory_retrieval.settings") as s:
             s.auth_enabled = False
+            # Phase 3c Memory→KG bridge is dark by default; without this the
+            # patched MagicMock settings make it truthy, so retrieve() issues a
+            # trailing kg_entities resolve query and _Capture (last-write) holds
+            # THAT instead of the ranker query under test. Pin it off.
+            s.memory_kg_bridge_enabled = False
             s.memory_retrieval_limit = 5
             s.memory_retrieval_threshold = 0.0
             await mr.retrieve("hello", user_id=None)
@@ -78,6 +83,11 @@ class TestRetrieveRankerRouting:
     async def test_recency_aware_uses_two_stage_cte(self, mr, captured_db):
         with patch("services.memory_retrieval.settings") as s:
             s.auth_enabled = False
+            # Phase 3c Memory→KG bridge is dark by default; without this the
+            # patched MagicMock settings make it truthy, so retrieve() issues a
+            # trailing kg_entities resolve query and _Capture (last-write) holds
+            # THAT instead of the ranker query under test. Pin it off.
+            s.memory_kg_bridge_enabled = False
             s.memory_retrieval_limit = 5
             s.memory_retrieval_threshold = 0.0
             s.memory_retrieval_recall_k = 50
@@ -103,6 +113,11 @@ class TestRetrieveRankerRouting:
         Otherwise Stage-1 would return fewer rows than the LIMIT clause asks for."""
         with patch("services.memory_retrieval.settings") as s:
             s.auth_enabled = False
+            # Phase 3c Memory→KG bridge is dark by default; without this the
+            # patched MagicMock settings make it truthy, so retrieve() issues a
+            # trailing kg_entities resolve query and _Capture (last-write) holds
+            # THAT instead of the ranker query under test. Pin it off.
+            s.memory_kg_bridge_enabled = False
             s.memory_retrieval_limit = 5
             s.memory_retrieval_threshold = 0.0
             s.memory_retrieval_recall_k = 10  # smaller than limit
@@ -120,6 +135,11 @@ class TestRetrieveRankerRouting:
         similarity*importance*confidence rerank over the bigger recall window."""
         with patch("services.memory_retrieval.settings") as s:
             s.auth_enabled = False
+            # Phase 3c Memory→KG bridge is dark by default; without this the
+            # patched MagicMock settings make it truthy, so retrieve() issues a
+            # trailing kg_entities resolve query and _Capture (last-write) holds
+            # THAT instead of the ranker query under test. Pin it off.
+            s.memory_kg_bridge_enabled = False
             s.memory_retrieval_limit = 5
             s.memory_retrieval_threshold = 0.0
             s.memory_retrieval_recall_k = 50
@@ -139,6 +159,11 @@ class TestRetrieveRankerRouting:
         two-stage SQL. Strict equality on the string spelling."""
         with patch("services.memory_retrieval.settings") as s:
             s.auth_enabled = False
+            # Phase 3c Memory→KG bridge is dark by default; without this the
+            # patched MagicMock settings make it truthy, so retrieve() issues a
+            # trailing kg_entities resolve query and _Capture (last-write) holds
+            # THAT instead of the ranker query under test. Pin it off.
+            s.memory_kg_bridge_enabled = False
             s.memory_retrieval_limit = 5
             s.memory_retrieval_threshold = 0.0
             await mr.retrieve("hello", user_id=None, ranker="garbage")
