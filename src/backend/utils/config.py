@@ -73,8 +73,15 @@ class Settings(BaseSettings):
     postgres_host: str = "postgres"
     postgres_port: int = Field(default=5432, ge=1, le=65535)
     postgres_db: str = "renfield"
-    db_pool_size: int = Field(default=10, ge=1, le=100)
-    db_max_overflow: int = Field(default=20, ge=0, le=200)
+    # 15 + 30 = 45 connections/process. backend + document-worker each get their
+    # own pool → 2 × 45 = 90 max, safely under Postgres max_connections=100. Bumped
+    # from 10+20 after a folder-ingest backlog flood exhausted the 30/process pool
+    # (QueuePool timeout → docs failed with create_error). Env-overridable if the
+    # DB's max_connections is raised. Do NOT push per-process total past ~45 while
+    # max_connections=100 and two processes share it, or you trade pool timeouts
+    # for "too many connections".
+    db_pool_size: int = Field(default=15, ge=1, le=100)
+    db_max_overflow: int = Field(default=30, ge=0, le=200)
     db_pool_recycle: int = Field(default=3600, ge=60, le=86400)
 
     # Redis
