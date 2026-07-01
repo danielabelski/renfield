@@ -39,18 +39,32 @@ Wake word settings are managed centrally in the backend and automatically pushed
 
 | Setting | Description | Range | Default |
 |---------|-------------|-------|---------|
-| **Keyword** | Active wake word | hey_renfield, renfield_de, alexa, hey_jarvis, hey_mycroft | alexa |
+| **Keyword** | Active wake word(s) — comma-separated to load several at once | hey_renfield, renfield_de, renfield_en, renfield_it, alexa, hey_jarvis, hey_mycroft | alexa |
 | **Threshold** | Detection sensitivity | 0.1 - 1.0 | 0.5 |
 | **Cooldown** | Minimum time between detections | 500ms - 10000ms | 2000ms |
 
 ### Per-language "Renfield" models
 
-`hey_renfield` is English-pronunciation only. For German speakers, use
-**`renfield_de`** — a single-word ("Renfield") model trained on German
-pronunciation. Because the detector loads a **list** of keywords, multiple
-per-language models can run together (e.g. `renfield_de` + a future
-`renfield_en`/`renfield_it`), each tuned to one language. The model files live
-in `data/wakeword-models/` (served to satellites + the browser); training recipe
+`hey_renfield` is English-pronunciation only. For a single-word ("Renfield")
+wake word tuned to a specific language, three per-language models ship:
+
+| Model | Language | Trained on |
+|-------|----------|------------|
+| **`renfield_de`** | German | German pronunciation |
+| **`renfield_en`** | English (US + UK) | English pronunciation |
+| **`renfield_it`** | Italian | Italian pronunciation |
+
+Because the detector loads a **list** of keywords, several per-language models
+run together — set the **Keyword** to a comma-separated set
+(e.g. `renfield_de,renfield_en,renfield_it`) and any selected language's
+"Renfield" wakes the device. In the admin UI this is a multi-select (see
+**Frontend Integration → Admin Settings Page**); the value persists as a single
+comma-joined string and is validated element-by-element (one unknown keyword
+rejects the whole set). A single keyword (no comma) is unchanged and
+backward-compatible.
+
+The model files live in `data/wakeword-models/` (served to satellites) and
+`src/frontend/public/wakeword-models/` (served to the browser); training recipe
 and how to add a language: `src/satellite/wakeword-training/README.md`.
 
 ### Threshold Explanation
@@ -234,7 +248,8 @@ detector.update_config(
 Access via: **Settings** → **Wake Word Configuration**
 
 Features:
-- Keyword dropdown with all available wake words
+- Keyword multi-select (checkboxes) — pick one or more wake words; selecting
+  several per-language "Renfield" models loads them all at once
 - Threshold slider (0.1 - 1.0) with sensitivity labels
 - Cooldown slider (0.5s - 10s)
 - Device sync status display after saving
