@@ -35,6 +35,14 @@ _(WICHTIG sweep complete. W10 closed via #487 on 2026-04-27. `tasks/audit-findin
 
 ## P2 — Scheduled follow-ups
 
+### Browser wake-word: load ALL selected keywords, not just `wake_words[0]`
+Origin: `/review` of PR #872 (2026-07-01, multi-language wake words). The backend + satellites fully support a comma-separated keyword set (all selected per-language "Renfield" models load together). The **browser** PWA engine does not: `useWakeWord.ts:454` consumes only `config.wake_words[0]`, and `initEngine` passes `keywords: [settings.keyword]` (a single id). So a browser panel listens for only the **first** selected language even when the admin selected several.
+- **WHAT:** Make the browser wake-word engine load N models at once — split the incoming `wake_words` list (not `[0]`) and pass all ids to the engine (`keywords: [...]`), verifying `WakeWordEngineClass` supports multiple simultaneous keyword models (openWakeWord-wasm). If the engine caps at one, either instantiate one detector per keyword or document the single-model browser limit as intentional.
+- **WHY:** The PR's promise ("all 3 languages load together") is only true on satellites today. A German+English household using the browser panel gets German-only wake detection. Satellites are the primary surface, so this is P2 not P0.
+- **PROS:** browser reaches parity with satellites; the new multi-select UI does what it says on every surface. **CONS:** touches the WASM engine init + the config-update handler; needs a real browser mic test per language (can't be unit-tested end-to-end); engine may need one-detector-per-model which raises browser CPU.
+- **CONTEXT:** `src/frontend/src/hooks/useWakeWord.ts:161-181` (`initEngine`, single `keywords: [settings.keyword]`) + `:449-471` (config-update handler, `wake_words[0]`). Browser keyword registry was fixed in #872 (`src/frontend/src/config/wakeword.ts` now has `renfield_de/en/it`), so the models resolve — only the multi-load remains. Detail: `docs/WAKEWORD_CONFIGURATION.md` (satellite-vs-browser split).
+- **DEPENDS ON:** nothing; standalone frontend work.
+
 ### `bin/deploy-production.sh` — kill the `on_build`/`run` nested-quoting foot-gun
 Origin: `/review` of PR #865 (2026-06-27). #865 hot-fixed the symptom (the prune step's `awk 'NR>3'` broke the `ssh '…'` wrapper → `eval` parsed `>3` as a redirect → spurious `exit 1` on every deploy's final cleanup); this is the **root-cause** follow-up.
 - **WHAT:** Replace the hand-quoted double-eval remote-exec helpers — `run() { eval "$@"; }` + `on_build() { run "ssh $BUILD_HOST '$*'"; }` — with a form that doesn't manually wrap the payload in single quotes, e.g. `ssh "$BUILD_HOST" bash -s <<<"$*"` (heredoc, no nested quoting) or `ssh "$BUILD_HOST" "$(printf '%q' "$*")"`, and drop the `eval` in `run`.

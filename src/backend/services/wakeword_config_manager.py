@@ -41,6 +41,16 @@ AVAILABLE_KEYWORDS = [
         "description": "German single-word wake word — per-language model (ONNX)"
     },
     {
+        "id": "renfield_en",
+        "label": "Renfield (English)",
+        "description": "English (US+UK) single-word wake word — per-language model (ONNX)"
+    },
+    {
+        "id": "renfield_it",
+        "label": "Renfield (Italiano)",
+        "description": "Italian single-word wake word — per-language model (ONNX)"
+    },
+    {
         "id": "alexa",
         "label": "Alexa",
         "description": "Pre-trained wake word (32-bit ONNX, recommended)"
@@ -92,6 +102,19 @@ class WakeWordConfig:
     cooldown_ms: int
     enabled: bool = True
 
+    @property
+    def keyword_list(self) -> list[str]:
+        """The active keyword(s) as a list.
+
+        `keyword` may be a comma-separated set (e.g. "renfield_de,renfield_en,
+        renfield_it") so several per-language models can load on a satellite at
+        once — the detector already accepts a list. A single keyword (no comma)
+        yields a one-element list, so this is backward-compatible. Deduped
+        (order-preserving) so a raw-API "renfield_de,renfield_de" can't tell a
+        satellite to load the same model twice.
+        """
+        return list(dict.fromkeys(k.strip() for k in self.keyword.split(",") if k.strip()))
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization"""
         return {
@@ -99,13 +122,13 @@ class WakeWordConfig:
             "threshold": self.threshold,
             "cooldown_ms": self.cooldown_ms,
             "enabled": self.enabled,
-            "wake_words": [self.keyword],  # For backward compatibility with satellites
+            "wake_words": self.keyword_list,  # satellites load every model in the list
         }
 
     def to_satellite_config(self) -> dict[str, Any]:
         """Convert to satellite config format"""
         return {
-            "wake_words": [self.keyword],
+            "wake_words": self.keyword_list,
             "threshold": self.threshold,
             "cooldown_ms": self.cooldown_ms,
         }
@@ -188,9 +211,16 @@ class WakeWordConfigManager:
         Raises:
             ValueError: If keyword is invalid or values out of range
         """
-        # Validate keyword if provided
-        if keyword is not None and keyword not in VALID_KEYWORDS:
-            raise ValueError(f"Invalid keyword: {keyword}. Must be one of: {VALID_KEYWORDS}")
+        # Validate keyword(s) if provided. `keyword` may be a comma-separated set
+        # (e.g. "renfield_de,renfield_en,renfield_it") so several per-language
+        # models load together — each element must be a known keyword.
+        if keyword is not None:
+            requested = [k.strip() for k in keyword.split(",") if k.strip()]
+            if not requested:
+                raise ValueError("Invalid keyword: empty")
+            invalid = [k for k in requested if k not in VALID_KEYWORDS]
+            if invalid:
+                raise ValueError(f"Invalid keyword(s): {invalid}. Must be one of: {VALID_KEYWORDS}")
 
         # Validate threshold if provided
         if threshold is not None and not (0.1 <= threshold <= 1.0):

@@ -66,8 +66,17 @@ export default function SettingsPage() {
     }
   }, [syncStatus]);
 
+  // Compare the keyword set order/whitespace-insensitively — the value is a
+  // comma-joined set, so "a,b" and "b,a" (or an API-set value with spaces) are
+  // the same selection and must not read as dirty.
+  const keywordSet = (s: string) => new Set(s.split(',').map((k) => k.trim()).filter(Boolean));
+  const sameKeywords = (a: string, b: string) => {
+    const sa = keywordSet(a);
+    const sb = keywordSet(b);
+    return sa.size === sb.size && [...sa].every((k) => sb.has(k));
+  };
   const hasChanges = settings
-    ? keyword !== settings.keyword ||
+    ? !sameKeywords(keyword, settings.keyword) ||
       threshold !== settings.threshold ||
       cooldownMs !== settings.cooldown_ms
     : false;
@@ -156,20 +165,37 @@ export default function SettingsPage() {
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
             {t('settings.wakeword.keyword')}
           </label>
-          <select
-            value={keyword}
-            onChange={(e) => setKeyword(e.target.value)}
-            className="input w-full md:w-auto"
-          >
-            {settings?.available_keywords?.map((kw) => (
-              <option key={kw.id} value={kw.id}>
-                {kw.label}
-              </option>
-            ))}
-          </select>
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            {settings?.available_keywords?.find((k) => k.id === keyword)?.description}
-          </p>
+          {/* Multi-select: one or more keywords load together (comma-separated).
+              Any selected language's "Renfield" wakes the satellite. */}
+          <div className="space-y-1.5">
+            {settings?.available_keywords?.map((kw) => {
+              const selected = keyword.split(',').map((s) => s.trim()).filter(Boolean);
+              const checked = selected.includes(kw.id);
+              return (
+                <label key={kw.id} className="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => {
+                      const next = new Set(selected);
+                      if (checked) next.delete(kw.id);
+                      else next.add(kw.id);
+                      // preserve the registry order; never allow an empty set
+                      const ordered = (settings?.available_keywords ?? [])
+                        .map((k) => k.id)
+                        .filter((id) => next.has(id));
+                      if (ordered.length > 0) setKeyword(ordered.join(','));
+                    }}
+                    className="mt-0.5"
+                  />
+                  <span className="text-sm">
+                    <span className="font-medium text-gray-700 dark:text-gray-300">{kw.label}</span>
+                    <span className="block text-xs text-gray-500 dark:text-gray-400">{kw.description}</span>
+                  </span>
+                </label>
+              );
+            })}
+          </div>
         </div>
 
         <div className="mb-6">
