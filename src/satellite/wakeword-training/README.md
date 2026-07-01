@@ -33,6 +33,21 @@ openWakeWord model on a k8s GPU pod. The shipped German model `renfield_de.onnx`
 - **Deployed = v3** (`md5 = 5cef9bd7991fa48780272488e2869886`), hardened with
   real-ambient hard-negatives: **0 false wakes** fleet-wide, recall intact.
 
+## Also shipped: renfield_en (US+UK) + renfield_it
+
+Same recipe, per language — `gen_en.py` (9 US+UK voices), `gen_it.py` (2 IT
+voices; piper ships only 2 Italian), `renfield_{en,it}.yaml` (= the DE v3 config
+with `model_name` swapped; the room-ambient hard-negatives are **language-
+independent**, so they're reused verbatim). Held-out real-ambient FP for both:
+**0 false wakes** (peak 0.002 / 0.016), recall EN ~77 % / IT ~85 % synthetic.
+
+**Loading all three at once:** the satellite detector already accepts a keyword
+**list**, and the backend wake-word config now pushes a comma-separated set
+(`renfield_de,renfield_en,renfield_it`) — `WakeWordConfig.keyword_list` splits it,
+`update_config` validates each element. So one satellite wakes to "Renfield" in
+any of the three pronunciations. Marginal CPU per extra model ≈ 0 (melspectrogram
++ embedding features are computed once and shared across all loaded classifiers).
+
 ## The GPU pod
 
 The blocker was Blackwell (sm_120) + CUDA versions. What works:

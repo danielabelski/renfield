@@ -417,6 +417,37 @@ class TestWakeWordConfigManager:
         assert "renfield_de" in ids
 
     @pytest.mark.unit
+    def test_all_renfield_languages_registered(self, manager):
+        """All three per-language Renfield models are registered + valid."""
+        ids = {kw["id"] for kw in manager.get_available_keywords()}
+        assert {"renfield_de", "renfield_en", "renfield_it"} <= ids
+        assert {"renfield_de", "renfield_en", "renfield_it"} <= set(VALID_KEYWORDS)
+
+    @pytest.mark.unit
+    def test_multi_keyword_config_splits_to_wake_words(self):
+        """A comma-separated keyword loads several per-language models at once."""
+        cfg = WakeWordConfig(keyword="renfield_de,renfield_en,renfield_it", threshold=0.8, cooldown_ms=2000)
+        assert cfg.keyword_list == ["renfield_de", "renfield_en", "renfield_it"]
+        assert cfg.to_satellite_config()["wake_words"] == ["renfield_de", "renfield_en", "renfield_it"]
+        assert cfg.to_dict()["wake_words"] == ["renfield_de", "renfield_en", "renfield_it"]
+        # a single keyword is still a one-element list (backward-compatible)
+        assert WakeWordConfig(keyword="alexa", threshold=0.5, cooldown_ms=2000).keyword_list == ["alexa"]
+
+    @pytest.mark.unit
+    async def test_update_config_accepts_multi_keyword(self, manager, db_session):
+        """update_config accepts + persists a multi-language keyword set."""
+        cfg = await manager.update_config(db_session, keyword="renfield_de,renfield_en,renfield_it")
+        assert cfg.keyword_list == ["renfield_de", "renfield_en", "renfield_it"]
+        assert (await manager.get_config(db_session)).keyword_list == ["renfield_de", "renfield_en", "renfield_it"]
+
+    @pytest.mark.unit
+    async def test_update_config_rejects_invalid_keyword_in_multi(self, manager, db_session):
+        """One bad keyword in the set is rejected (fail-closed)."""
+        with pytest.raises(ValueError) as excinfo:
+            await manager.update_config(db_session, keyword="renfield_de,bogus_keyword")
+        assert "Invalid keyword" in str(excinfo.value)
+
+    @pytest.mark.unit
     def test_handle_config_ack_success(self, manager):
         """Test handling successful config acknowledgment"""
         manager.subscribe(MagicMock(), device_id="satellite-1", device_type="satellite")
