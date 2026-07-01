@@ -113,6 +113,44 @@ async def _lookup_user_id_for_speaker(speaker_id: int) -> int | None:
         return result.scalar_one_or_none()
 
 
+async def _session_registerable_by(session_id: str, auth_user_id: int | None) -> bool:
+    """#657: a client may only register a session for server-push delivery
+    (`register_ws_connection` → `notify_session`) if it OWNS that conversation,
+    or the session is brand-new/unowned. Without this, an authenticated user
+    could register another user's `session_id` and intercept (or evict) their
+    pushed notifications — the registration boundary was previously unchecked.
+
+    Only enforced when auth is enabled AND a JWT caller identity exists; the
+    single-user (auth off) and device/satellite (`user_id=None`) paths keep the
+    legacy always-register behavior.
+    """
+    if not settings.auth_enabled or auth_user_id is None:
+        return True
+    from sqlalchemy import select
+
+    from models.database import Conversation
+
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(Conversation.user_id).where(Conversation.session_id == session_id)
+            )
+            owner = result.scalar_one_or_none()
+    except Exception as e:
+        # The call sites run inside the receive loop, whose only `except` is
+        # OUTSIDE the loop — a raised DB error here would tear down the whole
+        # chat WS. Fail closed (refuse the push-registration) but never raise, so
+        # a transient DB blip can't kill an otherwise-healthy connection.
+        logger.warning(
+            f"⚠️ WS ownership check failed for session {session_id}; "
+            f"refusing push-register (connection kept alive): {e}"
+        )
+        return False
+    # No row yet → new/unowned session (created for this caller). Otherwise the
+    # owner must match the authenticated caller.
+    return owner is None or owner == auth_user_id
+
+
 def _parse_mcp_raw_data(data: list) -> any:
     """Parse MCP raw_data format: [{"type": "text", "text": "{JSON}"}] → parsed content.
 
@@ -861,8 +899,15 @@ async def websocket_endpoint(
             if isinstance(data, dict) and data.get("type") == "register":
                 reg_sid = data.get("session_id")
                 if reg_sid:
-                    register_ws_connection(reg_sid, websocket)
-                    session_state.db_session_id = reg_sid
+                    _reg_uid = auth_result.get("user_id") if isinstance(auth_result, dict) else None
+                    if await _session_registerable_by(reg_sid, _reg_uid):
+                        register_ws_connection(reg_sid, websocket)
+                        session_state.db_session_id = reg_sid
+                    else:
+                        logger.warning(
+                            f"⚠️ Refused WS push-register for session {reg_sid}: "
+                            f"not owned by user {_reg_uid} (#657)"
+                        )
                 continue
 
             # Structured Paperless-confirm decision from the interactive confirm
@@ -1119,7 +1164,14 @@ async def websocket_endpoint(
                 # Load history from DB if this is the first message with this session_id
                 if not session_state.history_loaded or session_state.db_session_id != msg_session_id:
                     session_state.db_session_id = msg_session_id
-                    register_ws_connection(msg_session_id, websocket)
+                    _msg_auth_uid = auth_result.get("user_id") if isinstance(auth_result, dict) else None
+                    if await _session_registerable_by(msg_session_id, _msg_auth_uid):
+                        register_ws_connection(msg_session_id, websocket)
+                    else:
+                        logger.warning(
+                            f"⚠️ Refused WS push-register for session {msg_session_id}: "
+                            f"not owned by user {_msg_auth_uid} (#657)"
+                        )
                     try:
                         # Cross-user IDOR guard: scope the history load to the
                         # authenticated (JWT) caller when auth is enabled. The
@@ -1226,6 +1278,12 @@ async def websocket_endpoint(
                             user_personality_prompt = user_obj.personality_prompt
                 except Exception as e:
                     logger.warning(f"⚠️ Failed to load user permissions: {e}")
+                    # Fail closed: an authenticated turn whose permissions could
+                    # not be loaded must NOT fall through to the None=allow-all
+                    # path. Empty list = no permissions = deny. (#690, defense in
+                    # depth alongside the auth-aware gate in mcp_client.)
+                    if settings.auth_enabled:
+                        user_permissions = []
 
             # Fire chat_context_established hook so domain-specific consumers
             # (e.g. ha_glue's BLE voice-presence registration) can react to

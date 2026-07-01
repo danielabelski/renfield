@@ -589,7 +589,11 @@ async def _poll_paperless_task(
     headers = {"Authorization": f"Token {token}"}
     deadline = asyncio.get_running_loop().time() + timeout_s
 
-    async with httpx.AsyncClient(verify=False, timeout=10.0) as client:  # noqa: S501
+    # TLS verification ON by default (#687). Operators reaching Paperless over a
+    # self-signed cert opt out explicitly via PAPERLESS_VERIFY_TLS=false rather
+    # than the client silently trusting any cert.
+    verify_tls = os.environ.get("PAPERLESS_VERIFY_TLS", "true").strip().lower() != "false"
+    async with httpx.AsyncClient(verify=verify_tls, timeout=10.0) as client:
         while asyncio.get_running_loop().time() < deadline:
             try:
                 r = await client.get(url, headers=headers)

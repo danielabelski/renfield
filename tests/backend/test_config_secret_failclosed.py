@@ -27,6 +27,34 @@ class TestSecretKeyFailClosed:
         assert s.secret_key.get_secret_value() == _STRONG
 
     def test_auth_off_with_placeholder_key_ok(self):
-        # household/single-user mode tolerates the default (no JWT trust)
+        # household/single-user mode (dev env) tolerates the default (no JWT trust)
         s = Settings(auth_enabled=False, secret_key=SecretStr(_PLACEHOLDER))
+        assert s.auth_enabled is False
+
+    # --- #692: production trigger (independent of auth) + entropy/length check ---
+
+    def test_production_env_with_placeholder_key_raises(self, monkeypatch):
+        """RENFIELD_ENV=production arms the guard even with auth off (#692)."""
+        monkeypatch.setenv("RENFIELD_ENV", "production")
+        with pytest.raises(ValueError):
+            Settings(auth_enabled=False, secret_key=SecretStr(_PLACEHOLDER))
+
+    def test_production_env_with_short_key_raises(self, monkeypatch):
+        monkeypatch.setenv("RENFIELD_ENV", "production")
+        with pytest.raises(ValueError):
+            Settings(auth_enabled=False, secret_key=SecretStr("too-short"))
+
+    def test_auth_on_with_short_key_raises(self):
+        """A non-placeholder but weak (<32) key is rejected when auth is on."""
+        with pytest.raises(ValueError):
+            Settings(auth_enabled=True, secret_key=SecretStr("short"))
+
+    def test_production_env_with_strong_key_ok(self, monkeypatch):
+        monkeypatch.setenv("RENFIELD_ENV", "production")
+        s = Settings(auth_enabled=False, secret_key=SecretStr(_STRONG))
+        assert s.secret_key.get_secret_value() == _STRONG
+
+    def test_dev_env_short_key_ok(self):
+        """Dev/test with auth off is never blocked (no regression)."""
+        s = Settings(auth_enabled=False, secret_key=SecretStr("short"))
         assert s.auth_enabled is False

@@ -75,12 +75,12 @@ class PolymorphicAtomStore:
         common case), this is computed per-source via CircleResolver inside
         each retrieval module's filter clause.
 
-        v1 PolymorphicAtomStore passes max_visible_tier through but the
-        underlying retrieval modules don't yet apply circle filters — that's
-        Lane C work (rewriting the legacy scope/permission filters into
-        circle_tier filters in rag_retrieval / kg_retrieval / memory_retrieval).
-        Until Lane C lands, query() returns un-filtered results from each
-        source (legacy behavior preserved).
+        Circle filtering (Lane C) is applied per source: rag / kg / memory
+        retrieval all receive ``asker_id`` and constrain results via
+        ``circle_sql`` (owner + public-tier + explicit grants + tier reach).
+        A ``None`` asker reduces every source to public-tier only. (RAG search
+        previously omitted ``user_id`` here and returned unfiltered chunks —
+        fixed in #695 so no source bypasses the circle filter.)
         """
         from services.document_fact_retrieval import DocumentFactRetrieval
         from services.kg_retrieval import KGRetrieval
@@ -91,7 +91,7 @@ class PolymorphicAtomStore:
 
         candidate_k = top_k * 3  # over-fetch for RRF fusion across sources
 
-        rag_task = RAGRetrieval(self.db).search(query_text, top_k=candidate_k)
+        rag_task = RAGRetrieval(self.db).search(query_text, top_k=candidate_k, user_id=asker_id)
         # Structured per-entity/-relation KG atoms (not the aggregated string):
         # each kg_node/kg_edge carries its source id so the detail drawer can
         # render the entity + edit its tier. The agent path still uses the
