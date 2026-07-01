@@ -1226,27 +1226,20 @@ class MCPManager:
         Returns None if allowed, or an error message string if denied.
 
         Permission resolution order:
-        1. user_permissions is None → allow ONLY when AUTH_ENABLED=false; when
-           auth is enabled a None (unresolved/failed-to-load) is denied — fail
-           closed so a permission-load failure cannot grant full MCP access (#690).
+        1. user_permissions is None → allow. None means "no permission model in
+           effect": AUTH_ENABLED=false (single-user) OR an intentionally
+           unidentified caller (anonymous/guest voice turn, device/satellite)
+           that ha_glue deliberately keeps allowed so spoken commands work. A
+           permission *load failure* is NOT represented as None — the caller
+           substitutes `[]` (no permissions → denied below), so the fail-open
+           path here can't be reached by an error. (#690)
         2. "mcp.*" in user_permissions → allow (admin wildcard)
         3. tool_permissions has mapping for this tool → check specific permission
         4. permissions defined (server-level) → check if user has at least one
         5. Nothing defined → convention: check "mcp.<server_name>" in user_permissions
-        6. No match → denied
+        6. No match / empty list → denied
         """
         if user_permissions is None:
-            # None is ambiguous: it means EITHER AUTH_ENABLED=false (single-user
-            # mode, no permission model → allow) OR the caller could not resolve
-            # the authenticated user's permissions (DB load failure, unresolved
-            # user). Fail OPEN only in the former; fail CLOSED in the latter so a
-            # transient load failure never escalates to full tool access. (#690)
-            from utils.config import settings
-            if settings.auth_enabled:
-                return (
-                    f"Permission denied: permissions could not be resolved for "
-                    f"{tool_info.namespaced_name}"
-                )
             return None
 
         server_name = tool_info.server_name

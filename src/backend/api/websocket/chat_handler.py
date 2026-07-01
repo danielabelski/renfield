@@ -130,11 +130,22 @@ async def _session_registerable_by(session_id: str, auth_user_id: int | None) ->
 
     from models.database import Conversation
 
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(Conversation.user_id).where(Conversation.session_id == session_id)
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(Conversation.user_id).where(Conversation.session_id == session_id)
+            )
+            owner = result.scalar_one_or_none()
+    except Exception as e:
+        # The call sites run inside the receive loop, whose only `except` is
+        # OUTSIDE the loop — a raised DB error here would tear down the whole
+        # chat WS. Fail closed (refuse the push-registration) but never raise, so
+        # a transient DB blip can't kill an otherwise-healthy connection.
+        logger.warning(
+            f"⚠️ WS ownership check failed for session {session_id}; "
+            f"refusing push-register (connection kept alive): {e}"
         )
-        owner = result.scalar_one_or_none()
+        return False
     # No row yet → new/unowned session (created for this caller). Otherwise the
     # owner must match the authenticated caller.
     return owner is None or owner == auth_user_id

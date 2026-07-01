@@ -165,23 +165,25 @@ class TestCheckToolPermission:
         assert result is None
 
     @pytest.mark.unit
-    def test_none_permissions_fails_closed_when_auth_enabled(self, monkeypatch):
-        """#690: with AUTH_ENABLED=true, an unresolved (None) permission set is
-        DENIED — a permission-load failure must not grant full MCP access."""
+    def test_none_permissions_allowed_even_when_auth_enabled(self, monkeypatch):
+        """#690: None means 'no permission model' — AUTH off OR an intentionally
+        unidentified caller (anonymous/guest voice, device/satellite) that
+        ha_glue keeps allowed so spoken commands work. It stays ALLOWED even with
+        auth on; a load *failure* is represented as [] (denied), never None."""
         monkeypatch.setattr("utils.config.settings.auth_enabled", True)
         manager, tool = _make_manager_with_tool()
-        result = manager._check_tool_permission(tool, None)
-        assert result is not None  # denied (error string)
-        assert "denied" in result.lower()
+        assert manager._check_tool_permission(tool, None) is None  # allowed
 
     @pytest.mark.unit
-    def test_empty_permissions_denied_when_auth_enabled(self, monkeypatch):
-        """#690: an authenticated user with no permissions ([]) is denied, not
-        allowed — the fail-closed fallback the caller sets on load failure."""
+    def test_empty_permissions_denied(self, monkeypatch):
+        """#690 (the actual fail-closed): an empty permission list — the fallback
+        the caller substitutes on a permission-load failure — is DENIED via the
+        normal path (no mcp.* / server / convention grant matches)."""
         monkeypatch.setattr("utils.config.settings.auth_enabled", True)
         manager, tool = _make_manager_with_tool()
         result = manager._check_tool_permission(tool, [])
-        assert result is not None  # denied
+        assert result is not None  # denied (error string)
+        assert "denied" in result.lower()
 
     @pytest.mark.unit
     def test_admin_wildcard_allows_all(self):
