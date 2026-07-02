@@ -39,6 +39,8 @@ from utils.config import settings
 
 REINDEX_DEFAULT_CAP = 200
 REINDEX_MAX_CAP = 500
+LIST_DEFAULT_LIMIT = 50
+LIST_MAX_LIMIT = 200
 
 # Registered with the agent tool registry by
 # `services/agent_tools.py::_register_internal_tools()`.
@@ -71,6 +73,24 @@ KB_MAINTENANCE_TOOLS: dict = {
             "limit": (
                 "Max documents to reindex in one call (optional; default "
                 f"{REINDEX_DEFAULT_CAP}, max {REINDEX_MAX_CAP})"
+            ),
+        },
+    },
+    "internal.list_chunkless_documents": {
+        "description": (
+            "List BY NAME the knowledge-base documents that have NO chunks — the "
+            "completed documents that finished indexing but produced nothing. Use "
+            "when the user wants to SEE WHICH documents are affected or their "
+            "titles: 'welche Dokumente haben keine Chunks?', 'liste die leeren "
+            "Dokumente auf', 'nenne mir die Titel der Dokumente ohne Chunks', "
+            "'which documents have no chunks'. Returns id + display name for each, "
+            "newest first. (For just the COUNT use ingest_status; to fix them use "
+            "reindex_documents.)"
+        ),
+        "parameters": {
+            "limit": (
+                "Max documents to list (optional; default "
+                f"{LIST_DEFAULT_LIMIT}, max {LIST_MAX_LIMIT})"
             ),
         },
     },
@@ -322,5 +342,82 @@ async def reindex_documents(
         return {
             "success": False,
             "message": f"Neu-Indexieren fehlgeschlagen: {e!s}",
+            "action_taken": False,
+        }
+
+
+async def list_chunkless_documents(params: dict, user_id: int | None = None) -> dict:
+    """List completed docs with no chunk rows, by display name (newest first)."""
+    limit = LIST_DEFAULT_LIMIT
+    if params.get("limit"):
+        try:
+            limit = max(1, min(LIST_MAX_LIMIT, int(params["limit"])))
+        except (ValueError, TypeError):
+            pass
+
+    try:
+        # display_name = generated_title → title → filename (matches the KB list).
+        display_name = func.coalesce(
+            Document.generated_title, Document.title, Document.filename
+        )
+        chunk_sub = (
+            select(DocumentChunk.document_id)
+            .group_by(DocumentChunk.document_id)
+            .subquery()
+        )
+        base = (
+            select(Document.id, display_name)
+            .select_from(Document)
+            .outerjoin(chunk_sub, chunk_sub.c.document_id == Document.id)
+            .where(
+                Document.status == DOC_STATUS_COMPLETED,
+                chunk_sub.c.document_id.is_(None),
+            )
+        )
+        async with AsyncSessionLocal() as db:
+            total = (
+                await db.execute(
+                    select(func.count()).select_from(base.subquery())
+                )
+            ).scalar() or 0
+            rows = (
+                await db.execute(base.order_by(Document.id.desc()).limit(limit))
+            ).all()
+
+        if not rows:
+            return {
+                "success": True,
+                "message": "Alle fertigen Dokumente haben Chunks — keine leeren Dokumente.",
+                "action_taken": True,
+                "empty_result": True,
+                "data": {"count": 0, "total": 0, "documents": []},
+            }
+
+        documents = [{"id": r[0], "name": r[1]} for r in rows]
+        lines = "\n".join(f"- {d['name']} (#{d['id']})" for d in documents)
+        truncated = total > len(documents)
+        suffix = (
+            f" (zeige {len(documents)} von {total}; höheres 'limit' für mehr)"
+            if truncated
+            else ""
+        )
+        return {
+            "success": True,
+            "message": (
+                f"{total} Dokument(e) ohne Chunks{suffix}:\n{lines}"
+            ),
+            "action_taken": True,
+            "data": {
+                "count": len(documents),
+                "total": total,
+                "truncated": truncated,
+                "documents": documents,
+            },
+        }
+    except Exception as e:
+        logger.error(f"Error in list_chunkless_documents: {e}")
+        return {
+            "success": False,
+            "message": f"Auflisten fehlgeschlagen: {e!s}",
             "action_taken": False,
         }

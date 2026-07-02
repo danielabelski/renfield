@@ -88,6 +88,11 @@ class ActionExecutor:
             from services.kb_maintenance_tool import ingest_status
             return await ingest_status(parameters, user_id=user_id)
 
+        # Read-only: list completed docs that have no chunks, BY NAME.
+        if intent == "internal.list_chunkless_documents":
+            from services.kb_maintenance_tool import list_chunkless_documents
+            return await list_chunkless_documents(parameters, user_id=user_id)
+
         # Platform-owned internal tool: reindex completed docs that have 0 chunks
         # (purge + rebuild via the user_reindex worker path). Write/maintenance —
         # gated on Permission.RAG_MANAGE, so user_permissions is injected here (the
