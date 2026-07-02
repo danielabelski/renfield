@@ -188,3 +188,37 @@ async def test_ingest_status_reports_counts(monkeypatch):
     assert d["paperless_pending"] == 5
     assert "KB-Verarbeitung" in out["message"]
     assert "3 fertige Dokument(e) haben KEINE Chunks" in out["message"]
+
+
+# --------------------------------------------------------------------------
+# list_chunkless_documents
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_list_chunkless_returns_names(monkeypatch):
+    # execute #1 -> total (scalar); execute #2 -> rows (id, display_name)
+    cm, _ = _session([_scalar_result(2), _all_result([(9, "Doc B"), (5, "Doc A")])])
+    monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
+    out = await kb.list_chunkless_documents({})
+    assert out["success"] is True
+    assert out["data"]["count"] == 2 and out["data"]["total"] == 2
+    assert [d["id"] for d in out["data"]["documents"]] == [9, 5]
+    assert "Doc B (#9)" in out["message"] and "Doc A (#5)" in out["message"]
+
+
+@pytest.mark.asyncio
+async def test_list_chunkless_empty(monkeypatch):
+    cm, _ = _session([_scalar_result(0), _all_result([])])
+    monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
+    out = await kb.list_chunkless_documents({})
+    assert out["success"] is True and out.get("empty_result") is True
+    assert out["data"]["count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_list_chunkless_truncated(monkeypatch):
+    cm, _ = _session([_scalar_result(100), _all_result([(1, "A"), (2, "B")])])
+    monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
+    out = await kb.list_chunkless_documents({"limit": 2})
+    assert out["data"]["truncated"] is True and out["data"]["total"] == 100
+    assert "zeige 2 von 100" in out["message"]

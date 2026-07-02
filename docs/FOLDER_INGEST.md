@@ -128,6 +128,14 @@ the Renfield chat (both live on the `documents` + `general` roles;
   (purge + rebuild) for each (batch-capped 200 / max 500; skips in-flight docs).
   **Gated on `Permission.RAG_MANAGE`** when auth is on — an authenticated
   low-privilege user is refused; auth-off / unidentified-voice turns are allowed.
+- **`internal.list_chunkless_documents`** (read-only): "welche Dokumente haben keine
+  Chunks?" / "nenne mir die Titel der leeren Dokumente" → lists the chunkless
+  `completed` docs by name (`generated_title → title → filename`), newest first,
+  capped (default 50 / max 200). The by-name complement to the count + reindex.
+
+Router note: these processing-status/reindex questions are routed to the
+`documents` agent role (not `knowledge`, which is a no-agent-loop RAG path) — see
+the role descriptions in `config/agent_roles.yaml`.
 
 ## Behavior notes
 
