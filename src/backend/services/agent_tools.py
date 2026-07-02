@@ -182,12 +182,14 @@ class AgentToolRegistry:
             internal_filter: If set, only register these tool names. None = all.
         """
         from services.chat_upload_tool import CHAT_UPLOAD_TOOLS
+        from services.kb_maintenance_tool import KB_MAINTENANCE_TOOLS
         from services.knowledge_tool import KNOWLEDGE_TOOL
         from services.memory_list_tool import MEMORY_LIST_TOOL
         from services.widget_tools import WIDGET_TOOLS
 
         platform_tools: dict = {
             **KNOWLEDGE_TOOL, **MEMORY_LIST_TOOL, **CHAT_UPLOAD_TOOLS, **WIDGET_TOOLS,
+            **KB_MAINTENANCE_TOOLS,
         }
 
         for name, definition in platform_tools.items():

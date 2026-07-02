@@ -82,6 +82,22 @@ class ActionExecutor:
             from services.memory_list_tool import list_my_memories
             return await list_my_memories(parameters, user_id=user_id)
 
+        # Platform-owned internal tool: read-only ingest → KB → Paperless status.
+        # Aggregate counts only; user_id injected for symmetry (unused today).
+        if intent == "internal.ingest_status":
+            from services.kb_maintenance_tool import ingest_status
+            return await ingest_status(parameters, user_id=user_id)
+
+        # Platform-owned internal tool: reindex completed docs that have 0 chunks
+        # (purge + rebuild via the user_reindex worker path). Write/maintenance —
+        # gated on Permission.RAG_MANAGE, so user_permissions is injected here (the
+        # tool refuses an authenticated low-privilege caller; auth-off is allowed).
+        if intent == "internal.reindex_documents":
+            from services.kb_maintenance_tool import reindex_documents
+            return await reindex_documents(
+                parameters, user_id=user_id, user_permissions=user_permissions
+            )
+
         # Platform-owned internal tool: forward a chat attachment to Paperless.
         # The agent passes only the attachment_id; the tool reads real file
         # bytes from storage and calls mcp.paperless.upload_document under the
