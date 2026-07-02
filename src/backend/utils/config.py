@@ -73,15 +73,18 @@ class Settings(BaseSettings):
     postgres_host: str = "postgres"
     postgres_port: int = Field(default=5432, ge=1, le=65535)
     postgres_db: str = "renfield"
-    # 15 + 30 = 45 connections/process. backend + document-worker each get their
-    # own pool → 2 × 45 = 90 max, safely under Postgres max_connections=100. Bumped
-    # from 10+20 after a folder-ingest backlog flood exhausted the 30/process pool
-    # (QueuePool timeout → docs failed with create_error). Env-overridable if the
-    # DB's max_connections is raised. Do NOT push per-process total past ~45 while
+    # 10 + 20 = 30 connections/process. backend + document-worker each get their
+    # own pool → 2 × 30 = 60 max, comfortably under Postgres max_connections=100.
+    # (Briefly bumped to 15+30 during the 2026-07-01 folder-ingest backlog flood,
+    # but that only treated the symptom — the real cause was the Paperless leg
+    # holding a pooled connection across a multi-second external wait on the push
+    # path. That is now decoupled to the async paperless_reconciler (Design Z), so
+    # the original headroom is sufficient again.) Env-overridable if the DB's
+    # max_connections is raised. Do NOT push per-process total past ~45 while
     # max_connections=100 and two processes share it, or you trade pool timeouts
     # for "too many connections".
-    db_pool_size: int = Field(default=15, ge=1, le=100)
-    db_max_overflow: int = Field(default=30, ge=0, le=200)
+    db_pool_size: int = Field(default=10, ge=1, le=100)
+    db_max_overflow: int = Field(default=20, ge=0, le=200)
     db_pool_recycle: int = Field(default=3600, ge=60, le=86400)
 
     # Redis
@@ -618,6 +621,15 @@ class Settings(BaseSettings):
     folder_ingest_default_tier: int = Field(default=0, ge=0, le=4)  # circle tier at create
     folder_ingest_to_paperless: bool = True
     folder_ingest_notify_on_filed: bool = True
+
+    # Async Paperless reconciler (Design Z): folder/email-ingest stamp
+    # paperless_state='pending' and this periodic reconciler files them out of
+    # band (services/paperless_reconciler.py), so the push never awaits the
+    # external Paperless round-trip on a pooled DB connection. Runs whenever
+    # folder- OR email-ingest→Paperless is on. Batch bounds per-tick work so a
+    # large first-run backlog drains across ticks.
+    paperless_reconciler_interval: int = 120  # seconds between ticks
+    paperless_reconciler_batch: int = 25  # pending docs filed per tick
 
     # Email-mailbox auto-ingest (Phase 1; ships dark). The dedicated
     # renfield-mcp-email-ingest watcher PUSHES attachments to

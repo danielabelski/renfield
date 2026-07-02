@@ -95,16 +95,12 @@ async def ingest_file(parameters: dict, *, mcp_manager, user_id: int | None = No
     if not await _worker_is_alive():
         return _fail("The document worker is unavailable right now; try again shortly.")
 
-    # 3. Build the Paperless leg (when enabled) + resolve the destination, then
-    # run the shared bridge. The asker owns what they ingest (user_id); fall
-    # back to the configured target_user only in unauthenticated single-user mode.
+    # 3. Resolve the destination and run the shared bridge. The asker owns what
+    # they ingest (user_id); fall back to the configured target_user only in
+    # unauthenticated single-user mode. Paperless filing is decoupled (Design Z):
+    # the bridge stamps paperless_state='pending' and the async reconciler files
+    # it — the tool no longer builds/awaits a leg on this call.
     from services.database import AsyncSessionLocal
-
-    leg = None
-    if settings.folder_ingest_to_paperless:
-        from services.folder_ingest_paperless import make_paperless_leg
-
-        leg = make_paperless_leg(mcp_manager, user_id=user_id)
 
     async with AsyncSessionLocal() as db:
         kb = await resolve_target_kb(db)
@@ -116,7 +112,7 @@ async def ingest_file(parameters: dict, *, mcp_manager, user_id: int | None = No
             kb_id=kb.id,
             owner_user_id=owner,
             default_tier=settings.folder_ingest_default_tier,
-            paperless_leg=leg,
+            file_to_paperless=bool(settings.folder_ingest_to_paperless),
         )
 
     logger.info(f"internal.ingest_file: {filename} → {result.status.value} (doc {result.document_id})")

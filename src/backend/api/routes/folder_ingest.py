@@ -80,23 +80,14 @@ class FolderIngestHealthResponse(BaseModel):
     contract_version: str = FOLDER_INGEST_CONTRACT_VERSION
 
 
-def _build_paperless_leg(request: Request, owner_user_id: int | None):
-    """The real Paperless leg when ``folder_ingest_to_paperless`` is on and the
-    MCP manager is available, else None (the bridge then records the leg as a
-    no-op settled — nothing to file). Kept out of the bridge so the import of
-    the Paperless/MCP stack stays at the route edge."""
-    if not settings.folder_ingest_to_paperless:
-        return None
-    mcp_manager = getattr(request.app.state, "mcp_manager", None)
-    if mcp_manager is None:
-        logger.warning(
-            "folder-ingest: to_paperless is on but no MCP manager — skipping "
-            "Paperless filing for this push"
-        )
-        return None
-    from services.folder_ingest_paperless import make_paperless_leg
-
-    return make_paperless_leg(mcp_manager, user_id=owner_user_id)
+def _should_file_paperless() -> bool:
+    """Whether this push should be filed into Paperless (Design Z). The push no
+    longer performs the Paperless round-trip itself — it only stamps the
+    document ``paperless_state='pending'`` so the out-of-band
+    ``paperless_reconciler`` files it later (own session, bounded concurrency).
+    So the decision is just the feature flag; the MCP manager is needed at
+    reconcile time, not here."""
+    return bool(settings.folder_ingest_to_paperless)
 
 
 @router.post("/document", response_model=FolderIngestResponse)
@@ -193,7 +184,7 @@ async def ingest_pushed_document(
             kb_id=kb.id,
             owner_user_id=owner_user_id,
             default_tier=settings.folder_ingest_default_tier,
-            paperless_leg=_build_paperless_leg(request, owner_user_id),
+            file_to_paperless=_should_file_paperless(),
         )
     except Exception as exc:  # noqa: BLE001 - never 500 the push contract
         logger.error(f"folder-ingest: unexpected error processing {meta.filename!r}: {exc}")

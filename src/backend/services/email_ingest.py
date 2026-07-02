@@ -36,7 +36,6 @@ from services.folder_ingest import (
     IngestMeta,
     IngestResult,
     IngestStatus,
-    PaperlessLeg,
     ingest_document,
 )
 from services.ingest_common import (
@@ -168,7 +167,7 @@ async def ingest_email_document(
     subject: str | None = None,
     mime: str | None = None,
     sha256: str | None = None,
-    paperless_leg: PaperlessLeg | None = None,
+    file_to_paperless: bool = False,
 ) -> IngestResult:
     """Route one pushed email attachment through the reused folder-ingest bridge
     with server-authoritative per-mailbox sphere routing, then record provenance.
@@ -198,7 +197,7 @@ async def ingest_email_document(
         kb_id=kb.id,
         owner_user_id=owner_user_id,
         default_tier=target.tier,
-        paperless_leg=paperless_leg,
+        file_to_paperless=file_to_paperless,
     )
 
     # Record provenance + idempotency keyed by the CONTENT hash (matches

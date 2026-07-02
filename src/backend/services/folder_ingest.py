@@ -42,6 +42,7 @@ from models.database import (
     DOC_STATUS_PENDING,
     PAPERLESS_STATE_DONE,
     PAPERLESS_STATE_FAILED,
+    PAPERLESS_STATE_PENDING,
     SETTING_FOLDER_INGEST_TOKEN,
     Document,
     KnowledgeBase,
@@ -113,13 +114,12 @@ class IngestMeta:
 
 class _Decision(str, Enum):
     """Outcome of the dedup classification against the existing Document row.
-    Kept separate from :class:`IngestStatus` because one decision
-    (``PAPERLESS_ONLY``) does work before resolving to a response state."""
+    Kept separate from :class:`IngestStatus` because a decision may run work
+    (create/enqueue) before resolving to a response state."""
 
     CREATE = "create"  # no row → run the full pipeline
-    DUPLICATE = "duplicate"  # completed AND Paperless-done → nothing to do
+    DUPLICATE = "duplicate"  # completed → dedup (Paperless handled async, Design Z)
     REINGEST = "reingest"  # status=failed → re-run the full pipeline
-    PAPERLESS_ONLY = "paperless_only"  # completed but Paperless not yet done
     RETRY = "retry"  # pending/processing → don't double-enqueue
 
 
@@ -142,36 +142,27 @@ async def classify_existing(
     if doc is None:
         return _Decision.CREATE, None
     if doc.status == DOC_STATUS_COMPLETED:
-        if doc.paperless_state in _PAPERLESS_SETTLED:
-            return _Decision.DUPLICATE, doc
-        return _Decision.PAPERLESS_ONLY, doc
+        # Paperless filing is decoupled from the move decision (Design Z): the
+        # async ``paperless_reconciler`` owns it, keyed on paperless_state=
+        # 'pending'. A completed KB row is therefore always a clean dedup —
+        # the file moves to processed/ regardless of the Paperless leg state,
+        # and the reconciler files it (or already has) out of band. This is why
+        # the push never blocks on the external Paperless round-trip anymore.
+        return _Decision.DUPLICATE, doc
     if doc.status == DOC_STATUS_FAILED:
         return _Decision.REINGEST, doc
     # pending / processing — the worker still owns this row.
     return _Decision.RETRY, doc
 
 
-# A Paperless leg is an injected coroutine so the orchestrator stays testable
-# and T5 can swap in the real PaperlessMetadataExtractor (D5) + duplicate-marker
-# detection (D10) without touching the dedup/4-state control flow. It MUST set
+# A Paperless leg is an injected coroutine used by the async paperless_reconciler
+# (Design Z) to file a document into Paperless out of band. It MUST set
 # ``doc.paperless_state`` and commit, and returns True when the leg is settled
-# (filed / duplicate / skipped) — i.e. paperless-done for the D2 matrix.
+# (filed / duplicate / terminal-reject). No longer invoked on the ingest request
+# path — that inline external round-trip caused the pool-exhaustion outage.
 PaperlessLeg = Callable[
     [AsyncSession, Document, bytes, IngestMeta], Awaitable[bool]
 ]
-
-
-async def _noop_paperless_leg(
-    db: AsyncSession, doc: Document, file_bytes: bytes, meta: IngestMeta
-) -> bool:
-    """Default when Paperless filing is disabled or no leg is supplied: mark
-    the leg settled so a re-push of this document dedups cleanly (D2).
-    Idempotent — a no-op if the leg already settled."""
-    if doc.paperless_state == PAPERLESS_STATE_DONE:
-        return True
-    doc.paperless_state = PAPERLESS_STATE_DONE
-    await db.commit()
-    return True
 
 
 def _ext_ok(filename: str) -> bool:
@@ -199,25 +190,29 @@ async def ingest_document(
     kb_id: int | None,
     owner_user_id: int | None = None,
     default_tier: int | None = None,
-    paperless_leg: PaperlessLeg | None = None,
+    file_to_paperless: bool = False,
     force_ocr: bool = False,
 ) -> IngestResult:
     """Run the folder-ingest pipeline for one pushed file and return the
     4-state result (D9). See the module docstring for the contract.
 
     Steps: (0) persist a recovery byte copy, (1) reject bad ext/oversize,
-    (2) completion+Paperless-aware dedup (D2), (3) race-safe create (D3) +
-    enqueue, (4) Paperless leg, (5) respond. D4 owner/tier: ``owner_user_id``
-    (the configured ``folder_ingest_target_user``, None → KB owner / first user)
-    and ``default_tier`` (the configured ``folder_ingest_default_tier``, None →
-    KB default tier) are applied as overrides at create — auto-filed documents
-    are owned by the configured user at the configured tier regardless of the KB.
+    (2) completion-aware dedup (D2), (3) race-safe create (D3) + enqueue,
+    (4) mark for async Paperless filing, (5) respond. D4 owner/tier:
+    ``owner_user_id`` (the configured ``folder_ingest_target_user``, None → KB
+    owner / first user) and ``default_tier`` (the configured
+    ``folder_ingest_default_tier``, None → KB default tier) are applied as
+    overrides at create — auto-filed documents are owned by the configured user
+    at the configured tier regardless of the KB.
 
-    ``paperless_leg`` is the Paperless-filing seam: pass the real leg (T5) to
-    file into Paperless, or ``None`` to skip filing entirely — the latter marks
-    ``paperless_state='done'`` (nothing to file ⇒ settled), so the caller maps
-    ``folder_ingest_to_paperless=False`` to ``None``. It is NEVER defaulted to a
-    silent no-op while Paperless is meant to be on: the caller owns that choice.
+    ``file_to_paperless`` is the Paperless-filing seam (Design Z): when True, a
+    newly-created / re-ingested document is stamped ``paperless_state='pending'``
+    and the out-of-band ``paperless_reconciler`` files it into Paperless later
+    (own session, bounded concurrency). The push itself NEVER performs the
+    external Paperless round-trip — that inline await was what pinned a pooled DB
+    connection across a multi-second external wait and exhausted the pool under a
+    burst. When False (filing disabled), the document is left ``paperless_state``
+    NULL and the reconciler ignores it.
     """
     # 1. Reject bad extension / empty / oversize up front (before touching
     # disk/DB).
@@ -247,11 +242,9 @@ async def ingest_document(
         )
         return IngestResult(IngestStatus.RETRY, detail="sha256_mismatch")
 
-    # No leg supplied ⇒ Paperless filing is off for this call; the no-op leg
-    # records the leg as settled so a re-push dedups cleanly (D2).
-    leg = paperless_leg or _noop_paperless_leg
-
-    # 2. Dedup against the existing row (D2).
+    # 2. Dedup against the existing row (D2). A completed row is a clean dedup
+    # (Paperless is filed out of band by the reconciler — Design Z), so there is
+    # no longer a PAPERLESS_ONLY branch running an inline leg on the request.
     decision, existing = await classify_existing(db, file_hash, kb_id)
 
     if decision is _Decision.DUPLICATE:
@@ -264,27 +257,6 @@ async def ingest_document(
         # double-enqueue; the MCP leaves the file in the inbox and re-pushes.
         return IngestResult(
             IngestStatus.RETRY, document_id=existing.id, detail="in_progress"
-        )
-
-    if decision is _Decision.PAPERLESS_ONLY:
-        # KB ingest is complete but the Paperless leg never settled. Run only
-        # the still-missing leg. If it settles (filed/duplicate/terminal-reject)
-        # report duplicate so the MCP moves the file to processed/; if it
-        # couldn't settle (upload error / consume still pending) report retry so
-        # the MCP re-pushes and the leg is attempted again.
-        try:
-            settled = await leg(db, existing, file_bytes, meta)
-        except Exception as exc:  # noqa: BLE001 - leg failure is non-fatal
-            logger.warning(f"folder-ingest: Paperless-only leg failed: {exc}")
-            return IngestResult(
-                IngestStatus.RETRY, document_id=existing.id, detail="paperless_retry"
-            )
-        if settled:
-            return IngestResult(
-                IngestStatus.DUPLICATE, document_id=existing.id, detail="paperless_filed"
-            )
-        return IngestResult(
-            IngestStatus.RETRY, document_id=existing.id, detail="paperless_pending"
         )
 
     # decision is CREATE or REINGEST: run the full pipeline.
@@ -330,16 +302,11 @@ async def ingest_document(
             # duplicate. Never a 500 (idempotency property).
             _cleanup(file_path)
             winner = dup.winner
-            # Mirror the classify_existing matrix on the winning row: only a
-            # completed AND Paperless-settled winner is a terminal duplicate.
-            # A completed-but-Paperless-missing (or still-in-flight) winner is
-            # RETRY, so the re-push routes through PAPERLESS_ONLY / pending next
-            # pass instead of being moved to processed/ with Paperless unfiled.
-            if (
-                winner is not None
-                and winner.status == DOC_STATUS_COMPLETED
-                and winner.paperless_state in _PAPERLESS_SETTLED
-            ):
+            # Mirror the classify_existing matrix on the winning row (Design Z):
+            # a completed winner is a terminal duplicate regardless of Paperless
+            # state — the file moves to processed/ and the async reconciler files
+            # Paperless out of band. A still-in-flight winner is RETRY.
+            if winner is not None and winner.status == DOC_STATUS_COMPLETED:
                 return IngestResult(
                     IngestStatus.DUPLICATE,
                     document_id=winner.id,
@@ -364,20 +331,18 @@ async def ingest_document(
         }
     )
 
-    # 4. Paperless leg (best-effort — never fails the KB ingest; the row is
-    # already enqueued, so we respond INGESTED regardless of the leg). The leg
-    # records its own outcome on paperless_state. KNOWN GAP: on this CREATE path
-    # the response is INGESTED → the MCP moves the file to processed/, so a leg
-    # that didn't settle (transient Paperless outage) is NOT auto-retried — the
-    # document is in the KB but missing from Paperless until a manual re-push or
-    # a future paperless-reconciler (P2). A leg exception is likewise swallowed.
-    try:
-        await leg(db, doc, file_bytes, meta)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            f"folder-ingest: Paperless leg failed for doc {doc.id} "
-            f"(KB ingest unaffected): {exc}"
-        )
+    # 4. Mark for async Paperless filing (Design Z). We do NOT run the leg on
+    # the request path — that inline external round-trip is exactly what pinned a
+    # pooled DB connection across a multi-second Paperless wait and exhausted the
+    # pool under a burst. Instead stamp paperless_state='pending' (unless already
+    # filed on a REINGEST) and let the out-of-band paperless_reconciler file it.
+    # 'pending' also doubles as the provenance marker: only folder/email-ingest
+    # docs get it, so interactive KB uploads (which stay NULL) are never filed.
+    # The reconciler is durable + timely (periodic, restart-safe), closing the
+    # old "in KB but missing from Paperless until a manual re-push" gap.
+    if file_to_paperless and doc.paperless_state != PAPERLESS_STATE_DONE:
+        doc.paperless_state = PAPERLESS_STATE_PENDING
+        await db.commit()
 
     return IngestResult(
         IngestStatus.INGESTED, document_id=doc.id, detail="enqueued"

@@ -180,9 +180,11 @@ def make_paperless_leg(
     lang: str = "de",
     await_timeout_s: float | None = None,
 ) -> PaperlessLeg:
-    """Build a ``PaperlessLeg`` closure over the MCP manager + owner. The route
-    passes the result to ``ingest_document(paperless_leg=...)`` when Paperless
-    filing is enabled; ``None`` is passed when it is off."""
+    """Build a ``PaperlessLeg`` closure over the MCP manager + owner. Used by the
+    async ``paperless_reconciler`` (Design Z) to file a document the ingest bridge
+    stamped ``paperless_state='pending'`` — the leg is no longer run on the ingest
+    request path (that inline external round-trip caused the pool-exhaustion
+    outage)."""
 
     async def _leg(
         db: AsyncSession, doc: Document, file_bytes: bytes, meta: IngestMeta
