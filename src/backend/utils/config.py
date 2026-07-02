@@ -820,6 +820,15 @@ class Settings(BaseSettings):
     api_rate_limit_voice: str = "30/minute"     # Voice endpoints (STT, TTS)
     api_rate_limit_chat: str = "60/minute"      # Chat endpoints
     api_rate_limit_admin: str = "200/minute"    # Admin endpoints (higher limit)
+    # Folder/email-ingest PUSH endpoints. These are hit by the trusted,
+    # Bearer-token-authed MCP watchers (one IP), whose own push-concurrency
+    # semaphore is the intended throughput bound — not this per-IP limit, which
+    # exists for untrusted user-API abuse. Since the Paperless leg was decoupled
+    # (Design Z) the push returns in ms, so a watch-folder backlog now bursts far
+    # above the 100/min default and 429s (stalling the drain). This generous
+    # ceiling lets the MCP semaphore govern legit throughput while still capping a
+    # leaked-token flood (the DB pool is the harder backstop). Env-tunable.
+    api_rate_limit_ingest: str = "1200/minute"
 
     # WebSocket Connection Limits
     ws_max_connections_per_ip: int = 10

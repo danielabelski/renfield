@@ -86,7 +86,7 @@ def _should_file_paperless() -> bool:
 
 
 @router.post("/document", response_model=EmailIngestResponse)
-@limiter.limit(settings.api_rate_limit_default)
+@limiter.limit(settings.api_rate_limit_ingest)
 async def ingest_pushed_email(
     request: Request,
     file: UploadFile = File(...),
