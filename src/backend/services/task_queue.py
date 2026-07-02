@@ -118,6 +118,13 @@ class StreamEntry:
 
     entry_id: str
     params: dict[str, Any]
+    # How many times this entry has been delivered (XPENDING times_delivered).
+    # 1 for a fresh read_one; >1 for a reclaimed entry (a prior consumer took it
+    # and died without ACKing). The worker uses this as an OOM-poison guard: a
+    # doc redelivered past the cap is quarantined (marked failed) instead of
+    # re-processed, so a doc that OOM-kills the worker every attempt can't
+    # crashloop the queue once periodic reclaim re-adopts it.
+    delivery_count: int = 1
 
 
 class DocumentTaskQueue:
@@ -285,11 +292,47 @@ class DocumentTaskQueue:
                 break
             cursor = next_cursor
         if claimed:
+            # Attach the per-entry delivery count (XAUTOCLAIM just incremented it)
+            # so the worker can quarantine an entry redelivered past the poison
+            # cap — a doc that OOM-kills the worker every attempt must NOT be
+            # re-processed indefinitely (it would crashloop the queue). Best-effort:
+            # a redis hiccup here must NOT abort the reclaim (on the startup path an
+            # exception would crash main() → pod restart). Fall back to the default
+            # count; the entries still process, just without the poison stamp.
+            try:
+                counts = await self._pending_delivery_counts()
+                for e in claimed:
+                    e.delivery_count = counts.get(e.entry_id, e.delivery_count)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    f"DocumentTaskQueue: delivery-count fetch failed ({exc}); "
+                    f"reclaimed entries proceed without a poison stamp"
+                )
             logger.warning(
                 f"DocumentTaskQueue: reclaimed {len(claimed)} stale entries "
                 f"from previous consumers"
             )
         return claimed
+
+    async def _pending_delivery_counts(self) -> dict[str, int]:
+        """Map ``entry_id -> times_delivered`` for every entry in the PEL.
+
+        Used to stamp reclaimed entries with their redelivery count (the poison
+        guard). Paginates the PEL with the exclusive ``(id`` cursor (Redis 6.2+)."""
+        counts: dict[str, int] = {}
+        start = "-"
+        while True:
+            pend = await self.redis_client.xpending_range(
+                self.stream_key, self.group_name, min=start, max="+", count=200,
+            )
+            if not pend:
+                break
+            for p in pend:
+                counts[p["message_id"]] = int(p["times_delivered"])
+            if len(pend) < 200:
+                break
+            start = "(" + pend[-1]["message_id"]  # exclusive next page
+        return counts
 
     async def pending_count(self) -> int:
         """Number of entries currently in the consumer group's PEL.

@@ -645,6 +645,20 @@ class Settings(BaseSettings):
     # tolerable retry cadence for a genuinely stuck doc.
     paperless_reconciler_refile_lease_seconds: int = 900
 
+    # Document-worker stale-task recovery. reclaim_stale() re-adopts entries a
+    # dead consumer left un-ACKed in the Redis PEL. It used to run ONLY at worker
+    # startup, so an entry orphaned WHILE the worker keeps running (an OOMKill
+    # mid-OCR where the pod recovers, or a transient-error return) was invisible
+    # to the running consumer forever (doc 241, 2026-07-02). Run it periodically
+    # in the steady-state loop too. min-idle stays visibility_ms (10min) so it
+    # never steals an entry a live worker is mid-processing.
+    worker_reclaim_interval_seconds: int = 120
+    # OOM-poison guard: a doc that OOM-kills the worker every attempt would, with
+    # periodic reclaim, be re-adopted and re-OOM in a loop (crashloop the queue).
+    # After a task has been delivered more than this many times it is quarantined
+    # (the doc is marked failed and the entry ACKed) instead of re-processed.
+    worker_max_deliveries: int = 3
+
     # Email-mailbox auto-ingest (Phase 1; ships dark). The dedicated
     # renfield-mcp-email-ingest watcher PUSHES attachments to
     # POST /api/email-ingest/document; the backend owns the SPHERE routing here
