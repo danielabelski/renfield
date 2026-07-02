@@ -134,6 +134,25 @@ async def test_reindex_limit_clamped_and_reported(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_reindex_fails_when_all_enqueues_fail(monkeypatch):
+    # Redis/queue outage: docs found but every enqueue raises → report FAILURE,
+    # not a misleading success with reindexed=0.
+    cm, session = _session([_scalars_result([5, 9])])
+    monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
+    monkeypatch.setattr(kb.settings, "auth_enabled", False)
+    q = MagicMock()
+    q.enqueue = AsyncMock(side_effect=RuntimeError("redis down"))
+    monkeypatch.setattr("services.task_queue.DocumentTaskQueue", MagicMock(return_value=q))
+    monkeypatch.setattr("services.redis_client.get_redis", MagicMock(return_value=MagicMock()))
+
+    out = await kb.reindex_documents({})
+    assert out["success"] is False
+    assert out["action_taken"] is False
+    assert out["data"]["reindexed"] == 0
+    session.commit.assert_not_awaited()  # no status flip on total failure
+
+
+@pytest.mark.asyncio
 async def test_reindex_bad_limit_falls_back(monkeypatch):
     cm, _ = _session([_scalars_result([]), ])
     monkeypatch.setattr(kb, "AsyncSessionLocal", cm)

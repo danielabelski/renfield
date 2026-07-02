@@ -27,7 +27,12 @@ from __future__ import annotations
 from loguru import logger
 from sqlalchemy import func, select, update
 
-from models.database import DOC_STATUS_COMPLETED, Document, DocumentChunk
+from models.database import (
+    DOC_STATUS_COMPLETED,
+    DOC_STATUS_PENDING,
+    Document,
+    DocumentChunk,
+)
 from models.permissions import Permission, has_permission
 from services.database import AsyncSessionLocal
 from utils.config import settings
@@ -241,29 +246,26 @@ async def reindex_documents(
                 .scalars()
                 .all()
             )
-            if not doc_ids:
-                return {
-                    "success": True,
-                    "message": "Keine fertigen Dokumente ohne Chunks gefunden — nichts zu tun.",
-                    "action_taken": True,
-                    "empty_result": True,
-                    "data": {"reindexed": 0},
-                }
-            # Flip to pending BEFORE enqueue so the list/poll shows them queued
-            # and a concurrent status read doesn't re-pick them (the worker
-            # purges + rebuilds under the user_reindex trigger).
-            await db.execute(
-                update(Document)
-                .where(Document.id.in_(doc_ids))
-                .values(status="pending", error_message=None)
-            )
-            await db.commit()
+        if not doc_ids:
+            return {
+                "success": True,
+                "message": "Keine fertigen Dokumente ohne Chunks gefunden — nichts zu tun.",
+                "action_taken": True,
+                "empty_result": True,
+                "data": {"reindexed": 0},
+            }
 
+        # Enqueue FIRST, then flip only the successfully-enqueued docs to
+        # 'pending'. The worker reprocesses a user_reindex regardless of the
+        # doc's status, so enqueue-then-flip avoids the orphan a flip-then-enqueue
+        # crash would leave (a doc stuck 'pending' with no task). A failed enqueue
+        # simply leaves the doc 'completed' — retried on the next call — instead
+        # of stranded.
         from services.redis_client import get_redis
         from services.task_queue import DocumentTaskQueue
 
         queue = DocumentTaskQueue(redis_client=get_redis())
-        enqueued = 0
+        enqueued_ids: list[int] = []
         for did in doc_ids:
             try:
                 await queue.enqueue(
@@ -274,19 +276,46 @@ async def reindex_documents(
                         "trigger": "user_reindex",
                     }
                 )
-                enqueued += 1
+                enqueued_ids.append(did)
             except Exception as e:  # noqa: BLE001 - one bad enqueue mustn't abort the batch
                 logger.warning(f"reindex_documents: enqueue failed for doc {did}: {e}")
+
+        # Had work but nothing could be enqueued → the queue is unreachable.
+        # Report failure rather than a success with reindexed=0 (which is
+        # indistinguishable from the legitimate "nothing to do" path and would
+        # mislead the operator during exactly the outage this tool diagnoses).
+        if not enqueued_ids:
+            return {
+                "success": False,
+                "message": "Einreihen fehlgeschlagen — die Aufgaben-Queue ist nicht erreichbar.",
+                "action_taken": False,
+                "data": {"reindexed": 0},
+            }
+
+        # Cosmetic status flip so the KB list/poll shows them queued (the worker
+        # sets the real state as it processes). Guard on status=completed so a
+        # doc the worker already advanced (fast-worker race across the three
+        # separate transactions) isn't dragged back to 'pending' with no task.
+        async with AsyncSessionLocal() as db:
+            await db.execute(
+                update(Document)
+                .where(
+                    Document.id.in_(enqueued_ids),
+                    Document.status == DOC_STATUS_COMPLETED,
+                )
+                .values(status=DOC_STATUS_PENDING, error_message=None)
+            )
+            await db.commit()
 
         more = " (weitere folgen beim nächsten Aufruf)" if len(doc_ids) == cap else ""
         return {
             "success": True,
             "message": (
-                f"{enqueued} Dokument(e) ohne Chunks zum Neu-Indexieren "
+                f"{len(enqueued_ids)} Dokument(e) ohne Chunks zum Neu-Indexieren "
                 f"eingereiht{more}. Die Verarbeitung läuft im Hintergrund."
             ),
             "action_taken": True,
-            "data": {"reindexed": enqueued, "document_ids": doc_ids},
+            "data": {"reindexed": len(enqueued_ids), "document_ids": enqueued_ids},
         }
     except Exception as e:
         logger.error(f"Error in reindex_documents: {e}")
