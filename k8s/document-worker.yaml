@@ -88,6 +88,12 @@ spec:
             - name: HOME_ASSISTANT_TOKEN
               valueFrom:
                 secretKeyRef: {name: renfield-secrets, key: home-assistant-token}
+            # Paperless filing runs in the worker (Docling's home). PAPERLESS_ENABLED
+            # + PAPERLESS_API_URL come from the renfield-env configMap (envFrom above);
+            # the token is the one extra secret the worker needs to reach Paperless.
+            - name: PAPERLESS_API_TOKEN
+              valueFrom:
+                secretKeyRef: {name: renfield-secrets, key: paperless-api-token}
           volumeMounts:
             - {name: uploads,    mountPath: /app/data/uploads}
             - {name: cache-home, mountPath: /app/data/cache-home}

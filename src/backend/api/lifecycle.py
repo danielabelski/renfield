@@ -611,14 +611,14 @@ def _schedule_obligation_calendar_sync(app):
 
 
 def _schedule_paperless_reconciler(app):
-    """Async Paperless filing for folder/email auto-ingest (Design Z).
+    """Retry re-enqueuer for Paperless filing (light — no Docling in the backend).
 
-    Files documents the ingest bridge stamped ``paperless_state='pending'`` into
-    Paperless out of band (services/paperless_reconciler.py), so the push never
-    awaits the external Paperless round-trip on a pooled DB connection — the fix
-    for the 2026-07-01 backlog-flood pool exhaustion. Runs whenever folder- OR
-    email-ingest→Paperless is on; degrades gracefully when the MCP manager /
-    Paperless is unreachable (leaves docs pending for a later tick).
+    The document-worker files each folder/email-ingest doc into Paperless during
+    ingest (reusing its own Docling OCR). This periodic scan only re-ENQUEUES the
+    stragglers that stayed ``paperless_state='pending'`` (Paperless was down at
+    ingest) as ``paperless_refile`` worker tasks — the heavy Docling/MCP work runs
+    in the worker, NOT here (running it in the backend OOM'd the pod). Runs whenever
+    folder- OR email-ingest→Paperless is on.
     """
     if not (
         settings.folder_ingest_to_paperless or settings.email_ingest_to_paperless
@@ -626,24 +626,20 @@ def _schedule_paperless_reconciler(app):
         return
 
     async def _tick():
-        from services.paperless_reconciler import reconcile_pending_paperless
+        from services.paperless_reconciler import reenqueue_pending_paperless
 
-        mgr = getattr(app.state, "mcp_manager", None)
-        if mgr is None:
-            logger.debug("Paperless reconciler: mcp_manager not ready; skipping tick")
-            return
-        await reconcile_pending_paperless(mgr)
+        await reenqueue_pending_paperless()
 
     _spawn_periodic_task(
-        name="Paperless reconciler",
+        name="Paperless refile re-enqueuer",
         interval=settings.paperless_reconciler_interval,
         work=_tick,
         started_msg=(
-            f"Paperless reconciler gestartet "
+            f"Paperless refile re-enqueuer gestartet "
             f"(interval={settings.paperless_reconciler_interval}s, "
             f"batch={settings.paperless_reconciler_batch})"
         ),
-        run_at_boot=True,  # drain any pending backlog promptly on cold start
+        run_at_boot=True,
     )
 
 

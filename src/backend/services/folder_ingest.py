@@ -155,13 +155,17 @@ async def classify_existing(
     return _Decision.RETRY, doc
 
 
-# A Paperless leg is an injected coroutine used by the async paperless_reconciler
-# (Design Z) to file a document into Paperless out of band. It MUST set
-# ``doc.paperless_state`` and commit, and returns True when the leg is settled
-# (filed / duplicate / terminal-reject). No longer invoked on the ingest request
-# path — that inline external round-trip caused the pool-exhaustion outage.
+# A Paperless leg is an injected coroutine used by the document-worker's
+# ``post_document_ingest`` filing hook (and the retry/refile task) to file a
+# document into Paperless. It takes the worker's already-computed ``doc_text``
+# (best-quality OCR) — reused for metadata extraction AND written back as the
+# Paperless document's searchable content. It MUST set ``doc.paperless_state`` and
+# commit, and returns True when settled (filed / duplicate / terminal-reject).
+# NOT invoked on the ingest request path — an inline external round-trip there
+# caused the pool-exhaustion outage; and NOT in the backend — Docling belongs in
+# the worker.
 PaperlessLeg = Callable[
-    [AsyncSession, Document, bytes, IngestMeta], Awaitable[bool]
+    [AsyncSession, Document, bytes, IngestMeta, "str | None"], Awaitable[bool]
 ]
 
 

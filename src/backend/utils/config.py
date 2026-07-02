@@ -628,14 +628,13 @@ class Settings(BaseSettings):
     # external Paperless round-trip on a pooled DB connection. Runs whenever
     # folder- OR email-ingest→Paperless is on. Batch bounds per-tick work so a
     # large first-run backlog drains across ticks.
-    paperless_reconciler_interval: int = 120  # seconds between ticks
-    paperless_reconciler_batch: int = 25  # pending docs filed per tick
-    # Concurrent Paperless legs per tick. Each leg holds a pooled DB connection
-    # across its external upload+consume round-trip (bounded, unlike the request
-    # path this replaces), so keep this SMALL relative to db_pool_size+overlap
-    # (default 30). Raising it re-introduces pool pressure in the API pod — do not
-    # exceed a few without raising the pool too.
-    paperless_reconciler_concurrency: int = Field(default=3, ge=1, le=16)
+    paperless_reconciler_interval: int = 120  # seconds between reconciler ticks
+    paperless_reconciler_batch: int = 25  # pending docs re-enqueued per tick
+    # Grace before a still-pending completed doc is re-enqueued for a worker
+    # refile — keeps the scan from racing the initial fire-and-forget filing hook
+    # (which runs after the doc is marked completed). Only docs completed longer
+    # ago than this are treated as genuine stragglers.
+    paperless_reconciler_refile_grace_seconds: int = 300
 
     # Email-mailbox auto-ingest (Phase 1; ships dark). The dedicated
     # renfield-mcp-email-ingest watcher PUSHES attachments to

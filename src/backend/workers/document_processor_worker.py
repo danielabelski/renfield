@@ -170,6 +170,22 @@ async def _process_entry(
     # (#async-reindex). Absent → initial_ingest (back-compat with older entries).
     trigger = str(entry.params.get("trigger") or "initial_ingest")
     progress = DocumentProgress(redis, doc_id)
+
+    if trigger == "paperless_refile":
+        # Retry path: file a still-pending doc into Paperless WITHOUT re-running
+        # the KB pipeline. The Docling OCR + Paperless MCP work runs here in the
+        # worker (its home) — the backend only enqueues these. Best-effort; ack
+        # regardless (a leg failure leaves the doc pending for the next re-enqueue).
+        try:
+            from services.paperless_filing_hook import refile_document_paperless
+
+            await refile_document_paperless(doc_id, user_id=user_id)
+        except Exception as e:  # noqa: BLE001 - never let a refile crash the loop
+            logger.warning(f"paperless_refile for doc {doc_id} failed: {e}")
+        await queue.ack(entry.entry_id)
+        logger.info(f"paperless_refile doc {doc_id} (entry {entry.entry_id})")
+        return
+
     try:
         async with AsyncSessionLocal() as db:
             rag = RAGService(db)
