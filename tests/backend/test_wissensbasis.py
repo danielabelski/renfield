@@ -110,6 +110,12 @@ class TestShapes:
         body = resp.json()
         assert set(body) == {"clusters", "total_entities", "total_relations", "truncated"}
         assert body["total_entities"] == 2
+        # Tier + intra-cluster structure ride on every cluster (3D scene:
+        # tier-token node colour + hub↔hub filaments).
+        cluster = body["clusters"][0]
+        hub_by_name = {h["name"]: h for h in cluster["hubs"]}
+        assert hub_by_name["Alpha"]["circle_tier"] == 0
+        assert {"from_entity": str(a.id), "to_entity": str(b.id), "relation": "knows"} in cluster["hub_edges"]
 
     @pytest.mark.database
     async def test_focus_200_shape(self, app, db_session):
@@ -123,6 +129,8 @@ class TestShapes:
         body = resp.json()
         assert body["focus"]["entity_id"] == str(center.id)
         assert [h["entity_id"] for h in body["hop1"]] == [str(near.id)]
+        assert body["focus"]["circle_tier"] == 0
+        assert body["hop1"][0]["circle_tier"] == 0
 
     @pytest.mark.database
     async def test_focus_404_non_integer(self, app, db_session):

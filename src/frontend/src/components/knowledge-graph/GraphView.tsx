@@ -5,12 +5,33 @@
  *
  *   - Corpus mode (no ?focus=): renders the connected-component
  *     clusters returned by /api/wissensbasis/graph. Translucent
- *     spheres with hub entities orbiting each.
+ *     spheres with hub entities distributed over each cluster's
+ *     surface, real hub↔hub relations as filaments inside.
  *
  *   - Focus mode (?focus=<entity_id>): renders the entity's
- *     neighborhood. Focus entity at center, hop1 entities orbiting
- *     close, hop2 entities in an outer translucent shell. Data from
- *     /api/wissensbasis/focus.
+ *     neighborhood. Focus entity at center, hop1 entities on an inner
+ *     Fibonacci shell, hop2 entities on an outer shell, and the REAL
+ *     relation edges from the backend between all of them.
+ *
+ * The scene is deliberately volumetric: cluster centres and all shell
+ * nodes are placed by golden-angle (Fibonacci) distribution over
+ * spheres, never on a flat ring — the old layout collapsed the whole
+ * corpus onto one XZ "ecliptic" (y ≤ ±1.6 while x/z reached 14).
+ *
+ * Visual encoding (DESIGN.md):
+ *   - node colour = circle tier (the locked tier ladder tokens,
+ *     0 self → 4 public), echoed as text in the label's sub-line so
+ *     colour is never the only signal;
+ *   - node size = mention_count / importance (sqrt-scaled);
+ *   - cluster shells alternate the brand palette (crimson / turquoise
+ *     / cream) — identity only, tier lives on the entity nodes;
+ *   - edges are real relations; a hovered entity lights its incident
+ *     edges in the accent turquoise.
+ *
+ * Motion: a slow OrbitControls auto-rotate provides the parallax that
+ * makes 3D legible on a still screen (motivated motion); it stops on
+ * the first user interaction and is disabled entirely under
+ * prefers-reduced-motion.
  *
  * Search overlay (top-left) drives the camera in either mode: type a
  * name, pick a suggestion, the URL ?focus= updates and the scene
@@ -18,16 +39,11 @@
  * URL-param change → same re-render. No page navigation, no flat-list
  * handoff.
  *
- * Replaces the prior 2D force layout AND the separate Wissensbasis
- * flat-chip A4 panel per the user's "one continuous 3D experience"
- * framing (Option 3 in D23, 2026-05-12).
- *
- * Render budget: corpus mode = ~200 entities + ~50 relations in
- * current prod; focus mode = single entity + hop1 (≤30) + hop2 (≤30).
- * Either way trivially 60fps. Scene uses StandardMaterial only on
- * hubs + cluster cores; everything else is BasicMaterial / wireframe.
+ * Render budget: corpus mode ≤ ~170 meshes (backend caps: 16+1
+ * clusters × ≤6 hubs); focus mode = 1 + ≤30 + ≤30 nodes + O(100) line
+ * segments. Either way trivially 60fps.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router';
 import * as THREE from 'three';
@@ -35,6 +51,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 import apiClient from '../../utils/axios';
 import type {
+  FocusEdge,
   FocusEntity,
   FocusNeighborhood,
   SearchHit,
@@ -45,6 +62,7 @@ interface Hub {
   name: string;
   entity_type: string;
   mention_count: number;
+  circle_tier?: number;
 }
 
 interface Cluster {
@@ -53,6 +71,7 @@ interface Cluster {
   sub_label: string;
   entity_count: number;
   hubs: Hub[];
+  hub_edges?: FocusEdge[];
   color_seed: number;
   namesake_entity_id: string | null;
 }
@@ -64,10 +83,30 @@ interface GraphResponse {
   truncated: boolean;
 }
 
-const PALETTE: number[] = [
-  0xe63e54, 0x06b6d4, 0xa78bfa, 0xeab308, 0xf97316, 0x22c55e,
-];
-const pickColor = (seed: number) => PALETTE[seed % PALETTE.length];
+// DESIGN.md tier ladder (0 self … 4 public) — node colour IS the access
+// signal, so these are the locked tier tokens, not decorative hues.
+const TIER_COLORS: number[] = [0xa5162f, 0xe63e54, 0xf0e6d3, 0x71fbd0, 0x00937c];
+const tierColor = (tier: number | undefined) =>
+  TIER_COLORS[Math.min(Math.max(tier ?? 0, 0), 4)];
+
+// Cluster-shell identity alternates the brand palette only (crimson /
+// turquoise / cream) — the old palette's violet/yellow/orange are gone
+// (AI-slop blacklist #1 / off-brand hues).
+const SHELL_COLORS: number[] = [0xe63e54, 0x00e4b8, 0xf0e6d3];
+const shellColor = (seed: number) => SHELL_COLORS[seed % SHELL_COLORS.length];
+
+const EDGE_COLOR = 0x475569;
+const EDGE_HIGHLIGHT = 0x00e4b8;
+
+/** i-th of n directions distributed by golden angle over the unit sphere. */
+function fibonacciDirection(i: number, n: number): THREE.Vector3 {
+  if (n <= 1) return new THREE.Vector3(0, 1, 0);
+  const golden = Math.PI * (3 - Math.sqrt(5));
+  const y = 1 - (i / (n - 1)) * 2;
+  const r = Math.sqrt(Math.max(0, 1 - y * y));
+  const theta = golden * i;
+  return new THREE.Vector3(Math.cos(theta) * r, y, Math.sin(theta) * r);
+}
 
 // Stable debounce — keeps each keystroke from firing /search.
 function useDebounced<T>(value: T, ms: number): T {
@@ -117,15 +156,14 @@ export default function GraphView() {
     if (!corpus && !focusData) return;
 
     const scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2(0x0a0f1c, 0.018);
+    scene.fog = new THREE.FogExp2(0x0a0f1c, 0.016);
 
     const W = () => root.clientWidth;
     const H = () => root.clientHeight;
     const camera = new THREE.PerspectiveCamera(45, W() / H(), 0.1, 1000);
-    camera.position.set(0, 14, 36);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(W(), H());
     renderer.setClearColor(0x0a0f1c, 1);
     root.appendChild(renderer.domElement);
@@ -133,8 +171,6 @@ export default function GraphView() {
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
-    controls.minDistance = 6;
-    controls.maxDistance = 80;
 
     scene.add(new THREE.AmbientLight(0x6080a0, 0.55));
     const key = new THREE.DirectionalLight(0xffffff, 0.6);
@@ -144,14 +180,6 @@ export default function GraphView() {
     rim.position.set(-12, -8, -16);
     scene.add(rim);
 
-    const plane = new THREE.Mesh(
-      new THREE.PlaneGeometry(80, 80, 24, 24),
-      new THREE.MeshBasicMaterial({ color: 0x1a2540, wireframe: true, transparent: true, opacity: 0.18 }),
-    );
-    plane.rotation.x = -Math.PI / 2;
-    plane.position.y = -10;
-    scene.add(plane);
-
     // Track all labelable things (cluster spheres OR focus entities)
     // for the 2D label overlay + raycaster targets that drive
     // click-to-refocus.
@@ -159,8 +187,8 @@ export default function GraphView() {
     // `tier` controls label styling: 'primary' (cluster center / focus
     // entity) shows full size; 'secondary' (hubs / hop1 / hop2) is
     // smaller, fades with distance so the center label stays readable.
-    // `object` is read each frame for the world position so orbiting
-    // hop1 nodes carry their labels.
+    // `object` is read each frame for the world position so moving
+    // nodes carry their labels.
     const labeled: Array<{
       object: THREE.Object3D;
       name: string;
@@ -170,12 +198,38 @@ export default function GraphView() {
       entityId?: string;
     }> = [];
     const clickable: Array<{ mesh: THREE.Object3D; entityId: string }> = [];
+    // entity id → incident relation lines, for the hover highlight.
+    const edgesByEntity = new Map<string, THREE.Line[]>();
+
+    const tierName = (tier: number | undefined) =>
+      t(`circles.tier.${Math.min(Math.max(tier ?? 0, 0), 4)}`);
 
     if (corpus) {
-      buildCorpusScene(scene, corpus, labeled, clickable);
+      buildCorpusScene(scene, corpus, labeled, clickable, edgesByEntity, tierName);
     } else if (focusData) {
-      buildFocusScene(scene, focusData, labeled, clickable);
+      buildFocusScene(scene, focusData, labeled, clickable, edgesByEntity, tierName);
     }
+
+    // Frame the whole constellation: bounding sphere → camera distance.
+    // (The old hardcoded (0,14,36) under/over-framed depending on data.)
+    const bounds = new THREE.Box3().setFromObject(scene);
+    const sphere = bounds.getBoundingSphere(new THREE.Sphere());
+    const fitDistance =
+      (sphere.radius / Math.tan((camera.fov * Math.PI) / 360)) * 1.18;
+    const viewDir = new THREE.Vector3(0.42, 0.3, 1).normalize();
+    camera.position.copy(sphere.center.clone().add(viewDir.multiplyScalar(fitDistance)));
+    controls.target.copy(sphere.center);
+    controls.minDistance = Math.max(2, sphere.radius * 0.2);
+    controls.maxDistance = fitDistance * 2.4;
+
+    // Slow auto-orbit = the parallax that makes depth legible on a still
+    // screen. Stops permanently on the user's first interaction; never
+    // runs under prefers-reduced-motion.
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    controls.autoRotate = !reducedMotion;
+    controls.autoRotateSpeed = 0.5;
+    const stopAutoRotate = () => { controls.autoRotate = false; };
+    controls.addEventListener('start', stopAutoRotate);
 
     const tmpWorld = new THREE.Vector3();
     function updateLabels() {
@@ -191,13 +245,18 @@ export default function GraphView() {
         const x = (v.x + 1) * 0.5 * W();
         const y = (1 - (v.y + 1) * 0.5) * H();
 
-        // Secondary labels fade gently with distance (orbit-controls
-        // maxDistance is 80) so far-back nodes don't shout louder than
-        // close ones, but everything stays readable in the default
-        // camera frame. Primary labels stay fully opaque.
+        // Secondary labels fade gently with distance so far-back nodes
+        // don't shout louder than close ones, but everything stays
+        // readable in the default camera frame. Primary labels stay
+        // fully opaque; the hovered entity's label snaps to full.
         let opacity = 1;
         if (item.tier === 'secondary') {
-          opacity = Math.max(0.35, Math.min(1, 1.15 - (distance - 18) / 50));
+          const hovered = !!item.entityId && item.entityId === hoveredEntityId;
+          // Cull far secondary labels entirely — the corpus overview reads
+          // as cluster names; hub captions appear as you fly closer (or on
+          // hover), instead of 30+ labels shouting at once.
+          if (distance > 26 && !hovered) continue;
+          opacity = hovered ? 1 : Math.max(0.4, Math.min(1, 1.3 - (distance - 12) / 20));
         }
 
         const div = document.createElement('div');
@@ -258,25 +317,72 @@ export default function GraphView() {
       }
     }
 
-    // Hover + click raycasting.
+    // Hover + click raycasting. Hover raises the node's emissive, snaps
+    // its label opaque, and lights its incident relation edges in the
+    // accent turquoise — the neighborhood answer to "what connects here".
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
+    let hoveredEntityId: string | null = null;
+    let hoveredMesh: THREE.Mesh | null = null;
+
+    function entityIdOf(object: THREE.Object3D | null): string | null {
+      let obj: THREE.Object3D | null = object;
+      while (obj && !(obj.userData as { entityId?: string }).entityId) {
+        obj = obj.parent;
+      }
+      return (obj?.userData as { entityId?: string })?.entityId ?? null;
+    }
+
+    function setEdgeHighlight(entityId: string | null, on: boolean) {
+      if (!entityId) return;
+      for (const line of edgesByEntity.get(entityId) ?? []) {
+        const mat = line.material as THREE.LineBasicMaterial;
+        const base = (line.userData as { baseOpacity?: number }).baseOpacity ?? 0.3;
+        mat.color.setHex(on ? EDGE_HIGHLIGHT : EDGE_COLOR);
+        mat.opacity = on ? 0.85 : base;
+      }
+    }
+
+    function setMeshHighlight(mesh: THREE.Mesh | null, on: boolean) {
+      const mat = mesh?.material as THREE.MeshStandardMaterial | undefined;
+      if (mat && 'emissiveIntensity' in mat) {
+        mat.emissiveIntensity = on ? 0.95 : 0.5;
+      }
+    }
+
     function onMove(e: MouseEvent) {
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+      raycaster.setFromCamera(pointer, camera);
+      const hits = raycaster.intersectObjects(clickable.map(c => c.mesh), true);
+      let nextId: string | null = null;
+      let nextMesh: THREE.Mesh | null = null;
+      for (const h of hits) {
+        const eid = entityIdOf(h.object);
+        if (eid) {
+          nextId = eid;
+          nextMesh = h.object as THREE.Mesh;
+          break;
+        }
+      }
+      if (nextId !== hoveredEntityId) {
+        setEdgeHighlight(hoveredEntityId, false);
+        setMeshHighlight(hoveredMesh, false);
+        hoveredEntityId = nextId;
+        hoveredMesh = nextMesh;
+        setEdgeHighlight(hoveredEntityId, true);
+        setMeshHighlight(hoveredMesh, true);
+        renderer.domElement.style.cursor = nextId ? 'pointer' : '';
+      }
     }
     function onClick() {
       raycaster.setFromCamera(pointer, camera);
       const meshes = clickable.map(c => c.mesh);
       const hits = raycaster.intersectObjects(meshes, true);
       for (const h of hits) {
-        // Walk up to find an object with .userData.entityId (hubs nest inside groups).
-        let obj: THREE.Object3D | null = h.object;
-        while (obj && !(obj.userData as { entityId?: string }).entityId) {
-          obj = obj.parent;
-        }
-        const eid = (obj?.userData as { entityId?: string })?.entityId;
+        const eid = entityIdOf(h.object);
         if (eid) {
           // Stay in scene. Just bump the URL param; the mode effect
           // refetches and the scene rebuilds on the next pass.
@@ -300,15 +406,8 @@ export default function GraphView() {
     window.addEventListener('resize', onResize);
 
     let rafId = 0;
-    let theta = 0;
     function loop() {
       controls.update();
-      theta += 0.003;
-      // Orbit any group whose userData asks for it (focus-mode hop1 rings).
-      scene.traverse(obj => {
-        const ud = obj.userData as { orbit?: boolean };
-        if (ud.orbit) obj.rotation.y = theta;
-      });
       renderer.render(scene, camera);
       updateLabels();
       rafId = requestAnimationFrame(loop);
@@ -320,11 +419,21 @@ export default function GraphView() {
       window.removeEventListener('resize', onResize);
       renderer.domElement.removeEventListener('mousemove', onMove);
       renderer.domElement.removeEventListener('click', onClick);
+      controls.removeEventListener('start', stopAutoRotate);
       controls.dispose();
+      // The scene rebuilds on every focus change — without this sweep
+      // every rebuild leaked its GPU geometry/material buffers.
+      scene.traverse((obj) => {
+        const mesh = obj as THREE.Mesh;
+        if (mesh.geometry) mesh.geometry.dispose();
+        const material = (mesh as { material?: THREE.Material | THREE.Material[] }).material;
+        if (Array.isArray(material)) material.forEach((m) => m.dispose());
+        else if (material) material.dispose();
+      });
       renderer.dispose();
       if (root.contains(renderer.domElement)) root.removeChild(renderer.domElement);
     };
-  }, [corpus, focusData, setSearchParams]);
+  }, [corpus, focusData, setSearchParams, t]);
 
   function setFocus(entityId: string | null) {
     setSearchParams((prev) => {
@@ -394,23 +503,51 @@ type Labeled = {
   entityId?: string;
 };
 
+type EdgeMap = Map<string, THREE.Line[]>;
+
+function registerEdge(edgesByEntity: EdgeMap, entityId: string, line: THREE.Line) {
+  const list = edgesByEntity.get(entityId);
+  if (list) list.push(line);
+  else edgesByEntity.set(entityId, [line]);
+}
+
+function makeEdgeLine(
+  from: THREE.Vector3,
+  to: THREE.Vector3,
+  opacity: number,
+): THREE.Line {
+  const geom = new THREE.BufferGeometry().setFromPoints([from.clone(), to.clone()]);
+  const line = new THREE.Line(
+    geom,
+    new THREE.LineBasicMaterial({ color: EDGE_COLOR, transparent: true, opacity }),
+  );
+  line.userData = { baseOpacity: opacity };
+  return line;
+}
+
 function buildCorpusScene(
   scene: THREE.Scene,
   data: GraphResponse,
   labeled: Labeled[],
   clickable: Array<{ mesh: THREE.Object3D; entityId: string }>,
+  edgesByEntity: EdgeMap,
+  tierName: (tier: number | undefined) => string,
 ) {
   const N = data.clusters.length;
-  const ringRadius = N <= 1 ? 0 : Math.min(14, 6 + N * 1.5);
+  const maxMention = Math.max(
+    1,
+    ...data.clusters.flatMap((c) => c.hubs.map((h) => h.mention_count)),
+  );
 
   data.clusters.forEach((c, i) => {
-    const angle = (i / Math.max(N, 1)) * Math.PI * 2;
-    const pos = new THREE.Vector3(
-      Math.cos(angle) * ringRadius,
-      (i % 2 === 0 ? 1 : -1) * (i % 3) * 0.8,
-      Math.sin(angle) * ringRadius,
-    );
-    const color = pickColor(c.color_seed);
+    // Volumetric placement: golden-angle direction over the sphere plus a
+    // staggered shell radius — clusters fill the room instead of lining a
+    // flat ring. Importance rank (i) keeps the layout stable across loads
+    // (backend orders clusters deterministically).
+    const dir = fibonacciDirection(i, N);
+    const shellR = N <= 1 ? 0 : 12 + (i % 3) * 4.2 + i * 0.25;
+    const pos = dir.multiplyScalar(shellR);
+    const accent = shellColor(c.color_seed);
     const radius = Math.max(2.0, Math.min(5.0, 1.4 + Math.sqrt(c.entity_count)));
 
     const group = new THREE.Group();
@@ -421,16 +558,16 @@ function buildCorpusScene(
     // cluster from anywhere on the sphere, not just the small core.
     const body = new THREE.Mesh(
       new THREE.SphereGeometry(radius, 32, 32),
-      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.10, depthWrite: false }),
+      new THREE.MeshBasicMaterial({ color: accent, transparent: true, opacity: 0.09, depthWrite: false }),
     );
     group.add(body);
     group.add(new THREE.Mesh(
       new THREE.SphereGeometry(radius * 1.02, 24, 16),
-      new THREE.MeshBasicMaterial({ color, wireframe: true, transparent: true, opacity: 0.32 }),
+      new THREE.MeshBasicMaterial({ color: accent, wireframe: true, transparent: true, opacity: 0.25 }),
     ));
     const core = new THREE.Mesh(
       new THREE.SphereGeometry(0.5, 16, 16),
-      new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.45, roughness: 0.4 }),
+      new THREE.MeshStandardMaterial({ color: accent, emissive: accent, emissiveIntensity: 0.45, roughness: 0.4 }),
     );
     group.add(core);
 
@@ -446,31 +583,45 @@ function buildCorpusScene(
       clickable.push({ mesh: core, entityId: eid });
     }
 
+    // Hubs cover the whole cluster sphere (Fibonacci), not an equator
+    // band; colour = circle tier; size = mention share.
+    const hubPositions = new Map<string, THREE.Vector3>();
     c.hubs.forEach((hub, hi) => {
-      const theta = (hi / Math.max(c.hubs.length, 1)) * Math.PI * 2;
-      const phi = Math.PI / 2 + ((hi % 2 === 0 ? 1 : -1) * 0.3);
-      const r = radius * 0.75;
+      const r = radius * 0.72;
+      const hubPos = fibonacciDirection(hi, c.hubs.length).multiplyScalar(r);
+      const color = tierColor(hub.circle_tier);
+      const size =
+        0.3 + 0.28 * Math.sqrt(hub.mention_count / maxMention) + (hi === 0 ? 0.1 : 0);
       const hubMesh = new THREE.Mesh(
-        new THREE.SphereGeometry(0.35 + (hi === 0 ? 0.18 : 0), 12, 12),
+        new THREE.SphereGeometry(size, 12, 12),
         new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.5, roughness: 0.35 }),
       );
-      hubMesh.position.set(
-        r * Math.sin(phi) * Math.cos(theta),
-        r * Math.cos(phi),
-        r * Math.sin(phi) * Math.sin(theta),
-      );
+      hubMesh.position.copy(hubPos);
       hubMesh.userData = { entityId: hub.entity_id, hub };
       group.add(hubMesh);
+      hubPositions.set(hub.entity_id, hubPos);
       clickable.push({ mesh: hubMesh, entityId: hub.entity_id });
       labeled.push({
         object: hubMesh,
         name: hub.name,
-        sub: hub.entity_type,
+        sub: `${hub.entity_type} · ${tierName(hub.circle_tier)}`,
         yOffset: 0.7,
         tier: 'secondary',
         entityId: hub.entity_id,
       });
     });
+
+    // Real hub↔hub relations as faint filaments inside the shell — the
+    // cluster shows its actual structure, not free-floating dots.
+    for (const edge of c.hub_edges ?? []) {
+      const from = hubPositions.get(edge.from_entity);
+      const to = hubPositions.get(edge.to_entity);
+      if (!from || !to) continue;
+      const line = makeEdgeLine(from, to, 0.3);
+      group.add(line);
+      registerEdge(edgesByEntity, edge.from_entity, line);
+      registerEdge(edgesByEntity, edge.to_entity, line);
+    }
 
     scene.add(group);
     labeled.push({
@@ -489,12 +640,18 @@ function buildFocusScene(
   data: FocusNeighborhood,
   labeled: Labeled[],
   clickable: Array<{ mesh: THREE.Object3D; entityId: string }>,
+  edgesByEntity: EdgeMap,
+  tierName: (tier: number | undefined) => string,
 ) {
-  const focusColor = 0xe63e54;
-  const hop1Color = 0x06b6d4;
-  const hop2Color = 0xa78bfa;
+  const positions = new Map<string, THREE.Vector3>();
+  const maxImportance = Math.max(
+    1,
+    ...data.hop1.map((e) => e.importance),
+    ...data.hop2.map((e) => e.importance),
+  );
 
-  // Focus entity — large central emissive sphere.
+  // Focus entity — large central emissive sphere in its tier colour.
+  const focusColor = tierColor(data.focus.circle_tier);
   const focusMesh = new THREE.Mesh(
     new THREE.SphereGeometry(1.4, 32, 32),
     new THREE.MeshStandardMaterial({
@@ -503,6 +660,7 @@ function buildFocusScene(
   );
   focusMesh.userData = { entityId: data.focus.entity_id, focusEntity: data.focus };
   scene.add(focusMesh);
+  positions.set(data.focus.entity_id, new THREE.Vector3(0, 0, 0));
   // Atmospheric shell.
   scene.add(new THREE.Mesh(
     new THREE.SphereGeometry(2.5, 32, 32),
@@ -513,7 +671,7 @@ function buildFocusScene(
   labeled.push({
     object: focusMesh,
     name: data.focus.display_name,
-    sub: data.focus.entity_type,
+    sub: `${data.focus.entity_type} · ${tierName(data.focus.circle_tier)}`,
     yOffset: 3.2,
     tier: 'primary',
     // The focus label is the entity you're already on — no need to
@@ -521,77 +679,60 @@ function buildFocusScene(
     // click-transparent so the user can drag-orbit through the centre.
   });
 
-  // hop1 ring — orbiting hubs at radius ~7. Group so we can lazy-orbit.
-  const hop1Group = new THREE.Group();
-  hop1Group.userData = { orbit: true };
-  scene.add(hop1Group);
-  data.hop1.forEach((e, i) => {
-    const theta = (i / Math.max(data.hop1.length, 1)) * Math.PI * 2;
-    const r = 7;
-    const mesh = makeHubMesh(hop1Color, 0.42);
-    mesh.position.set(Math.cos(theta) * r, Math.sin(theta * 2) * 0.6, Math.sin(theta) * r);
-    mesh.userData = { entityId: e.entity_id, entity: e };
-    hop1Group.add(mesh);
-    clickable.push({ mesh, entityId: e.entity_id });
-    labeled.push({
-      object: mesh,
-      name: e.display_name,
-      sub: e.entity_type,
-      yOffset: 0.8,
-      tier: 'secondary',
-      entityId: e.entity_id,
+  const placeShell = (entities: FocusEntity[], R: number, baseSize: number) => {
+    entities.forEach((e, i) => {
+      const posV = fibonacciDirection(i, entities.length).multiplyScalar(R);
+      const color = tierColor(e.circle_tier);
+      const size = baseSize + 0.22 * Math.sqrt(e.importance / maxImportance);
+      const mesh = new THREE.Mesh(
+        new THREE.SphereGeometry(size, 12, 12),
+        new THREE.MeshStandardMaterial({
+          color, emissive: color, emissiveIntensity: 0.5, roughness: 0.35,
+        }),
+      );
+      mesh.position.copy(posV);
+      mesh.userData = { entityId: e.entity_id, entity: e };
+      scene.add(mesh);
+      positions.set(e.entity_id, posV);
+      clickable.push({ mesh, entityId: e.entity_id });
+      labeled.push({
+        object: mesh,
+        name: e.display_name,
+        sub: `${e.entity_type} · ${tierName(e.circle_tier)}`,
+        yOffset: size + 0.4,
+        tier: 'secondary',
+        entityId: e.entity_id,
+      });
     });
+  };
 
-    // Edge from focus to hop1 (faint line).
-    const lineGeom = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(0, 0, 0), mesh.position.clone(),
-    ]);
-    scene.add(new THREE.Line(
-      lineGeom,
-      new THREE.LineBasicMaterial({ color: hop1Color, transparent: true, opacity: 0.35 }),
-    ));
-  });
+  // Two concentric Fibonacci shells — hop1 close, hop2 far. Both truly
+  // volumetric (the old hop1 ring was flat: y ≤ ±0.6 at radius 7).
+  placeShell(data.hop1, 7, 0.3);
+  placeShell(data.hop2, 13, 0.22);
 
-  // hop2 outer shell — distributed on a larger sphere surface.
-  data.hop2.forEach((e, i) => {
-    const n = Math.max(data.hop2.length, 1);
-    // Fibonacci sphere distribution for even coverage.
-    const golden = Math.PI * (3 - Math.sqrt(5));
-    const y = 1 - (i / Math.max(n - 1, 1)) * 2;
-    const r = Math.sqrt(1 - y * y);
-    const theta = golden * i;
-    const R = 13;
-    const mesh = makeHubMesh(hop2Color, 0.3);
-    mesh.position.set(Math.cos(theta) * r * R, y * R, Math.sin(theta) * r * R);
-    mesh.userData = { entityId: e.entity_id, entity: e };
-    scene.add(mesh);
-    clickable.push({ mesh, entityId: e.entity_id });
-    labeled.push({
-      object: mesh,
-      name: e.display_name,
-      sub: e.entity_type,
-      yOffset: 0.6,
-      tier: 'secondary',
-      entityId: e.entity_id,
-    });
-  });
+  // REAL relation edges from the backend — focus↔hop1, hop1↔hop1,
+  // hop1↔hop2 all render (the old scene drew only synthetic focus
+  // spokes and threw the edge list away).
+  const focusId = data.focus.entity_id;
+  for (const edge of data.edges ?? []) {
+    const from = positions.get(edge.from_entity);
+    const to = positions.get(edge.to_entity);
+    if (!from || !to) continue;
+    const touchesFocus = edge.from_entity === focusId || edge.to_entity === focusId;
+    const line = makeEdgeLine(from, to, touchesFocus ? 0.45 : 0.2);
+    scene.add(line);
+    registerEdge(edgesByEntity, edge.from_entity, line);
+    registerEdge(edgesByEntity, edge.to_entity, line);
+  }
 
   // Wireframe outer-shell hint (the "2 HOPS" boundary from the A4 mock).
   scene.add(new THREE.Mesh(
     new THREE.SphereGeometry(13, 32, 16),
     new THREE.MeshBasicMaterial({
-      color: 0x475569, wireframe: true, transparent: true, opacity: 0.10,
+      color: 0x475569, wireframe: true, transparent: true, opacity: 0.08,
     }),
   ));
-}
-
-function makeHubMesh(color: number, radius: number): THREE.Mesh {
-  return new THREE.Mesh(
-    new THREE.SphereGeometry(radius, 12, 12),
-    new THREE.MeshStandardMaterial({
-      color, emissive: color, emissiveIntensity: 0.5, roughness: 0.35,
-    }),
-  );
 }
 
 // =========================================================================
@@ -703,8 +844,3 @@ function SearchOverlay({ onPick }: { onPick: (entityId: string) => void }) {
     </div>
   );
 }
-
-// FocusEntity import marker — keeps TS from complaining about the unused import
-// when builders are scoped helpers. The type is referenced via FocusNeighborhood.
-const _: FocusEntity | undefined = undefined;
-void _;
