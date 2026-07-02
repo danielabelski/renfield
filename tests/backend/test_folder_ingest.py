@@ -335,6 +335,49 @@ async def test_ingest_duplicate_decision_maps_to_duplicate(monkeypatch):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_ingest_duplicate_restamps_pending_when_null(monkeypatch):
+    # Self-heal: a completed doc that lost its 'pending' marker (crash between
+    # enqueue and the stamp commit) is re-armed on the re-push so the reconciler
+    # picks it up — restores the old PAPERLESS_ONLY recovery.
+    existing = MagicMock(id=30, paperless_state=None)
+    db = AsyncMock()
+    _patch_pipeline(monkeypatch, decision=_Decision.DUPLICATE, existing=existing)
+    out = await ingest_document(
+        _PDF, _meta(), db=db, kb_id=None, file_to_paperless=True
+    )
+    assert out.status is IngestStatus.DUPLICATE
+    assert existing.paperless_state == PAPERLESS_STATE_PENDING
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_ingest_duplicate_no_restamp_when_filing_off(monkeypatch):
+    # A NULL paperless_state on an interactive/duplicate doc with filing off must
+    # stay NULL (never file interactive uploads).
+    existing = MagicMock(id=31, paperless_state=None)
+    _patch_pipeline(monkeypatch, decision=_Decision.DUPLICATE, existing=existing)
+    out = await ingest_document(
+        _PDF, _meta(), db=AsyncMock(), kb_id=None, file_to_paperless=False
+    )
+    assert out.status is IngestStatus.DUPLICATE
+    assert existing.paperless_state is None
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_ingest_duplicate_leaves_settled_state(monkeypatch):
+    # An already-filed ('done') duplicate must NOT be re-stamped to pending.
+    existing = MagicMock(id=32, paperless_state=PAPERLESS_STATE_DONE)
+    _patch_pipeline(monkeypatch, decision=_Decision.DUPLICATE, existing=existing)
+    out = await ingest_document(
+        _PDF, _meta(), db=AsyncMock(), kb_id=None, file_to_paperless=True
+    )
+    assert out.status is IngestStatus.DUPLICATE
+    assert existing.paperless_state == PAPERLESS_STATE_DONE
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_ingest_in_flight_decision_maps_to_retry(monkeypatch):
     existing = MagicMock(id=8)
     enqueue = _patch_pipeline(monkeypatch, decision=_Decision.RETRY, existing=existing)

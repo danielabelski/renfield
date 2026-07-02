@@ -248,6 +248,17 @@ async def ingest_document(
     decision, existing = await classify_existing(db, file_hash, kb_id)
 
     if decision is _Decision.DUPLICATE:
+        # Self-heal (restores the recovery the old PAPERLESS_ONLY branch gave):
+        # if a prior push crashed after enqueue but before stamping 'pending'
+        # (e.g. the stamp commit timed out under the DB-pressure burst this
+        # design targets), the doc can reach COMPLETED with paperless_state NULL,
+        # which the reconciler never picks up → silently unfiled. Re-arm it here
+        # on the re-push (the crash returned 503, so the file stayed in the inbox
+        # and is re-pushed). Only for filing-wanted docs; NULL on an interactive
+        # upload is the intended "never file" state.
+        if file_to_paperless and existing.paperless_state is None:
+            existing.paperless_state = PAPERLESS_STATE_PENDING
+            await db.commit()
         return IngestResult(
             IngestStatus.DUPLICATE, document_id=existing.id, detail="already_ingested"
         )
@@ -322,6 +333,27 @@ async def ingest_document(
             logger.error(f"folder-ingest: create failed for {meta.filename!r}: {exc}")
             return IngestResult(IngestStatus.FAILED, detail="create_error")
 
+    # 4. Mark for async Paperless filing (Design Z), BEFORE enqueue. We do NOT run
+    # the leg on the request path — that inline external round-trip is exactly what
+    # pinned a pooled DB connection across a multi-second Paperless wait and
+    # exhausted the pool under a burst. Instead stamp paperless_state='pending'
+    # (unless already filed on a REINGEST) and let the out-of-band
+    # paperless_reconciler file it. 'pending' also doubles as the provenance
+    # marker: only folder/email-ingest docs get it, so interactive KB uploads
+    # (which stay NULL) are never filed.
+    #
+    # Ordering matters: stamp BEFORE enqueue so that "enqueued ⟹ pending set".
+    # If we stamped after enqueue, a crash between the two (a stamp commit timing
+    # out under the very DB-pressure burst this design targets) would let the
+    # worker drive the doc to COMPLETED with paperless_state NULL — invisible to
+    # the reconciler and silently never filed. Stamping first makes a crash-before-
+    # enqueue merely orphan the row at status='pending' (the pre-existing
+    # enqueue-failure class, visibly stuck, self-heals on the MCP re-push via the
+    # DUPLICATE re-stamp above), never a silently-completed-but-unfiled doc.
+    if file_to_paperless and doc.paperless_state != PAPERLESS_STATE_DONE:
+        doc.paperless_state = PAPERLESS_STATE_PENDING
+        await db.commit()
+
     queue = DocumentTaskQueue(redis_client=get_redis())
     await queue.enqueue(
         {
@@ -330,19 +362,6 @@ async def ingest_document(
             "user_id": owner_user_id,
         }
     )
-
-    # 4. Mark for async Paperless filing (Design Z). We do NOT run the leg on
-    # the request path — that inline external round-trip is exactly what pinned a
-    # pooled DB connection across a multi-second Paperless wait and exhausted the
-    # pool under a burst. Instead stamp paperless_state='pending' (unless already
-    # filed on a REINGEST) and let the out-of-band paperless_reconciler file it.
-    # 'pending' also doubles as the provenance marker: only folder/email-ingest
-    # docs get it, so interactive KB uploads (which stay NULL) are never filed.
-    # The reconciler is durable + timely (periodic, restart-safe), closing the
-    # old "in KB but missing from Paperless until a manual re-push" gap.
-    if file_to_paperless and doc.paperless_state != PAPERLESS_STATE_DONE:
-        doc.paperless_state = PAPERLESS_STATE_PENDING
-        await db.commit()
 
     return IngestResult(
         IngestStatus.INGESTED, document_id=doc.id, detail="enqueued"

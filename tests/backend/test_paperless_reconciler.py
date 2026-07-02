@@ -18,6 +18,7 @@ from models.database import (
     DOC_STATUS_COMPLETED,
     DOC_STATUS_PROCESSING,
     PAPERLESS_STATE_DONE,
+    PAPERLESS_STATE_FAILED,
     PAPERLESS_STATE_PENDING,
 )
 
@@ -121,8 +122,10 @@ async def test_skips_doc_not_completed(monkeypatch):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_missing_bytes_leaves_pending(monkeypatch):
-    # The recovery copy vanished → no leg, doc stays pending for a later tick.
+async def test_missing_bytes_marks_failed(monkeypatch):
+    # The recovery copy vanished → the doc can never be filed, so mark it terminal
+    # FAILED (settled) instead of leaving it 'pending' forever — otherwise it would
+    # sit at the low end of the id-ordered batch and starve newer pending docs.
     doc = _doc(id=8)
     cm, _ = _fake_session(ids=[8], doc=doc)
     monkeypatch.setattr(pr, "AsyncSessionLocal", cm)
@@ -131,7 +134,7 @@ async def test_missing_bytes_leaves_pending(monkeypatch):
     with patch("aiofiles.open", side_effect=OSError("gone")):
         await pr.reconcile_pending_paperless(MagicMock())
     leg.assert_not_called()
-    assert doc.paperless_state == PAPERLESS_STATE_PENDING  # untouched
+    assert doc.paperless_state == PAPERLESS_STATE_FAILED  # settled, leaves the set
 
 
 @pytest.mark.unit

@@ -27,6 +27,18 @@ Properties:
 ``user_id`` is passed ``None`` to the leg (the Paperless extractor's owner-scoped
 learned-examples are a refinement the correspondent resolve-or-create does not
 depend on) — matching the email-ingest leg, whose owner isn't threaded either.
+
+Two accepted tradeoffs, both bounded and documented rather than over-engineered:
+  - **Held connection:** each leg holds its pooled DB connection across the
+    external upload+consume round-trip. This is the same *shape* as the outage it
+    replaces, but BOUNDED to ``paperless_reconciler_concurrency`` (default 3) in a
+    pod whose pool is 30 — categorically different from the unbounded request-path
+    flood. Keep the concurrency small (see the config comment).
+  - **Single-replica assumption:** unlike the per-user reconcilers here, this one
+    takes no pg advisory lock. The backend runs ``replicas: 1`` (k8s/backend.yaml),
+    so ticks never overlap across processes; if the backend is ever scaled out,
+    add an advisory lock here (Paperless's own duplicate detection is the only
+    backstop until then).
 """
 
 from __future__ import annotations
@@ -40,6 +52,7 @@ from sqlalchemy import select
 
 from models.database import (
     DOC_STATUS_COMPLETED,
+    PAPERLESS_STATE_FAILED,
     PAPERLESS_STATE_PENDING,
     Document,
 )
@@ -47,12 +60,6 @@ from services.database import AsyncSessionLocal
 from services.folder_ingest import IngestMeta
 from services.folder_ingest_paperless import make_paperless_leg
 from utils.config import settings
-
-# Bounded concurrency: the leg blocks on the external Paperless upload +
-# consume-await, so a handful in flight is plenty and keeps the reconciler from
-# becoming its own load spike (the very thing it exists to prevent).
-_CONCURRENCY = 3
-
 
 async def _file_one(mcp_manager: Any, doc_id: int, sem: asyncio.Semaphore) -> str:
     """File a single pending document into Paperless with its own session.
@@ -76,12 +83,18 @@ async def _file_one(mcp_manager: Any, doc_id: int, sem: asyncio.Semaphore) -> st
             async with aiofiles.open(doc.file_path, "rb") as f:
                 file_bytes = await f.read()
         except OSError as exc:
-            # The persisted recovery copy is gone (e.g. doc deleted mid-flight).
-            # Leave pending — a future tick self-heals if the row/file returns,
-            # else it stays visible as an un-filed pending doc rather than lying.
+            # The persisted recovery copy is gone (deleted out of band / lost
+            # volume). Without the bytes the doc can NEVER be filed, so mark the
+            # leg terminally FAILED (settled) rather than leaving it 'pending'
+            # forever — an unfilable doc stuck at the low end of the id-ordered
+            # batch would be re-selected every tick and starve newer pending docs
+            # (poison-pill). 'failed' takes it out of the working set; the doc is
+            # still in the KB, only Paperless filing is skipped (observable).
+            doc.paperless_state = PAPERLESS_STATE_FAILED
+            await db.commit()
             logger.warning(
-                f"paperless-reconciler: doc {doc_id} bytes unreadable "
-                f"({exc}); leaving pending"
+                f"paperless-reconciler: doc {doc_id} recovery bytes unreadable "
+                f"({exc}); marked paperless_state=failed (cannot file without bytes)"
             )
             return "no_bytes"
 
@@ -126,7 +139,7 @@ async def reconcile_pending_paperless(mcp_manager: Any) -> None:
     if not doc_ids:
         return
 
-    sem = asyncio.Semaphore(_CONCURRENCY)
+    sem = asyncio.Semaphore(settings.paperless_reconciler_concurrency)
     results = await asyncio.gather(
         *(_file_one(mcp_manager, doc_id, sem) for doc_id in doc_ids)
     )
