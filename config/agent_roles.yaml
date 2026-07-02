@@ -84,8 +84,8 @@ roles:
 
   documents:
     description:
-      de: "Dokumente und E-Mail: Suche in Wissensdatenbank und Paperless, Download, Versand"
-      en: "Documents and email: search knowledge base and Paperless, download, send"
+      de: "Dokumente und E-Mail: Suche in Wissensdatenbank und Paperless, Download, Versand; SOWIE Verwaltung & Status der Dokument-VERARBEITUNG selbst: Verarbeitungsstatus/Rückstau der Indexierung, wie viele Dokumente KEINE Chunks haben / leer oder unvollständig indexiert sind, Dokumente ohne Chunks NEU INDEXIEREN / neu einlesen / reparieren"
+      en: "Documents and email: search knowledge base and Paperless, download, send; AND administration & status of the document PROCESSING itself: indexing status/backlog, how many documents have NO chunks / are empty or incompletely indexed, RE-INDEX documents without chunks"
     mcp_servers: [paperless, email]
     internal_tools: [internal.knowledge_search, internal.forward_attachment_to_paperless, internal.render_table, internal.render_list, internal.ingest_status, internal.reindex_documents]
     max_steps: 8
@@ -129,8 +129,8 @@ roles:
 
   knowledge:
     description:
-      de: "Wissensdatenbank: Suche in eigenen hochgeladenen Dokumenten"
-      en: "Knowledge base: search in own uploaded documents"
+      de: "Wissensdatenbank: INHALTLICHE Suche in eigenen hochgeladenen Dokumenten (was steht in einem Dokument, Fakten/Inhalte AUS Dokumenten). NICHT für Verwaltungs-/Statusfragen zur Verarbeitung selbst (Chunks, Indexierungsstatus, neu indexieren) — das ist 'documents'"
+      en: "Knowledge base: CONTENT search in own uploaded documents (what a document says, facts/content FROM documents). NOT for administration/status questions about the processing itself (chunks, indexing status, re-index) — that is 'documents'"
     # No agent loop - uses RAG path directly
 
   general:
