@@ -49,6 +49,7 @@ const BrainSkillsPage = lazy(() => import('./pages/BrainSkillsPage'));
 const AdminToolHealthPage = lazy(() => import('./pages/AdminToolHealthPage'));
 const AdminTrajectoriesPage = lazy(() => import('./pages/AdminTrajectoriesPage'));
 const AdminCuratorPage = lazy(() => import('./pages/AdminCuratorPage'));
+const CommandCenterPage = lazy(() => import('./pages/CommandCenterPage'));
 const WissenLayout = lazy(() => import('./pages/wissen/WissenLayout'));
 const OverviewLens = lazy(() => import('./pages/wissen/OverviewLens'));
 
@@ -254,6 +255,11 @@ function AppRoutes() {
             <Route path="/admin/tool-health" element={
               <AdminRoute>
                 <AdminToolHealthPage />
+              </AdminRoute>
+            } />
+            <Route path="/admin/command-center" element={
+              <AdminRoute>
+                <CommandCenterPage />
               </AdminRoute>
             } />
             <Route path="/admin/trajectories" element={

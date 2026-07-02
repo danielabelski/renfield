@@ -38,6 +38,7 @@ import {
   Activity,
   ClipboardList,
   Hammer,
+  Radar,
 } from 'lucide-react';
 import DeviceStatus from './DeviceStatus';
 import ThemeToggle from './ThemeToggle';
@@ -90,6 +91,7 @@ const mainNavigationConfig: NavItemConfig[] = [
 ];
 
 const adminNavigationConfig: NavItemConfig[] = [
+  { nameKey: 'nav.commandCenter', href: '/admin/command-center', icon: Radar, permission: ['admin'] },
   { nameKey: 'nav.rooms', href: '/rooms', icon: DoorOpen, permission: ['rooms.read', 'rooms.manage'], feature: 'smart_home' },
   { nameKey: 'nav.speakers', href: '/speakers', icon: Users, permission: ['speakers.own', 'speakers.all'], feature: 'voice' },
   { nameKey: 'nav.smarthome', href: '/homeassistant', icon: Lightbulb, permission: ['ha.read', 'ha.control', 'ha.full'], feature: 'smart_home' },
