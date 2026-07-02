@@ -119,10 +119,13 @@ spec:
           # need the `procps` package in the runtime image, which we don't
           # ship to keep the image lean.
           resources:
-            requests: {cpu: 500m, memory: 1Gi}
-            # 6Gi owns the Docling/EasyOCR peak alone. Backend can drop to
-            # ~5Gi post-cutover (PR C1) since it no longer runs this pipeline.
-            limits:   {cpu: "2",  memory: 6Gi}
+            requests: {cpu: 500m, memory: 2Gi}
+            # 10Gi limit: a large scanned PDF under Docling/EasyOCR force-full-page
+            # OCR can peak past 6Gi and OOMKill the worker mid-run (doc 241, a 5.6MB
+            # scan, blew >6Gi 2026-07-02 → orphaned in the PEL). Request stays low
+            # (2Gi) so scheduling isn't starved; the pod bursts to 10Gi only during
+            # a heavy OCR. Node k8s-gpu-3 has ~15Gi allocatable.
+            limits:   {cpu: "2",  memory: 10Gi}
       volumes:
         - name: uploads
           persistentVolumeClaim:
