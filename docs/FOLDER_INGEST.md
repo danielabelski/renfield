@@ -113,6 +113,22 @@ Besides the auto push, the agent can ingest a file the user points at:
 dedup / owner+tier / Paperless filing are identical. The asking user owns what they
 ingest (falling back to `FOLDER_INGEST_TARGET_USER` in single-user mode).
 
+## Chat maintenance tools (`internal.ingest_status` / `internal.reindex_documents`)
+
+Two platform-owned agent tools let the household admin operate the pipeline from
+the Renfield chat (both live on the `documents` + `general` roles;
+`services/kb_maintenance_tool.py`):
+
+- **`internal.ingest_status`** (read-only): "wie ist der Verarbeitungsstatus?",
+  "sind alle Dokumente in Paperless?" → documents by status, count of completed
+  docs with **no chunks**, worker liveness + queue depth, and the `paperless_state`
+  filing breakdown (done / pending / failed / unfiled).
+- **`internal.reindex_documents`** (write): "Dokumente ohne Chunks neu indexieren"
+  → finds `completed` docs with 0 chunks and enqueues a `user_reindex` worker task
+  (purge + rebuild) for each (batch-capped 200 / max 500; skips in-flight docs).
+  **Gated on `Permission.RAG_MANAGE`** when auth is on — an authenticated
+  low-privilege user is refused; auth-off / unidentified-voice turns are allowed.
+
 ## Behavior notes
 
 - **Dedup (completion-aware).** A re-pushed file is a `duplicate` once the row is
