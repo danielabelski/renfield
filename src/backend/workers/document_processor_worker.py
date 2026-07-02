@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import os
 import signal
+import time
 
 import httpx
 import redis.asyncio as aioredis
@@ -161,6 +162,29 @@ async def _process_entry(
     doc_id = entry.params.get("document_id")
     if doc_id is None:
         logger.error(f"skipping entry {entry.entry_id}: missing document_id")
+        await queue.ack(entry.entry_id)
+        return
+
+    # OOM-poison guard: an entry redelivered past the cap means the previous
+    # consumer(s) kept dying mid-processing (e.g. an OOMKill on a huge OCR).
+    # With periodic reclaim now re-adopting orphaned entries, re-processing such
+    # a doc every time would crashloop the queue — so quarantine it (mark the doc
+    # failed, ACK the entry). delivery_count is 1 for a fresh read; only a
+    # repeatedly-reclaimed entry exceeds the cap.
+    delivery_count = getattr(entry, "delivery_count", 1)
+    if delivery_count > settings.worker_max_deliveries:
+        logger.error(
+            f"doc {doc_id}: entry {entry.entry_id} delivered {delivery_count}x "
+            f"(> {settings.worker_max_deliveries}); quarantining as failed "
+            f"(likely OOM-poison / unprocessable)"
+        )
+        await _mark_document_failed(
+            doc_id,
+            RuntimeError(
+                f"quarantined after {delivery_count} delivery attempts "
+                f"(worker kept dying mid-processing; likely too large to process)"
+            ),
+        )
         await queue.ack(entry.entry_id)
         return
 
@@ -338,8 +362,23 @@ async def main() -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, stop_event.set)
 
+    # Periodic reclaim: startup reclaim_stale only re-adopts what a PREVIOUS pod
+    # orphaned. An entry orphaned WHILE this pod keeps running (OOMKill mid-OCR
+    # that the pod survives, or a transient-error return) would otherwise never
+    # be retried until the next restart. Reap on an interval so recovery no
+    # longer depends on a restart. (min-idle = visibility_ms, so a task this
+    # worker is actively processing is never stolen.)
+    reclaim_interval = settings.worker_reclaim_interval_seconds
+    last_reclaim = time.monotonic()
     try:
         while not stop_event.is_set():
+            if reclaim_interval > 0 and time.monotonic() - last_reclaim >= reclaim_interval:
+                last_reclaim = time.monotonic()
+                try:
+                    for stale in await queue.reclaim_stale():
+                        await _process_entry(redis, queue, stale)
+                except Exception as e:  # noqa: BLE001 - reclaim must never kill the loop
+                    logger.warning(f"periodic reclaim failed: {e}")
             entry = await queue.read_one(block_ms=5_000)
             if entry is None:
                 continue
