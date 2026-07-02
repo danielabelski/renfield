@@ -26,6 +26,7 @@ from models.database import (
     DOC_STATUS_PROCESSING,
     PAPERLESS_STATE_DONE,
     PAPERLESS_STATE_FAILED,
+    PAPERLESS_STATE_PENDING,
     Document,
 )
 from services.folder_ingest import (
@@ -208,8 +209,10 @@ async def test_classify_completed_paperless_failed_is_duplicate(pg_db_session):
 
 @pytest.mark.database
 @pytest.mark.asyncio
-async def test_classify_completed_paperless_missing_is_paperless_only(pg_db_session):
-    # completed but paperless_state NULL → run only the Paperless leg.
+async def test_classify_completed_paperless_missing_is_duplicate(pg_db_session):
+    # Design Z: Paperless is decoupled from the move decision (the async
+    # reconciler files it), so a completed KB row is a clean DUPLICATE regardless
+    # of paperless_state — the file moves to processed/ without waiting on filing.
     await _insert_doc(
         pg_db_session,
         file_hash="h_nopl",
@@ -217,7 +220,7 @@ async def test_classify_completed_paperless_missing_is_paperless_only(pg_db_sess
         paperless_state=None,
     )
     decision, _ = await classify_existing(pg_db_session, "h_nopl", None)
-    assert decision is _Decision.PAPERLESS_ONLY
+    assert decision is _Decision.DUPLICATE
 
 
 @pytest.mark.database
@@ -332,6 +335,49 @@ async def test_ingest_duplicate_decision_maps_to_duplicate(monkeypatch):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_ingest_duplicate_restamps_pending_when_null(monkeypatch):
+    # Self-heal: a completed doc that lost its 'pending' marker (crash between
+    # enqueue and the stamp commit) is re-armed on the re-push so the reconciler
+    # picks it up — restores the old PAPERLESS_ONLY recovery.
+    existing = MagicMock(id=30, paperless_state=None)
+    db = AsyncMock()
+    _patch_pipeline(monkeypatch, decision=_Decision.DUPLICATE, existing=existing)
+    out = await ingest_document(
+        _PDF, _meta(), db=db, kb_id=None, file_to_paperless=True
+    )
+    assert out.status is IngestStatus.DUPLICATE
+    assert existing.paperless_state == PAPERLESS_STATE_PENDING
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_ingest_duplicate_no_restamp_when_filing_off(monkeypatch):
+    # A NULL paperless_state on an interactive/duplicate doc with filing off must
+    # stay NULL (never file interactive uploads).
+    existing = MagicMock(id=31, paperless_state=None)
+    _patch_pipeline(monkeypatch, decision=_Decision.DUPLICATE, existing=existing)
+    out = await ingest_document(
+        _PDF, _meta(), db=AsyncMock(), kb_id=None, file_to_paperless=False
+    )
+    assert out.status is IngestStatus.DUPLICATE
+    assert existing.paperless_state is None
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_ingest_duplicate_leaves_settled_state(monkeypatch):
+    # An already-filed ('done') duplicate must NOT be re-stamped to pending.
+    existing = MagicMock(id=32, paperless_state=PAPERLESS_STATE_DONE)
+    _patch_pipeline(monkeypatch, decision=_Decision.DUPLICATE, existing=existing)
+    out = await ingest_document(
+        _PDF, _meta(), db=AsyncMock(), kb_id=None, file_to_paperless=True
+    )
+    assert out.status is IngestStatus.DUPLICATE
+    assert existing.paperless_state == PAPERLESS_STATE_DONE
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_ingest_in_flight_decision_maps_to_retry(monkeypatch):
     existing = MagicMock(id=8)
     enqueue = _patch_pipeline(monkeypatch, decision=_Decision.RETRY, existing=existing)
@@ -343,70 +389,45 @@ async def test_ingest_in_flight_decision_maps_to_retry(monkeypatch):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_ingest_paperless_only_runs_leg_and_reports_duplicate(monkeypatch):
-    existing = MagicMock(id=9)
-    _patch_pipeline(monkeypatch, decision=_Decision.PAPERLESS_ONLY, existing=existing)
-    leg = AsyncMock(return_value=True)
-    out = await ingest_document(
-        _PDF, _meta(), db=AsyncMock(), kb_id=None, paperless_leg=leg
-    )
-    assert out.status is IngestStatus.DUPLICATE
-    assert out.document_id == 9
-    leg.assert_awaited_once()
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_ingest_paperless_only_leg_failure_is_retry(monkeypatch):
-    existing = MagicMock(id=10)
-    _patch_pipeline(monkeypatch, decision=_Decision.PAPERLESS_ONLY, existing=existing)
-    leg = AsyncMock(side_effect=RuntimeError("paperless down"))
-    out = await ingest_document(
-        _PDF, _meta(), db=AsyncMock(), kb_id=None, paperless_leg=leg
-    )
-    assert out.status is IngestStatus.RETRY
-    assert out.detail == "paperless_retry"
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_ingest_paperless_only_unsettled_leg_is_retry(monkeypatch):
-    # The leg ran without raising but couldn't settle (upload error / pending) →
-    # RETRY so the MCP re-pushes and the leg is attempted again.
-    existing = MagicMock(id=11)
-    _patch_pipeline(monkeypatch, decision=_Decision.PAPERLESS_ONLY, existing=existing)
-    leg = AsyncMock(return_value=False)
-    out = await ingest_document(
-        _PDF, _meta(), db=AsyncMock(), kb_id=None, paperless_leg=leg
-    )
-    assert out.status is IngestStatus.RETRY
-    assert out.detail == "paperless_pending"
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
 async def test_ingest_create_decision_enqueues_and_is_ingested(monkeypatch):
-    created = MagicMock(id=11)
+    created = MagicMock(id=11, paperless_state=None)
+    db = AsyncMock()
     enqueue = _patch_pipeline(
         monkeypatch, decision=_Decision.CREATE, created_doc=created
     )
-    leg = AsyncMock(return_value=True)
     out = await ingest_document(
-        _PDF, _meta(), db=AsyncMock(), kb_id=None, owner_user_id=3, paperless_leg=leg
+        _PDF, _meta(), db=db, kb_id=None, owner_user_id=3, file_to_paperless=True
     )
     assert out.status is IngestStatus.INGESTED
     assert out.document_id == 11
     enqueue.assert_awaited_once()
     # owner rides the enqueue payload as user_id (worker scoping).
     assert enqueue.await_args.args[0]["user_id"] == 3
-    leg.assert_awaited_once()
+    # Design Z: the push stamps paperless_state='pending' (the async reconciler
+    # files it later) rather than awaiting the Paperless leg inline.
+    assert created.paperless_state == PAPERLESS_STATE_PENDING
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_ingest_create_no_paperless_leaves_state_null(monkeypatch):
+    # file_to_paperless=False (filing off / interactive upload) must NOT stamp
+    # 'pending' — the reconciler only picks up pending docs, so these are never
+    # filed to Paperless.
+    created = MagicMock(id=21, paperless_state=None)
+    _patch_pipeline(monkeypatch, decision=_Decision.CREATE, created_doc=created)
+    out = await ingest_document(
+        _PDF, _meta(), db=AsyncMock(), kb_id=None, file_to_paperless=False
+    )
+    assert out.status is IngestStatus.INGESTED
+    assert created.paperless_state is None
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_ingest_create_passes_owner_and_tier_overrides(monkeypatch):
     # D4: the configured owner + tier are forwarded to create as overrides.
-    created = MagicMock(id=20)
+    created = MagicMock(id=20, paperless_state=None)
     _patch_pipeline(monkeypatch, decision=_Decision.CREATE, created_doc=created)
     rag = MagicMock()
     rag.create_document_record_safe = AsyncMock(return_value=created)
@@ -414,7 +435,7 @@ async def test_ingest_create_passes_owner_and_tier_overrides(monkeypatch):
 
     await ingest_document(
         _PDF, _meta(), db=AsyncMock(), kb_id=7, owner_user_id=9, default_tier=2,
-        paperless_leg=AsyncMock(return_value=True),
+        file_to_paperless=True,
     )
 
     _, kwargs = rag.create_document_record_safe.await_args
@@ -425,25 +446,8 @@ async def test_ingest_create_passes_owner_and_tier_overrides(monkeypatch):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_ingest_create_paperless_leg_failure_still_ingested(monkeypatch):
-    # The Paperless leg is best-effort: a failure must NOT fail the KB ingest
-    # (the row is already enqueued).
-    created = MagicMock(id=12)
-    enqueue = _patch_pipeline(
-        monkeypatch, decision=_Decision.CREATE, created_doc=created
-    )
-    leg = AsyncMock(side_effect=RuntimeError("paperless down"))
-    out = await ingest_document(
-        _PDF, _meta(), db=AsyncMock(), kb_id=None, paperless_leg=leg
-    )
-    assert out.status is IngestStatus.INGESTED
-    enqueue.assert_awaited_once()
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
 async def test_ingest_reingest_decision_reenqueues_failed_row(monkeypatch):
-    existing = MagicMock(id=13, status=DOC_STATUS_FAILED)
+    existing = MagicMock(id=13, status=DOC_STATUS_FAILED, paperless_state=None)
     existing.file_path = "/uploads/old_failed.pdf"  # the prior failed copy
     db = AsyncMock()
     enqueue = _patch_pipeline(
@@ -451,17 +455,34 @@ async def test_ingest_reingest_decision_reenqueues_failed_row(monkeypatch):
     )
     cleanup = MagicMock()
     monkeypatch.setattr(fi, "_cleanup", cleanup)
-    leg = AsyncMock(return_value=True)
-    out = await ingest_document(_PDF, _meta(), db=db, kb_id=None, paperless_leg=leg)
+    out = await ingest_document(_PDF, _meta(), db=db, kb_id=None, file_to_paperless=True)
     assert out.status is IngestStatus.INGESTED
     assert out.document_id == 13
     # the failed row is reset to pending + re-pointed at the fresh recovery copy,
-    # then re-enqueued and the (idempotent) Paperless leg re-runs.
+    # re-enqueued, and re-stamped for async Paperless filing (Design Z).
     assert existing.status == DOC_STATUS_PENDING
     assert existing.file_path == "/uploads/x.pdf"
+    assert existing.paperless_state == PAPERLESS_STATE_PENDING
     cleanup.assert_called_once_with("/uploads/old_failed.pdf")  # stale copy removed
     enqueue.assert_awaited_once()
-    leg.assert_awaited_once()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_ingest_reingest_preserves_already_filed_paperless(monkeypatch):
+    # A REINGEST of a row already filed to Paperless ('done') must NOT be reset
+    # to 'pending' — filing is idempotent and the reconciler shouldn't re-file.
+    existing = MagicMock(
+        id=22, status=DOC_STATUS_FAILED, paperless_state=PAPERLESS_STATE_DONE
+    )
+    existing.file_path = "/uploads/old_failed.pdf"
+    _patch_pipeline(monkeypatch, decision=_Decision.REINGEST, existing=existing)
+    monkeypatch.setattr(fi, "_cleanup", MagicMock())
+    out = await ingest_document(
+        _PDF, _meta(), db=AsyncMock(), kb_id=None, file_to_paperless=True
+    )
+    assert out.status is IngestStatus.INGESTED
+    assert existing.paperless_state == PAPERLESS_STATE_DONE  # untouched
 
 
 @pytest.mark.unit
@@ -505,9 +526,10 @@ async def test_ingest_concurrent_winner_in_flight_is_retry(monkeypatch):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_ingest_concurrent_winner_completed_paperless_missing_is_retry(monkeypatch):
-    # Completed winner but Paperless never settled → RETRY (not a terminal
-    # move-to-processed), so the re-push routes through PAPERLESS_ONLY.
+async def test_ingest_concurrent_winner_completed_paperless_missing_is_duplicate(monkeypatch):
+    # Design Z: a completed winner is a DUPLICATE regardless of paperless_state
+    # (Paperless is decoupled — the async reconciler files it), so the file moves
+    # to processed/ instead of looping on re-push.
     winner = MagicMock(id=16, status=DOC_STATUS_COMPLETED, paperless_state=None)
     _patch_pipeline(monkeypatch, decision=_Decision.CREATE)
     rag = MagicMock()
@@ -518,7 +540,7 @@ async def test_ingest_concurrent_winner_completed_paperless_missing_is_retry(mon
     monkeypatch.setattr(fi, "_cleanup", MagicMock())
 
     out = await ingest_document(_PDF, _meta(), db=AsyncMock(), kb_id=None)
-    assert out.status is IngestStatus.RETRY
+    assert out.status is IngestStatus.DUPLICATE
     assert out.document_id == 16
 
 

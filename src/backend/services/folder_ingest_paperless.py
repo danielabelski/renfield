@@ -180,22 +180,37 @@ def make_paperless_leg(
     lang: str = "de",
     await_timeout_s: float | None = None,
 ) -> PaperlessLeg:
-    """Build a ``PaperlessLeg`` closure over the MCP manager + owner. The route
-    passes the result to ``ingest_document(paperless_leg=...)`` when Paperless
-    filing is enabled; ``None`` is passed when it is off."""
+    """Build a ``PaperlessLeg`` closure over the MCP manager + owner.
+
+    Runs in the **document-worker** as a ``post_document_ingest`` step (the OCR's
+    home — Docling is memory-heavy and must not run in the always-on backend, which
+    OOM'd when it did). The leg is given the worker's already-computed ``doc_text``
+    (the best-quality Docling/OCR ∪ text-layer union) and:
+      1. extracts Paperless metadata from that text (no re-OCR, no chunk shortcut);
+      2. uploads the original file to Paperless;
+      3. **writes ``doc_text`` back as the Paperless document's searchable content**
+         (``update_document(content=…)``) so Paperless search uses Renfield's
+         high-quality OCR, not its own weaker consume-time OCR.
+    When ``doc_text`` is absent (the retry/refile path with no captured text), it
+    falls back to a fresh Docling ``extract_from_file`` — still full quality, and
+    still in the worker where Docling belongs."""
 
     async def _leg(
-        db: AsyncSession, doc: Document, file_bytes: bytes, meta: IngestMeta
+        db: AsyncSession,
+        doc: Document,
+        file_bytes: bytes,
+        meta: IngestMeta,
+        doc_text: str | None = None,
     ) -> bool:
-        # Idempotent: a re-push of an already-settled leg (done OR terminally
-        # failed) does nothing. In practice classify_existing already routes a
-        # settled doc to DUPLICATE so the leg isn't called — this is defence in
-        # depth for any direct caller.
+        # Idempotent: a re-run for an already-settled doc (done OR terminally
+        # failed) does nothing.
         if doc.paperless_state in _PAPERLESS_SETTLED:
             return True
 
-        # 1. Best-effort metadata extraction (D5) from the persisted recovery
-        # copy. Failure → bare upload (filename title only), never fatal.
+        # 1. Metadata extraction (D5). Prefer the worker's already-extracted
+        # high-quality OCR text (no second Docling pass, no chunk shortcut);
+        # fall back to a fresh Docling extraction only when no text was supplied.
+        # ``ocr_text`` is what we later transport into Paperless's content.
         upload_params: dict = {
             "title": meta.filename,
             "filename": meta.filename,
@@ -204,16 +219,24 @@ def make_paperless_leg(
             # the upload returns immediately on accept.
             "wait_for_consume": False,
         }
+        ocr_text: str = doc_text or ""
         try:
             from services.paperless_metadata_extractor import PaperlessMetadataExtractor
 
             extractor = PaperlessMetadataExtractor(mcp_manager=mcp_manager)
-            extraction = await extractor.extract_from_file(
-                doc.file_path, user_id=user_id, lang=lang
-            )
+            if doc_text:
+                extraction = await extractor.extract_from_doc_text(
+                    doc_text, user_id=user_id, lang=lang
+                )
+            else:
+                extraction = await extractor.extract_from_file(
+                    doc.file_path, user_id=user_id, lang=lang
+                )
+            # Keep the OCR text the extractor actually used, for content transport.
+            ocr_text = doc_text or extraction.doc_text or ""
             if extraction.error:
                 logger.info(
-                    f"folder-ingest paperless: metadata extraction skipped "
+                    f"paperless-leg: metadata extraction skipped "
                     f"({extraction.error}); bare upload for doc {doc.id}"
                 )
             else:
@@ -230,7 +253,7 @@ def make_paperless_leg(
                     upload_params["tags"] = m.tags
         except Exception as exc:  # noqa: BLE001 - extractor is best-effort
             logger.warning(
-                f"folder-ingest paperless: extractor error for doc {doc.id} "
+                f"paperless-leg: extractor error for doc {doc.id} "
                 f"(bare upload): {exc}"
             )
 
@@ -279,9 +302,37 @@ def make_paperless_leg(
                 doc.paperless_document_id = pid
             await db.commit()
             logger.info(
-                f"folder-ingest paperless: doc {doc.id} {status} "
+                f"paperless-leg: doc {doc.id} {status} "
                 f"(paperless_id={outcome.get('document_id')})"
             )
+            # Transport Renfield's high-quality OCR into Paperless's searchable
+            # content, overwriting Paperless's own weaker consume-time OCR. Only on
+            # a freshly-filed 'success' with an id + text we have — a 'duplicate'
+            # already exists (leave its content untouched). Best-effort: a failure
+            # here does not un-settle the doc (it IS filed); search just keeps
+            # Paperless's OCR.
+            if status == "success" and pid and ocr_text.strip():
+                try:
+                    res = _parse_paperless_result(
+                        await mcp_manager.execute_tool(
+                            "mcp.paperless.update_document",
+                            {"document_id": pid, "content": ocr_text},
+                        )
+                    )
+                    if res.get("error"):
+                        logger.warning(
+                            f"paperless-leg: content transport failed for doc "
+                            f"{doc.id} (paperless_id={pid}): {res.get('error')}"
+                        )
+                    else:
+                        logger.info(
+                            f"paperless-leg: transported OCR content ({len(ocr_text)} "
+                            f"chars) into paperless_id={pid} for doc {doc.id}"
+                        )
+                except Exception as exc:  # noqa: BLE001 - transport is best-effort
+                    logger.warning(
+                        f"paperless-leg: content transport error for doc {doc.id}: {exc}"
+                    )
             return True
 
         if status == "failure":

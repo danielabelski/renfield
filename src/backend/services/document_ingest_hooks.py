@@ -70,6 +70,22 @@ def register_document_ingest_hooks() -> None:
                 "extraction disabled for this process; ingestion continues."
             )
 
+    # Paperless filing runs in the worker (Docling's home) and reuses the same
+    # field_text this hook family receives — so the best-quality OCR lands in both
+    # the KB and Paperless. Gated on either ingest→Paperless flag.
+    if settings.folder_ingest_to_paperless or settings.email_ingest_to_paperless:
+        try:
+            from services.paperless_filing_hook import (
+                paperless_filing_post_ingest_hook,
+            )
+
+            _maybe_register("paperless_filing", paperless_filing_post_ingest_hook)
+        except Exception:  # noqa: BLE001 — fail-open, never block ingestion
+            logger.opt(exception=True).warning(
+                "Failed to register Paperless filing post_document_ingest hook — "
+                "Paperless filing disabled for this process; ingestion continues."
+            )
+
     if registered:
         logger.info(
             f"✅ post_document_ingest hooks registered: {', '.join(registered)}"

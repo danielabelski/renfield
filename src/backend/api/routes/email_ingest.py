@@ -76,35 +76,17 @@ class EmailIngestHealthResponse(BaseModel):
     contract_version: str = EMAIL_INGEST_CONTRACT_VERSION
 
 
-def _build_paperless_leg(request: Request):
-    """Real Paperless leg when ``email_ingest_to_paperless`` is on and the MCP
-    manager is available, else None (no-op settled). OCR-correspondent only
-    (decision #3) — same ``make_paperless_leg`` as folder-ingest. Kept at the
-    route edge so the Paperless/MCP import stays out of the bridge.
-
-    ``user_id`` is left None in Phase 1: the per-mailbox owner isn't threaded to
-    the extractor's learned-examples (a per-user refinement); the correspondent
-    resolve-or-create does not depend on it."""
-    if not settings.email_ingest_to_paperless:
-        return None
-    mcp_manager = getattr(request.app.state, "mcp_manager", None)
-    if mcp_manager is None:
-        logger.warning(
-            "email-ingest: to_paperless is on but no MCP manager — skipping "
-            "Paperless filing for this push"
-        )
-        return None
-    from services.folder_ingest_paperless import make_paperless_leg
-
-    # TODO(email-ingest phase 2): thread the per-mailbox owner (ingest_email_document
-    # resolves it) into make_paperless_leg(user_id=...) so the Paperless extractor's
-    # learned-examples are owner-scoped, as folder-ingest already does. Phase-1-safe:
-    # the correspondent resolve-or-create does not depend on user_id.
-    return make_paperless_leg(mcp_manager, user_id=None)
+def _should_file_paperless() -> bool:
+    """Whether email-ingest pushes should be filed into Paperless (Design Z).
+    Like folder-ingest, the push no longer performs the Paperless round-trip —
+    it stamps ``paperless_state='pending'`` and the out-of-band
+    ``paperless_reconciler`` files it later. So the decision is just the feature
+    flag; the MCP manager is needed at reconcile time, not on the push."""
+    return bool(settings.email_ingest_to_paperless)
 
 
 @router.post("/document", response_model=EmailIngestResponse)
-@limiter.limit(settings.api_rate_limit_default)
+@limiter.limit(settings.api_rate_limit_ingest)
 async def ingest_pushed_email(
     request: Request,
     file: UploadFile = File(...),
@@ -187,7 +169,7 @@ async def ingest_pushed_email(
             subject=raw.get("subject"),
             mime=raw.get("mime"),
             sha256=raw.get("sha256"),
-            paperless_leg=_build_paperless_leg(request),
+            file_to_paperless=_should_file_paperless(),
         )
     except Exception as exc:  # noqa: BLE001 - never 500 the push contract
         logger.error(f"email-ingest: unexpected error processing {filename!r}: {exc}")

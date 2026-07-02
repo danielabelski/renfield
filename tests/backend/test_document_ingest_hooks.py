@@ -46,6 +46,17 @@ def _clean_registry():
     clear_hooks()
 
 
+def _paperless_off(monkeypatch):
+    """Turn the folder/email→Paperless flags off so the paperless_filing hook
+    (registered when either is on) doesn't perturb KG/Schicht-A count assertions."""
+    monkeypatch.setattr(
+        "services.document_ingest_hooks.settings.folder_ingest_to_paperless", False
+    )
+    monkeypatch.setattr(
+        "services.document_ingest_hooks.settings.email_ingest_to_paperless", False
+    )
+
+
 @pytest.mark.unit
 def test_registers_both_when_flags_on(monkeypatch):
     monkeypatch.setattr(
@@ -54,12 +65,34 @@ def test_registers_both_when_flags_on(monkeypatch):
     monkeypatch.setattr(
         "services.document_ingest_hooks.settings.schicht_a_extraction_enabled", True
     )
+    _paperless_off(monkeypatch)
     register_document_ingest_hooks()
 
     names = _handler_names()
     assert any("kg_post_document_ingest_hook" in n for n in names)
     assert any("schicht_a_post_document_ingest_hook" in n for n in names)
     assert len(_hooks.get(_EVENT, [])) == 2
+
+
+@pytest.mark.unit
+def test_registers_paperless_filing_when_to_paperless_on(monkeypatch):
+    # The paperless_filing hook registers when EITHER ingest→Paperless flag is on.
+    monkeypatch.setattr(
+        "services.document_ingest_hooks.settings.knowledge_graph_enabled", False
+    )
+    monkeypatch.setattr(
+        "services.document_ingest_hooks.settings.schicht_a_extraction_enabled", False
+    )
+    monkeypatch.setattr(
+        "services.document_ingest_hooks.settings.folder_ingest_to_paperless", True
+    )
+    monkeypatch.setattr(
+        "services.document_ingest_hooks.settings.email_ingest_to_paperless", False
+    )
+    register_document_ingest_hooks()
+    names = _handler_names()
+    assert any("paperless_filing_post_ingest_hook" in n for n in names)
+    assert len(_hooks.get(_EVENT, [])) == 1
 
 
 @pytest.mark.unit
@@ -101,6 +134,7 @@ def test_idempotent_no_double_registration(monkeypatch):
     monkeypatch.setattr(
         "services.document_ingest_hooks.settings.schicht_a_extraction_enabled", True
     )
+    _paperless_off(monkeypatch)
     register_document_ingest_hooks()
     register_document_ingest_hooks()  # second call must not append duplicates
 
@@ -121,6 +155,7 @@ def test_idempotent_against_external_prior_registration(monkeypatch):
     monkeypatch.setattr(
         "services.document_ingest_hooks.settings.schicht_a_extraction_enabled", True
     )
+    _paperless_off(monkeypatch)
     register_document_ingest_hooks()
 
     # KG present exactly once (not re-added), Schicht A newly added → 2 total.
@@ -166,6 +201,7 @@ def test_nothing_registered_when_all_flags_off(monkeypatch):
     monkeypatch.setattr(
         "services.document_ingest_hooks.settings.schicht_a_extraction_enabled", False
     )
+    _paperless_off(monkeypatch)
     register_document_ingest_hooks()
     assert _hooks.get(_EVENT, []) == []
 

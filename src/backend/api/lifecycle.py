@@ -610,6 +610,39 @@ def _schedule_obligation_calendar_sync(app):
     )
 
 
+def _schedule_paperless_reconciler(app):
+    """Retry re-enqueuer for Paperless filing (light — no Docling in the backend).
+
+    The document-worker files each folder/email-ingest doc into Paperless during
+    ingest (reusing its own Docling OCR). This periodic scan only re-ENQUEUES the
+    stragglers that stayed ``paperless_state='pending'`` (Paperless was down at
+    ingest) as ``paperless_refile`` worker tasks — the heavy Docling/MCP work runs
+    in the worker, NOT here (running it in the backend OOM'd the pod). Runs whenever
+    folder- OR email-ingest→Paperless is on.
+    """
+    if not (
+        settings.folder_ingest_to_paperless or settings.email_ingest_to_paperless
+    ):
+        return
+
+    async def _tick():
+        from services.paperless_reconciler import reenqueue_pending_paperless
+
+        await reenqueue_pending_paperless()
+
+    _spawn_periodic_task(
+        name="Paperless refile re-enqueuer",
+        interval=settings.paperless_reconciler_interval,
+        work=_tick,
+        started_msg=(
+            f"Paperless refile re-enqueuer gestartet "
+            f"(interval={settings.paperless_reconciler_interval}s, "
+            f"batch={settings.paperless_reconciler_batch})"
+        ),
+        run_at_boot=True,
+    )
+
+
 def _schedule_skill_shadow_log_cleanup():
     """Prune `skill_would_have_injected_log` rows older than the
     configured retention.
@@ -1031,6 +1064,7 @@ async def lifespan(app: "FastAPI"):
     _schedule_obligation_digest()
     _schedule_skill_shadow_log_cleanup()
     _schedule_paperless_sweepers(app)
+    _schedule_paperless_reconciler(app)
     _schedule_obligation_calendar_sync(app)
 
     # Self-learning Phase 1: load bundled seed skills into the database.

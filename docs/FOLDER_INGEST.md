@@ -3,14 +3,12 @@
 Drop a file into a watched folder → it is ingested into the knowledge base **and**
 Paperless automatically, for local, SMB, and NFS shares.
 
-> **Status.** The **backend** side (this document) is complete: the push endpoint,
-> the health/token routes, the interactive `internal.ingest_file` agent tool, the
-> completion+Paperless-aware dedup, owner/tier filing, and the Paperless leg. The
-> **dedicated `renfield-mcp-filesystem` server** that watches the folders and pushes
-> files is a separate deployment that is **not built yet** — until it exists, files
-> reach the backend only via the interactive `internal.ingest_file` tool (the agent
-> pulling a file through any filesystem MCP that exposes `read_file`) or a manual
-> `POST` to the endpoint below.
+> **Status.** SHIPPED + DEPLOYED. Backend push/health/token routes, the interactive
+> `internal.ingest_file` agent tool, completion-aware dedup, owner/tier filing, and
+> the **async Paperless reconciler** are live; the dedicated `renfield-mcp-filesystem`
+> server that watches the shares and pushes files runs as its own deployment
+> (`filesystem-mcp` image). Files also still reach the backend via the interactive
+> `internal.ingest_file` tool or a manual `POST`.
 
 ## Architecture
 
@@ -24,10 +22,22 @@ renfield-mcp-filesystem (dedicated, owns share access — NOT the backend)
         ▼
 backend  services/folder_ingest.py  (shared bridge)
   persist a recovery byte copy → dedup vs the Document row → race-safe create +
-  enqueue on the Redis doc stream → Paperless leg → respond 4-state
+  stamp paperless_state='pending' → enqueue on the Redis doc stream → respond 4-state
         ▼
   document worker (async): OCR / chunk / embed + KG / Schicht-A hooks
+        ▼
+  paperless_reconciler (async, periodic): files pending+completed docs into Paperless
 ```
+
+**Paperless is decoupled from the request (Design Z).** The push never performs the
+Paperless upload/consume round-trip — it only stamps `paperless_state='pending'` and
+returns. A periodic backend reconciler (`services/paperless_reconciler.py`, mirrors
+`obligation_calendar_sync`) files pending+completed docs out of band via the
+already-connected MCP manager, bounded concurrency, its own short session. This
+avoids holding a pooled DB connection across a multi-second external wait — the
+inline leg did, and a watch-folder backlog exhausted the pool and stalled the API
+(the 2026-07-01 outage). `'pending'` doubles as the provenance marker: interactive
+KB uploads stay `NULL` and are never filed.
 
 **Hard constraints:** the network shares are **never mounted into the backend** (the
 MCP is the sole access boundary), and there is **no polling and no WebSocket** — the
@@ -64,9 +74,9 @@ it. **`ingested` means *enqueued*, not OCR'd.** All four are HTTP 200.
 
 | `status`    | meaning                                                        | MCP action               |
 |-------------|----------------------------------------------------------------|--------------------------|
-| `ingested`  | new row created + enqueued                                     | move → `processed/`      |
-| `duplicate` | row exists, completed, Paperless leg settled                   | move → `processed/`      |
-| `retry`     | worker down, or row pending/processing, or Paperless unsettled | **leave in inbox**, re-push |
+| `ingested`  | new row created + enqueued (+ stamped `paperless_state='pending'`) | move → `processed/`      |
+| `duplicate` | row exists + completed (Paperless filed out of band by the reconciler) | move → `processed/`      |
+| `retry`     | worker down, or row pending/processing                        | **leave in inbox**, re-push |
 | `failed`    | terminal reject (bad ext, empty, oversize, malformed metadata) | move → `failed/`         |
 
 Transport-level outcomes use status codes the MCP maps separately:
@@ -105,16 +115,23 @@ ingest (falling back to `FOLDER_INGEST_TARGET_USER` in single-user mode).
 
 ## Behavior notes
 
-- **Dedup (completion + Paperless aware).** A re-pushed file is only a `duplicate` when
-  the row is `completed` **and** the Paperless leg is settled. A previously `failed`
-  document is re-ingested; a `completed`-but-Paperless-missing document re-runs **only**
-  the Paperless leg.
+- **Dedup (completion-aware).** A re-pushed file is a `duplicate` once the row is
+  `completed` — Paperless filing is decoupled (the async reconciler owns it), so the
+  file moves to `processed/` without waiting on filing. A previously `failed` document
+  is re-ingested (`REINGEST`, with the fresh bytes). Self-heal: a re-push re-stamps
+  `paperless_state='pending'` if a filing-wanted doc reached `completed` with a NULL
+  state (e.g. a stamp commit lost to a crash) so the reconciler still picks it up.
 - **Owner / tier.** Auto-filed documents are owned by `FOLDER_INGEST_TARGET_USER` at
   `FOLDER_INGEST_DEFAULT_TIER` (default 0 = self/private), regardless of the KB.
-- **Paperless leg.** Uploads non-blocking, then awaits the consume verdict via the
-  Paperless MCP. A Paperless **duplicate** counts as terminal success (the document is
-  already there). Paperless filing never fails the KB ingest. The filed Paperless
-  document id is persisted on `documents.paperless_document_id` (migration `pc20260613`).
+- **Paperless filing (async, Design Z).** The push stamps `paperless_state='pending'`
+  and returns; `services/paperless_reconciler.py` (periodic, `run_at_boot`, bounded
+  `PAPERLESS_RECONCILER_CONCURRENCY`) files pending+completed docs via the Paperless
+  MCP — upload non-blocking, then await the consume verdict. A Paperless **duplicate**
+  counts as terminal success. Filing never fails the KB ingest; a doc whose recovery
+  bytes are gone is marked `paperless_state='failed'` (terminal, so it can't poison the
+  batch). The filed Paperless id is persisted on `documents.paperless_document_id`
+  (migration `pc20260613`). The push itself never performs the external round-trip on a
+  pooled DB connection — that inline leg was the 2026-07-01 pool-exhaustion outage.
 - **Correspondent auto-create (Option A + guardrail).** Metadata extraction (`services/
   paperless_metadata_extractor.py`) only matches a correspondent against the *recency-
   pruned* taxonomy window, so a new sender would otherwise be filed blank. The leg now

@@ -196,10 +196,12 @@ async def test_happy_path_ingested(client: AsyncClient, token_set: str, monkeypa
     assert body["status"] == "ingested"
     assert body["document_id"] == 99
     assert body["contract_version"] == FOLDER_INGEST_CONTRACT_VERSION
-    # the route resolved a server-side KB + ownerless enqueue and passed no leg
+    # the route resolved a server-side KB + ownerless enqueue and passed the
+    # decoupled filing flag (Design Z) — no leg on the request path anymore.
     _, kwargs = fake.await_args
     assert kwargs["kb_id"] is not None
-    assert kwargs["paperless_leg"] is None
+    assert "paperless_leg" not in kwargs
+    assert kwargs["file_to_paperless"] == bool(route.settings.folder_ingest_to_paperless)
 
 
 @pytest.mark.integration
@@ -248,35 +250,20 @@ async def test_client_kb_override_ignored(
     assert kwargs["kb_id"] == expected_kb.id
 
 
-def _fake_request(mcp_manager):
-    req = MagicMock()
-    req.app.state.mcp_manager = mcp_manager
-    return req
-
-
-def test_build_paperless_leg_none_when_disabled(monkeypatch):
+def test_should_file_paperless_false_when_disabled(monkeypatch):
     from api.routes import folder_ingest as route
 
     monkeypatch.setattr(route.settings, "folder_ingest_to_paperless", False)
-    assert route._build_paperless_leg(_fake_request(MagicMock()), 1) is None
+    assert route._should_file_paperless() is False
 
 
-def test_build_paperless_leg_none_when_no_mcp(monkeypatch):
+def test_should_file_paperless_true_when_enabled(monkeypatch):
+    # Design Z: the decision no longer depends on the MCP manager (Paperless
+    # filing is decoupled to the async reconciler) — just the feature flag.
     from api.routes import folder_ingest as route
 
     monkeypatch.setattr(route.settings, "folder_ingest_to_paperless", True)
-    # app.state has no mcp_manager attribute → getattr returns None
-    req = MagicMock()
-    req.app.state = MagicMock(spec=[])  # no mcp_manager
-    assert route._build_paperless_leg(req, 1) is None
-
-
-def test_build_paperless_leg_built_when_enabled(monkeypatch):
-    from api.routes import folder_ingest as route
-
-    monkeypatch.setattr(route.settings, "folder_ingest_to_paperless", True)
-    leg = route._build_paperless_leg(_fake_request(MagicMock()), 1)
-    assert leg is not None and callable(leg)
+    assert route._should_file_paperless() is True
 
 
 @pytest.mark.integration

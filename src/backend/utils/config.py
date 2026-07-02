@@ -73,15 +73,18 @@ class Settings(BaseSettings):
     postgres_host: str = "postgres"
     postgres_port: int = Field(default=5432, ge=1, le=65535)
     postgres_db: str = "renfield"
-    # 15 + 30 = 45 connections/process. backend + document-worker each get their
-    # own pool → 2 × 45 = 90 max, safely under Postgres max_connections=100. Bumped
-    # from 10+20 after a folder-ingest backlog flood exhausted the 30/process pool
-    # (QueuePool timeout → docs failed with create_error). Env-overridable if the
-    # DB's max_connections is raised. Do NOT push per-process total past ~45 while
+    # 10 + 20 = 30 connections/process. backend + document-worker each get their
+    # own pool → 2 × 30 = 60 max, comfortably under Postgres max_connections=100.
+    # (Briefly bumped to 15+30 during the 2026-07-01 folder-ingest backlog flood,
+    # but that only treated the symptom — the real cause was the Paperless leg
+    # holding a pooled connection across a multi-second external wait on the push
+    # path. That is now decoupled to the async paperless_reconciler (Design Z), so
+    # the original headroom is sufficient again.) Env-overridable if the DB's
+    # max_connections is raised. Do NOT push per-process total past ~45 while
     # max_connections=100 and two processes share it, or you trade pool timeouts
     # for "too many connections".
-    db_pool_size: int = Field(default=15, ge=1, le=100)
-    db_max_overflow: int = Field(default=30, ge=0, le=200)
+    db_pool_size: int = Field(default=10, ge=1, le=100)
+    db_max_overflow: int = Field(default=20, ge=0, le=200)
     db_pool_recycle: int = Field(default=3600, ge=60, le=86400)
 
     # Redis
@@ -619,6 +622,29 @@ class Settings(BaseSettings):
     folder_ingest_to_paperless: bool = True
     folder_ingest_notify_on_filed: bool = True
 
+    # Async Paperless reconciler (Design Z): folder/email-ingest stamp
+    # paperless_state='pending' and this periodic reconciler files them out of
+    # band (services/paperless_reconciler.py), so the push never awaits the
+    # external Paperless round-trip on a pooled DB connection. Runs whenever
+    # folder- OR email-ingest→Paperless is on. Batch bounds per-tick work so a
+    # large first-run backlog drains across ticks.
+    paperless_reconciler_interval: int = 120  # seconds between reconciler ticks
+    paperless_reconciler_batch: int = 25  # pending docs re-enqueued per tick
+    # Grace before a still-pending completed doc is re-enqueued for a worker
+    # refile — keeps the scan from racing the initial fire-and-forget filing hook
+    # (which runs after the doc is marked completed). Only docs completed longer
+    # ago than this are treated as genuine stragglers.
+    paperless_reconciler_refile_grace_seconds: int = 300
+    # Per-doc refile lease (Redis SET NX EX). ``processed_at`` is fixed at
+    # completion, so a still-pending straggler re-selects every tick; without a
+    # lease the SAME doc is re-enqueued each interval until it settles (a slow
+    # doc then re-runs a full Docling pass per tick). One lease lets a single
+    # refile attempt run; it expires so a FAILED attempt retries, and a success
+    # drops the row out of the pending select anyway — no explicit release. Keep
+    # it well above one refile's worst-case queue-wait + Docling time, below the
+    # tolerable retry cadence for a genuinely stuck doc.
+    paperless_reconciler_refile_lease_seconds: int = 900
+
     # Email-mailbox auto-ingest (Phase 1; ships dark). The dedicated
     # renfield-mcp-email-ingest watcher PUSHES attachments to
     # POST /api/email-ingest/document; the backend owns the SPHERE routing here
@@ -802,6 +828,15 @@ class Settings(BaseSettings):
     api_rate_limit_voice: str = "30/minute"     # Voice endpoints (STT, TTS)
     api_rate_limit_chat: str = "60/minute"      # Chat endpoints
     api_rate_limit_admin: str = "200/minute"    # Admin endpoints (higher limit)
+    # Folder/email-ingest PUSH endpoints. These are hit by the trusted,
+    # Bearer-token-authed MCP watchers (one IP), whose own push-concurrency
+    # semaphore is the intended throughput bound — not this per-IP limit, which
+    # exists for untrusted user-API abuse. Since the Paperless leg was decoupled
+    # (Design Z) the push returns in ms, so a watch-folder backlog now bursts far
+    # above the 100/min default and 429s (stalling the drain). This generous
+    # ceiling lets the MCP semaphore govern legit throughput while still capping a
+    # leaked-token flood (the DB pool is the harder backstop). Env-tunable.
+    api_rate_limit_ingest: str = "1200/minute"
 
     # WebSocket Connection Limits
     ws_max_connections_per_ip: int = 10

@@ -832,8 +832,13 @@ class MCPManager:
         self._tool_overrides: dict[str, list[str] | None] = {}  # DB overrides per server
         self._refresh_task: asyncio.Task | None = None
 
-    def load_config(self, path: str) -> None:
-        """Load MCP server configuration from YAML file."""
+    def load_config(self, path: str, only: set[str] | None = None) -> None:
+        """Load MCP server configuration from YAML file.
+
+        ``only`` restricts loading to the named servers — used by the
+        document-worker's minimal single-server Paperless client so it can spin
+        up just that one stdio subprocess without the full 10-server lifecycle
+        (see services/paperless_worker_client.py)."""
         # Inject Docker secrets into os.environ so ${VAR} substitution
         # in YAML config can resolve API keys stored in /run/secrets/.
         # Only sets vars that are not already present in the environment.
@@ -866,6 +871,8 @@ class MCPManager:
 
         for entry in raw["servers"]:
             try:
+                if only is not None and entry.get("name") not in only:
+                    continue
                 transport_str = _resolve_value(entry.get("transport", "streamable_http"))
                 transport = MCPTransportType(transport_str)
                 # FEDERATION is registry-managed (paired peers) — refuse

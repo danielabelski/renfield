@@ -733,12 +733,36 @@ FOLDER_INGEST_TARGET_USER=            # Owner der auto-abgelegten Dokumente (Use
 FOLDER_INGEST_DEFAULT_TIER=0          # Circle-Tier beim Anlegen (0=self … 4=public)
 FOLDER_INGEST_TO_PAPERLESS=true       # zusätzlich in Paperless ablegen
 FOLDER_INGEST_NOTIFY_ON_FILED=true    # Bestätigungs-Notification nach Ablage
+
+# Async Paperless-Reconciler (Design Z): der Push legt paperless_state='pending' an
+# und gibt sofort zurück; das eigentliche Ablegen läuft im document-worker
+# (post_document_ingest-Hook, der dessen Docling-OCR wiederverwendet). Dieser
+# periodische Backend-Reconciler (services/paperless_reconciler.py) RE-ENQUEUED nur
+# die Nachzügler, die 'pending' geblieben sind, als 'paperless_refile'-Worker-Tasks —
+# er führt selbst KEIN Docling aus (das lief zuvor im Backend und sprengte dessen
+# 6-Gi-Limit). Der Push wartet NIE inline auf die Paperless-Runde auf einer
+# Pool-Verbindung (das war die Outage vom 2026-07-01). Läuft, wenn folder- ODER
+# email-ingest→Paperless an ist.
+PAPERLESS_RECONCILER_INTERVAL=120              # Sekunden zwischen Ticks
+PAPERLESS_RECONCILER_BATCH=25                  # pending-Dokumente pro Tick re-enqueued
+PAPERLESS_RECONCILER_REFILE_GRACE_SECONDS=300  # Karenz, bevor ein completed+pending-Doc als Nachzügler gilt (rennt nicht mit dem initialen Filing-Hook)
+PAPERLESS_RECONCILER_REFILE_LEASE_SECONDS=900  # Redis-Lease pro Doc: nur ein Refile-Versuch gleichzeitig; läuft ab → Retry (verhindert Re-Enqueue-Churn)
 ```
 
 Wiederverwendet `MAX_FILE_SIZE_MB`, `ALLOWED_EXTENSIONS`, `UPLOAD_DIR` (siehe RAG/Upload).
 Der Bearer-Token liegt revozierbar in `SystemSetting` (nicht in `.env`) — per
 `POST /api/folder-ingest/token` (Admin, `settings.manage`) erzeugen/rotieren. Der
 MCP prüft die Konfig-Ausrichtung beim Start via `GET /api/folder-ingest/health`.
+
+Der Push wird durch `API_RATE_LIMIT_INGEST` begrenzt (siehe *REST API Rate Limiting*) —
+nicht durch das strengere `API_RATE_LIMIT_DEFAULT`, da der token-authentifizierte
+MCP-Push durch sein eigenes Push-Concurrency-Semaphor gebändigt wird.
+
+**Der Filesystem-MCP** (`filesystem-mcp`-Image) hat eigene Env-Vars (nicht Backend):
+```bash
+FILES_MAX_CONCURRENT_PUSHES=4         # parallele Pushes über alle Roots + Retries (Flood-Schutz)
+FILES_HEALTH_POLL_SECONDS=30          # Backend-Health-Poll; bei down→up wird pro Root re-reconciled
+```
 
 **Defaults:**
 - `FOLDER_INGEST_ENABLED`: `false`
@@ -747,6 +771,8 @@ MCP prüft die Konfig-Ausrichtung beim Start via `GET /api/folder-ingest/health`
 - `FOLDER_INGEST_DEFAULT_TIER`: `0`
 - `FOLDER_INGEST_TO_PAPERLESS`: `true`
 - `FOLDER_INGEST_NOTIFY_ON_FILED`: `true`
+- `PAPERLESS_RECONCILER_INTERVAL`: `120` · `PAPERLESS_RECONCILER_BATCH`: `25` · `PAPERLESS_RECONCILER_REFILE_GRACE_SECONDS`: `300` · `PAPERLESS_RECONCILER_REFILE_LEASE_SECONDS`: `900`
+- `FILES_MAX_CONCURRENT_PUSHES`: `4` · `FILES_HEALTH_POLL_SECONDS`: `30`
 
 ---
 
@@ -1191,7 +1217,17 @@ API_RATE_LIMIT_AUTH=10/minute
 API_RATE_LIMIT_VOICE=30/minute
 API_RATE_LIMIT_CHAT=60/minute
 API_RATE_LIMIT_ADMIN=200/minute
+API_RATE_LIMIT_INGEST=1200/minute     # folder-/email-ingest PUSH-Routen (token-auth, MCP-Semaphor bändigt Durchsatz)
 ```
+
+`API_RATE_LIMIT_INGEST` gilt für die `/document`-Push-Routen von folder- und
+email-ingest. Diese werden vom vertrauenswürdigen, Bearer-authentifizierten MCP
+(eine IP) getroffen, dessen eigenes Push-Concurrency-Semaphor der eigentliche
+Durchsatz-Regler ist — nicht das für ungetrusteten User-API-Missbrauch gedachte
+`API_RATE_LIMIT_DEFAULT`. Seit die Paperless-Ablage entkoppelt ist (Design Z) kehrt
+der Push in ms zurück, ein Watch-Folder-Backlog burstet also weit über 100/min und
+lief in 429 (der Drain blieb stehen). Das großzügige Ceiling lässt das Semaphor den
+legitimen Durchsatz steuern und deckelt trotzdem einen geleakten Token.
 
 ### Circuit Breaker
 
