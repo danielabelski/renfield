@@ -25,8 +25,8 @@ renfield-mcp-email-ingest (dedicated, owns the IMAP creds — NOT the backend)
         ▼
 backend  services/email_ingest.py  (per-mailbox routing) → services/folder_ingest.py (shared bridge)
   resolve mailbox_id → owner/tier/kb (SERVER-SIDE) → dedup vs the Document row →
-  race-safe create + enqueue on the Redis doc stream → Paperless leg →
-  record email_ingest_log ledger → respond 4-state
+  race-safe create + stamp paperless_state='pending' + enqueue on the Redis doc stream →
+  record email_ingest_log ledger → respond 4-state (async paperless_reconciler files it)
         ▼
   document worker (async): OCR / chunk / embed + KG / Schicht-A hooks
 ```
@@ -84,9 +84,9 @@ into one decision for the *email*. All four `status` values are HTTP 200.
 
 | `status`    | meaning                                                        |
 |-------------|----------------------------------------------------------------|
-| `ingested`  | new row created + enqueued                                     |
-| `duplicate` | row exists, completed, Paperless leg settled                   |
-| `retry`     | worker down, or row pending/processing, or Paperless unsettled |
+| `ingested`  | new row created + enqueued (+ stamped `paperless_state='pending'`) |
+| `duplicate` | row exists + completed (Paperless filed out of band by the reconciler) |
+| `retry`     | worker down, or row pending/processing                        |
 | `failed`    | terminal reject (bad ext, empty, oversize, malformed metadata) |
 
 Per-email aggregation (watcher side, `engine.py::aggregate`):
@@ -134,10 +134,12 @@ A wrong token → `401`/`403`. When the feature is **disabled** health still ret
 - **Owner / tier.** Resolved server-side per mailbox (see above). With
   `AUTH_ENABLED=false` (single-user) the circle filter short-circuits, so tier/owner
   are inert — but are still recorded correctly for when auth is enabled.
-- **Paperless leg + correspondent auto-create.** Identical to folder-ingest (shared
-  `services/folder_ingest_paperless.py`): non-blocking upload, consume-verdict await,
-  resolve-or-create the correspondent against the full taxonomy. A Paperless
-  duplicate is terminal success; Paperless filing never fails the KB ingest.
+- **Paperless filing (async, Design Z).** Identical to folder-ingest: the push stamps
+  `paperless_state='pending'` and the shared async `paperless_reconciler` files it out
+  of band via `services/folder_ingest_paperless.py` (non-blocking upload, consume-verdict
+  await, resolve-or-create the correspondent against the full taxonomy). A Paperless
+  duplicate is terminal success; filing never fails the KB ingest; the push never awaits
+  the external round-trip on a pooled DB connection.
 - **Move semantics.** The watcher prefers IMAP `MOVE` (RFC 6851); on a server
   without it, it falls back to `COPY` + `UID EXPUNGE` (UIDPLUS) and **never** issues
   a bare `EXPUNGE` (which would purge all `\Deleted` mail). See the watcher README's
