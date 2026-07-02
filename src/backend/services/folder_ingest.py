@@ -252,14 +252,16 @@ async def ingest_document(
     decision, existing = await classify_existing(db, file_hash, kb_id)
 
     if decision is _Decision.DUPLICATE:
-        # Self-heal (restores the recovery the old PAPERLESS_ONLY branch gave):
-        # if a prior push crashed after enqueue but before stamping 'pending'
-        # (e.g. the stamp commit timed out under the DB-pressure burst this
-        # design targets), the doc can reach COMPLETED with paperless_state NULL,
-        # which the reconciler never picks up → silently unfiled. Re-arm it here
-        # on the re-push (the crash returned 503, so the file stayed in the inbox
-        # and is re-pushed). Only for filing-wanted docs; NULL on an interactive
-        # upload is the intended "never file" state.
+        # Self-heal a completed-but-unstamped row: a filing-wanted doc that
+        # reached COMPLETED with paperless_state NULL is invisible to the
+        # reconciler → silently unfiled. This covers rows completed BEFORE this
+        # design shipped and rows completed while the to_paperless flag was off
+        # and later turned on. (It does NOT cover a crash between stamp and
+        # enqueue: step 4 stamps 'pending' BEFORE enqueue, so "enqueued ⟹
+        # pending"; a crash before that leaves status='pending', which
+        # classify_existing routes to RETRY, not here.) Re-arm on the re-push
+        # (the file stayed in the inbox and is re-pushed). Only for filing-wanted
+        # docs; NULL on an interactive upload is the intended "never file" state.
         if file_to_paperless and existing.paperless_state is None:
             existing.paperless_state = PAPERLESS_STATE_PENDING
             await db.commit()

@@ -635,6 +635,15 @@ class Settings(BaseSettings):
     # (which runs after the doc is marked completed). Only docs completed longer
     # ago than this are treated as genuine stragglers.
     paperless_reconciler_refile_grace_seconds: int = 300
+    # Per-doc refile lease (Redis SET NX EX). ``processed_at`` is fixed at
+    # completion, so a still-pending straggler re-selects every tick; without a
+    # lease the SAME doc is re-enqueued each interval until it settles (a slow
+    # doc then re-runs a full Docling pass per tick). One lease lets a single
+    # refile attempt run; it expires so a FAILED attempt retries, and a success
+    # drops the row out of the pending select anyway — no explicit release. Keep
+    # it well above one refile's worst-case queue-wait + Docling time, below the
+    # tolerable retry cadence for a genuinely stuck doc.
+    paperless_reconciler_refile_lease_seconds: int = 900
 
     # Email-mailbox auto-ingest (Phase 1; ships dark). The dedicated
     # renfield-mcp-email-ingest watcher PUSHES attachments to

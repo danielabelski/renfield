@@ -189,6 +189,99 @@ async def test_idempotent_skip_when_already_failed(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# worker-supplied doc_text path + OCR content transport (Design Z)
+# ---------------------------------------------------------------------------
+
+def _patch_extractor_doc_text(monkeypatch, *, metadata=None, error=None):
+    """Patch the extractor for the worker-supplied ``doc_text`` path: it must use
+    ``extract_from_doc_text`` (reuse the OCR) and NOT re-OCR via
+    ``extract_from_file``."""
+    result = ExtractionResult(
+        metadata=metadata or PaperlessMetadata(), doc_text="text", error=error
+    )
+    inst = MagicMock()
+    inst.extract_from_doc_text = AsyncMock(return_value=result)
+    inst.extract_from_file = AsyncMock(
+        side_effect=AssertionError("must not re-OCR when doc_text is supplied")
+    )
+    monkeypatch.setattr(
+        "services.paperless_metadata_extractor.PaperlessMetadataExtractor",
+        MagicMock(return_value=inst),
+    )
+    return inst
+
+
+def _mcp_transport(await_inner=None):
+    """Mock mgr that also answers ``update_document`` (OCR content transport),
+    recording the params on ``mgr._updates``."""
+    await_inner = await_inner if await_inner is not None else {"status": "success", "document_id": 5}
+    updates: list[dict] = []
+
+    async def _execute(tool, params):
+        if tool == "mcp.paperless.upload_document":
+            return _envelope({"task_id": "t1"})
+        if tool == "mcp.paperless.await_consume_result":
+            return _envelope(await_inner)
+        if tool == "mcp.paperless.update_document":
+            updates.append(params)
+            return _envelope({"document_id": params["document_id"], "updated": True})
+        raise AssertionError(f"unexpected tool {tool}")
+
+    mgr = MagicMock()
+    mgr.execute_tool = AsyncMock(side_effect=_execute)
+    mgr._updates = updates
+    return mgr
+
+
+async def test_doc_text_uses_extract_from_doc_text_not_file(monkeypatch):
+    inst = _patch_extractor_doc_text(monkeypatch)
+    mgr = _mcp_transport()
+    leg = make_paperless_leg(mgr)
+    assert await leg(AsyncMock(), _doc(), _PDF, _meta(), "worker ocr text") is True
+    inst.extract_from_doc_text.assert_awaited_once()
+    inst.extract_from_file.assert_not_called()
+
+
+async def test_content_transport_on_success(monkeypatch):
+    # After a fresh 'success' file, Renfield's OCR is PATCHed into the Paperless
+    # document's searchable content (overwriting Paperless's weaker OCR).
+    _patch_extractor_doc_text(monkeypatch)
+    mgr = _mcp_transport(await_inner={"status": "success", "document_id": 42})
+    leg = make_paperless_leg(mgr)
+    assert await leg(AsyncMock(), _doc(), _PDF, _meta(), "worker ocr text") is True
+    assert mgr._updates == [{"document_id": 42, "content": "worker ocr text"}]
+
+
+async def test_no_content_transport_on_duplicate(monkeypatch):
+    # A 'duplicate' already exists in Paperless → leave its content untouched.
+    _patch_extractor_doc_text(monkeypatch)
+    mgr = _mcp_transport(await_inner={"status": "duplicate", "document_id": 42})
+    leg = make_paperless_leg(mgr)
+    assert await leg(AsyncMock(), _doc(), _PDF, _meta(), "worker ocr text") is True
+    assert mgr._updates == []
+
+
+async def test_content_transport_failure_does_not_unsettle(monkeypatch):
+    # update_document error is best-effort: the doc IS filed (state done, True).
+    _patch_extractor_doc_text(monkeypatch)
+
+    async def _execute(tool, params):
+        if tool == "mcp.paperless.upload_document":
+            return _envelope({"task_id": "t1"})
+        if tool == "mcp.paperless.await_consume_result":
+            return _envelope({"status": "success", "document_id": 42})
+        if tool == "mcp.paperless.update_document":
+            return {"success": False, "message": "paperless down"}
+        raise AssertionError(f"unexpected tool {tool}")
+
+    mgr = MagicMock()
+    mgr.execute_tool = AsyncMock(side_effect=_execute)
+    doc, db = _doc(), AsyncMock()
+    assert await make_paperless_leg(mgr)(db, doc, _PDF, _meta(), "ocr text") is True
+    assert doc.paperless_state == PAPERLESS_STATE_DONE
+
+
+# ---------------------------------------------------------------------------
 # metadata wiring
 # ---------------------------------------------------------------------------
 

@@ -23,17 +23,22 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from models.database import (
     DOC_STATUS_COMPLETED,
     PAPERLESS_STATE_PENDING,
+    Atom,
     Document,
 )
 from services.database import AsyncSessionLocal
 from services.redis_client import get_redis
 from services.task_queue import DocumentTaskQueue
 from utils.config import settings
+
+# Redis lease key: one refile in flight per doc (SET NX EX). See
+# settings.paperless_reconciler_refile_lease_seconds for the rationale.
+_REFILE_LEASE_KEY = "paperless:refile:lease:{doc_id}"
 
 
 async def reenqueue_pending_paperless(mcp_manager: Any = None) -> None:
@@ -47,29 +52,53 @@ async def reenqueue_pending_paperless(mcp_manager: Any = None) -> None:
     batch = settings.paperless_reconciler_batch
 
     async with AsyncSessionLocal() as db:
-        doc_ids = list(
-            (
-                await db.execute(
-                    select(Document.id)
-                    .where(
-                        Document.paperless_state == PAPERLESS_STATE_PENDING,
-                        Document.status == DOC_STATUS_COMPLETED,
+        # Left-join atoms for the owner (Document has no direct owner column —
+        # ownership lives on the atom via Document.atom_id) so the refile files
+        # metadata with the SAME owner-scoped correspondent/learned-examples the
+        # inline hook path uses. A NULL processed_at (anomalous/legacy completed
+        # row) is by definition older than any grace → include it (SQL
+        # ``NULL < cutoff`` is unknown and would otherwise drop it forever).
+        rows = (
+            await db.execute(
+                select(Document.id, Atom.owner_user_id)
+                .join(Atom, Document.atom_id == Atom.atom_id, isouter=True)
+                .where(
+                    Document.paperless_state == PAPERLESS_STATE_PENDING,
+                    Document.status == DOC_STATUS_COMPLETED,
+                    or_(
                         Document.processed_at < cutoff,
-                    )
-                    .order_by(Document.id)
-                    .limit(batch)
+                        Document.processed_at.is_(None),
+                    ),
                 )
+                .order_by(Document.id)
+                .limit(batch)
             )
-            .scalars()
-            .all()
-        )
-    if not doc_ids:
+        ).all()
+    if not rows:
         return
 
-    queue = DocumentTaskQueue(redis_client=get_redis())
-    for doc_id in doc_ids:
-        await queue.enqueue({"document_id": doc_id, "trigger": "paperless_refile"})
-    logger.info(
-        f"paperless-reconciler: re-enqueued {len(doc_ids)} pending doc(s) for "
-        f"worker refile (grace={grace.total_seconds():.0f}s)"
-    )
+    redis = get_redis()
+    ttl = settings.paperless_reconciler_refile_lease_seconds
+    queue = DocumentTaskQueue(redis_client=redis)
+    enqueued = 0
+    for doc_id, owner_user_id in rows:
+        # Lease the doc before enqueuing so a still-in-flight refile isn't
+        # re-queued every tick (processed_at is fixed, so the row re-selects).
+        acquired = await redis.set(
+            _REFILE_LEASE_KEY.format(doc_id=doc_id), "1", nx=True, ex=ttl
+        )
+        if not acquired:
+            continue
+        await queue.enqueue(
+            {
+                "document_id": doc_id,
+                "trigger": "paperless_refile",
+                "user_id": owner_user_id,
+            }
+        )
+        enqueued += 1
+    if enqueued:
+        logger.info(
+            f"paperless-reconciler: re-enqueued {enqueued} pending doc(s) for "
+            f"worker refile (grace={grace.total_seconds():.0f}s, lease={ttl}s)"
+        )
