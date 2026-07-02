@@ -72,15 +72,60 @@ async def test_poison_guard_quarantines_over_cap(monkeypatch):
         w, "AsyncSessionLocal",
         MagicMock(side_effect=AssertionError("must not process a quarantined entry")),
     )
+    redis = MagicMock()
+    redis.get = AsyncMock(return_value=None)  # 0 clean transient leaves
+    redis.delete = AsyncMock()
     q = MagicMock()
     q.ack = AsyncMock()
     entry = StreamEntry(entry_id="1-0", params={"document_id": 241}, delivery_count=4)
 
-    await w._process_entry(MagicMock(), q, entry)
+    await w._process_entry(redis, q, entry)
 
     assert marked and marked[0][0] == 241
-    assert "4 delivery attempts" in marked[0][1]
+    assert "4 crash redeliveries" in marked[0][1]
     q.ack.assert_awaited_once_with("1-0")
+
+
+@pytest.mark.asyncio
+async def test_transient_leaves_are_not_counted_as_crashes(monkeypatch):
+    # An entry redelivered 5x but with 4 recorded CLEAN transient leaves has a
+    # crash_count of 1 — a sustained infra outage must NOT quarantine a healthy
+    # doc. It proceeds into normal processing (routed through the light refile
+    # path here to prove it passed the guard).
+    import workers.document_processor_worker as w
+    from services.task_queue import StreamEntry
+
+    monkeypatch.setattr(w.settings, "worker_max_deliveries", 3)
+    marked = []
+
+    async def _fake_mark(doc_id, err):
+        marked.append(doc_id)
+
+    monkeypatch.setattr(w, "_mark_document_failed", _fake_mark)
+    refiled = []
+
+    async def _fake_refile(doc_id, user_id=None):
+        refiled.append(doc_id)
+
+    monkeypatch.setattr(
+        "services.paperless_filing_hook.refile_document_paperless", _fake_refile
+    )
+    redis = MagicMock()
+    redis.get = AsyncMock(return_value="4")  # 4 clean transient leaves recorded
+    redis.delete = AsyncMock()
+    q = MagicMock()
+    q.ack = AsyncMock()
+    entry = StreamEntry(
+        entry_id="9-0",
+        params={"document_id": 3, "trigger": "paperless_refile"},
+        delivery_count=5,
+    )
+
+    await w._process_entry(redis, q, entry)
+
+    assert marked == []  # crash_count = 5 - 4 = 1 <= cap → not quarantined
+    assert refiled == [3]
+    q.ack.assert_awaited_once_with("9-0")
 
 
 @pytest.mark.asyncio

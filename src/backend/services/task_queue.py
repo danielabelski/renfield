@@ -295,10 +295,19 @@ class DocumentTaskQueue:
             # Attach the per-entry delivery count (XAUTOCLAIM just incremented it)
             # so the worker can quarantine an entry redelivered past the poison
             # cap — a doc that OOM-kills the worker every attempt must NOT be
-            # re-processed indefinitely (it would crashloop the queue).
-            counts = await self._pending_delivery_counts()
-            for e in claimed:
-                e.delivery_count = counts.get(e.entry_id, e.delivery_count)
+            # re-processed indefinitely (it would crashloop the queue). Best-effort:
+            # a redis hiccup here must NOT abort the reclaim (on the startup path an
+            # exception would crash main() → pod restart). Fall back to the default
+            # count; the entries still process, just without the poison stamp.
+            try:
+                counts = await self._pending_delivery_counts()
+                for e in claimed:
+                    e.delivery_count = counts.get(e.entry_id, e.delivery_count)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    f"DocumentTaskQueue: delivery-count fetch failed ({exc}); "
+                    f"reclaimed entries proceed without a poison stamp"
+                )
             logger.warning(
                 f"DocumentTaskQueue: reclaimed {len(claimed)} stale entries "
                 f"from previous consumers"

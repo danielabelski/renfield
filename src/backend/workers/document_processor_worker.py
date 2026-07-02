@@ -152,6 +152,22 @@ async def _heartbeat_loop(
             continue
 
 
+def _transient_key(entry_id: str) -> str:
+    """Redis key holding the count of CLEAN transient leaves for a PEL entry.
+    Subtracted from the redelivery count so infra blips (which the worker catches
+    and leaves un-ACKed on purpose) don't burn the OOM-poison budget — only
+    genuine mid-processing crashes (OOM-kills, which can't record a leave) do."""
+    return f"renfield:tasks:transient:{entry_id}"
+
+
+async def _clear_transient(redis: aioredis.Redis, entry_id: str) -> None:
+    """Drop the transient-leave counter once the entry reaches a terminal state."""
+    try:
+        await redis.delete(_transient_key(entry_id))
+    except Exception as e:  # noqa: BLE001 - cleanup is best-effort
+        logger.debug(f"transient-counter cleanup failed for {entry_id}: {e}")
+
+
 async def _process_entry(
     redis: aioredis.Redis,
     queue: DocumentTaskQueue,
@@ -172,21 +188,34 @@ async def _process_entry(
     # failed, ACK the entry). delivery_count is 1 for a fresh read; only a
     # repeatedly-reclaimed entry exceeds the cap.
     delivery_count = getattr(entry, "delivery_count", 1)
-    if delivery_count > settings.worker_max_deliveries:
-        logger.error(
-            f"doc {doc_id}: entry {entry.entry_id} delivered {delivery_count}x "
-            f"(> {settings.worker_max_deliveries}); quarantining as failed "
-            f"(likely OOM-poison / unprocessable)"
-        )
-        await _mark_document_failed(
-            doc_id,
-            RuntimeError(
-                f"quarantined after {delivery_count} delivery attempts "
-                f"(worker kept dying mid-processing; likely too large to process)"
-            ),
-        )
-        await queue.ack(entry.entry_id)
-        return
+    if delivery_count > 1:
+        # Subtract CLEAN transient leaves (infra blips the worker caught and left
+        # un-ACKed) from the redelivery count — periodic reclaim re-delivers those
+        # too, and a sustained embedding/DB outage would otherwise burn the poison
+        # budget and wrongly fail healthy docs. Only genuine crash redeliveries
+        # (an OOM-kill can't record a leave) should count.
+        try:
+            transient_leaves = int(await redis.get(_transient_key(entry.entry_id)) or 0)
+        except Exception:  # noqa: BLE001 - a redis hiccup must not misfire the guard
+            transient_leaves = 0
+        crash_count = delivery_count - transient_leaves
+        if crash_count > settings.worker_max_deliveries:
+            logger.error(
+                f"doc {doc_id}: entry {entry.entry_id} crash-redelivered {crash_count}x "
+                f"(delivered {delivery_count}, transient {transient_leaves}; "
+                f"> {settings.worker_max_deliveries}) — quarantining as failed "
+                f"(likely OOM-poison / unprocessable)"
+            )
+            await _mark_document_failed(
+                doc_id,
+                RuntimeError(
+                    f"quarantined after {crash_count} crash redeliveries "
+                    f"(worker kept dying mid-processing; likely too large to process)"
+                ),
+            )
+            await queue.ack(entry.entry_id)
+            await _clear_transient(redis, entry.entry_id)
+            return
 
     force_ocr = bool(entry.params.get("force_ocr", False))
     user_id = entry.params.get("user_id")
@@ -277,12 +306,21 @@ async def _process_entry(
                 progress=progress,
             )
         await queue.ack(entry.entry_id)
+        await _clear_transient(redis, entry.entry_id)
         logger.info(f"processed doc {doc_id} (entry {entry.entry_id})")
     except Exception as e:
         logger.exception(f"task {entry.entry_id} for doc {doc_id} failed: {e}")
         if _is_transient_error(e):
             # Infra blip (LLM/embedding host down, DB/Redis dropped). Leave the
-            # entry un-ACKed so reclaim_stale re-delivers it on the next boot.
+            # entry un-ACKed so reclaim_stale re-delivers it. Record this CLEAN
+            # leave so the redelivery isn't counted as a processing crash by the
+            # poison guard (an OOM-kill can't record one, which is the distinction).
+            try:
+                tkey = _transient_key(entry.entry_id)
+                await redis.incr(tkey)
+                await redis.expire(tkey, 86_400)
+            except Exception as ie:  # noqa: BLE001 - best-effort
+                logger.debug(f"transient-counter incr failed for {entry.entry_id}: {ie}")
             logger.warning(
                 f"task {entry.entry_id} for doc {doc_id}: transient "
                 f"{type(e).__name__} — leaving in PEL for reclaim"
@@ -296,6 +334,7 @@ async def _process_entry(
             # silently dropping a doc whose terminal status we never wrote.
             if await _mark_document_failed(doc_id, e):
                 await queue.ack(entry.entry_id)
+                await _clear_transient(redis, entry.entry_id)
                 logger.error(
                     f"task {entry.entry_id} for doc {doc_id}: terminal "
                     f"{type(e).__name__} — marked failed and acked"
@@ -366,8 +405,16 @@ async def main() -> None:
     # orphaned. An entry orphaned WHILE this pod keeps running (OOMKill mid-OCR
     # that the pod survives, or a transient-error return) would otherwise never
     # be retried until the next restart. Reap on an interval so recovery no
-    # longer depends on a restart. (min-idle = visibility_ms, so a task this
-    # worker is actively processing is never stolen.)
+    # longer depends on a restart.
+    #
+    # Safe against stealing this worker's OWN in-flight task because the loop is
+    # blocked in `await _process_entry` while a doc is processing, so this reclaim
+    # branch cannot run mid-processing — even for a doc slower than visibility_ms.
+    # NOTE: this relies on the SINGLE-consumer deployment (replicas=1). With
+    # replicas>1, a doc whose processing exceeds visibility_ms (e.g. a ~20min OCR)
+    # could be XAUTOCLAIM'd by ANOTHER replica's periodic reclaim → double-process.
+    # If this Deployment is ever scaled out, raise the periodic min-idle to
+    # visibility_ms + max-processing-time margin.
     reclaim_interval = settings.worker_reclaim_interval_seconds
     last_reclaim = time.monotonic()
     try:
