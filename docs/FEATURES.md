@@ -597,11 +597,13 @@ String-Similarity (difflib SequenceMatcher) statt Embedding-Similarity für zuve
 
 Der `/knowledge-graph` Graph-Tab rendert eine 3D-Szene (`GraphView.tsx`) über native Backend-Endpunkte:
 
-- `GET /api/wissensbasis/graph` — Korpus-Ansicht: Connected-Component-Cluster mit Hub-Entities
-- `GET /api/wissensbasis/focus?entity_id=` — Nachbarschaft einer Entity (hop1 + hop2)
+- `GET /api/wissensbasis/graph` — Korpus-Ansicht: Connected-Component-Cluster mit Hub-Entities; jeder Hub trägt `circle_tier`, jedes Cluster seine echten Hub↔Hub-Relationen (`hub_edges`)
+- `GET /api/wissensbasis/focus?entity_id=` — Nachbarschaft einer Entity (hop1 + hop2, inkl. `circle_tier` + echter `edges`-Liste)
 - `GET /api/wissensbasis/search?q=` — Namens-Suche für das Such-Overlay
 
 Alle drei sind `KG_VIEW`-gated und circle-gefiltert (`services/kg_graph_service.py`): eine Kante erscheint nur, wenn beide Endpunkte für den Anfragenden sichtbar sind. Die Reva-eigenen Endpunkte (`/trace`, `/me/mix`) sind in der Standalone-Renfield-Variante absichtlich nicht implementiert.
+
+**Szene (volumetrisch, seit 2026-07):** Cluster-Zentren, Hubs und beide Focus-Schalen werden per Fibonacci-Verteilung über Kugeln platziert (deterministisch, stabil über Reloads) — die frühere Darstellung kollabierte auf eine flache XZ-„Ekliptik". Knotenfarbe = Circle-Tier (DESIGN.md-Tier-Token, Tier zusätzlich als Text im Label — Farbe nie alleiniges Signal), Knotengröße = Mention-/Importance-Anteil, Cluster-Hüllen alternieren nur Markenfarben (Crimson/Türkis/Cream). Focus-Modus zeichnet die echten Relationskanten des Backends; Hover hebt die inzidenten Kanten in Akzent-Türkis hervor. Kamera framet die Bounding-Sphere; langsamer Auto-Orbit liefert die Tiefen-Parallaxe, stoppt bei der ersten Interaktion und entfällt unter `prefers-reduced-motion`. Ferne Sekundär-Labels werden distanz-gecullt.
 
 ## Admin Maintenance Page
 

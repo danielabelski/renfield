@@ -196,6 +196,8 @@ export default function GraphView() {
       yOffset: number;
       tier: 'primary' | 'secondary';
       entityId?: string;
+      /** Exempt from distance culling (focus-mode hop1 — the point of the view). */
+      alwaysLabel?: boolean;
     }> = [];
     const clickable: Array<{ mesh: THREE.Object3D; entityId: string }> = [];
     // entity id → incident relation lines, for the hover highlight.
@@ -214,6 +216,12 @@ export default function GraphView() {
     // (The old hardcoded (0,14,36) under/over-framed depending on data.)
     const bounds = new THREE.Box3().setFromObject(scene);
     const sphere = bounds.getBoundingSphere(new THREE.Sphere());
+    // Empty graph → Box3 is empty and the sphere degenerates (radius -1);
+    // fall back to a sane default frame instead of a negative distance.
+    if (!(sphere.radius > 0)) {
+      sphere.center.set(0, 0, 0);
+      sphere.radius = 16;
+    }
     const fitDistance =
       (sphere.radius / Math.tan((camera.fov * Math.PI) / 360)) * 1.18;
     const viewDir = new THREE.Vector3(0.42, 0.3, 1).normalize();
@@ -254,9 +262,12 @@ export default function GraphView() {
           const hovered = !!item.entityId && item.entityId === hoveredEntityId;
           // Cull far secondary labels entirely — the corpus overview reads
           // as cluster names; hub captions appear as you fly closer (or on
-          // hover), instead of 30+ labels shouting at once.
-          if (distance > 26 && !hovered) continue;
-          opacity = hovered ? 1 : Math.max(0.4, Math.min(1, 1.3 - (distance - 12) / 20));
+          // hover), instead of 30+ labels shouting at once. Focus-mode hop1
+          // opts out (alwaysLabel): those captions ARE the view.
+          if (distance > 26 && !hovered && !item.alwaysLabel) continue;
+          opacity = hovered
+            ? 1
+            : Math.max(0.4, Math.min(1, 1.3 - (distance - 12) / 20));
         }
 
         const div = document.createElement('div');
@@ -268,6 +279,9 @@ export default function GraphView() {
         div.className = clickableLabel
           ? 'absolute whitespace-nowrap cursor-pointer select-none'
           : 'pointer-events-none absolute whitespace-nowrap';
+        // The labels layer is pointer-events-none; clickable captions must
+        // opt back in or every 'click' falls through to the canvas.
+        if (clickableLabel) div.style.pointerEvents = 'auto';
         div.style.left = `${x}px`;
         div.style.top = `${y}px`;
         div.style.transform = 'translate(-50%, -100%)';
@@ -281,8 +295,12 @@ export default function GraphView() {
         }
         if (clickableLabel) {
           const eid = item.entityId!;
-          div.addEventListener('click', (e) => {
+          // pointerdown, not click: the label divs are rebuilt every frame,
+          // so mousedown and mouseup never hit the SAME element and a click
+          // event can never assemble.
+          div.addEventListener('pointerdown', (e) => {
             e.stopPropagation();
+            e.preventDefault();
             setSearchParams((prev) => {
               const next = new URLSearchParams(prev);
               next.set('focus', eid);
@@ -501,6 +519,8 @@ type Labeled = {
   yOffset: number;
   tier: 'primary' | 'secondary';
   entityId?: string;
+  /** Exempt from distance culling (focus-mode hop1 — the point of the view). */
+  alwaysLabel?: boolean;
 };
 
 type EdgeMap = Map<string, THREE.Line[]>;
@@ -679,7 +699,9 @@ function buildFocusScene(
     // click-transparent so the user can drag-orbit through the centre.
   });
 
-  const placeShell = (entities: FocusEntity[], R: number, baseSize: number) => {
+  const placeShell = (
+    entities: FocusEntity[], R: number, baseSize: number, alwaysLabel = false,
+  ) => {
     entities.forEach((e, i) => {
       const posV = fibonacciDirection(i, entities.length).multiplyScalar(R);
       const color = tierColor(e.circle_tier);
@@ -702,13 +724,14 @@ function buildFocusScene(
         yOffset: size + 0.4,
         tier: 'secondary',
         entityId: e.entity_id,
+        alwaysLabel,
       });
     });
   };
 
   // Two concentric Fibonacci shells — hop1 close, hop2 far. Both truly
   // volumetric (the old hop1 ring was flat: y ≤ ±0.6 at radius 7).
-  placeShell(data.hop1, 7, 0.3);
+  placeShell(data.hop1, 7, 0.3, true);
   placeShell(data.hop2, 13, 0.22);
 
   // REAL relation edges from the backend — focus↔hop1, hop1↔hop1,
