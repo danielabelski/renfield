@@ -1,8 +1,26 @@
 # Command Center — live constellation of the running system
 
-Status: **Design / prototype.** A frontend prototype of the centerpiece radial
-component ships alongside this doc (`src/frontend/src/components/command-center/`,
-demo-data, not yet routed). Backend wiring + the page shell are Phase 1 below.
+Status: **Phase 1+2 IMPLEMENTED** (2026-07, `feature/command-center-phase1`):
+`/admin/command-center` is routed (`<AdminRoute>` + nav entry), fed live by
+`useCommandCenterModel`, with drill-downs, a decaying pulse trail, hover
+reach-edges, a content-free activity rail, and a grouped-list fallback below
+`lg`. Phase 3 (kiosk) remains open.
+
+Two reality corrections vs the plan below, discovered during implementation:
+
+1. **Agent roles had no REST surface** — `/api/roles` is RBAC system roles,
+   not agent roles. New read-only ADMIN endpoint
+   `GET /api/command-center/roles` exposes `app.state.agent_router.roles`
+   (name, localized description, `mcp_servers`/`internal_tools` — the latter
+   back the hover reach-edges).
+2. **The chat WS can't drive the pulse** — it is chat-page-local
+   (`useChatWebSocket`, no global WS context) and per-session, so an admin
+   page riding it would only see its *own* turns. Instead the board polls
+   `GET /api/command-center/activity` (3s): recent role activations read from
+   the persisted `message_metadata.agent_role` (role-surfacing). Content-free
+   by construction (role + timestamp + action_success only — no message text,
+   no user ids), household-wide, and kiosk-safe — strictly better than the WS
+   idea for this surface.
 
 Scope: a single **read-first "mission control"** surface that shows, at a glance,
 what the running Renfield is *doing right now* — which agent role is answering,

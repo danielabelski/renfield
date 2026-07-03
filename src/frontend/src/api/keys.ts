@@ -182,4 +182,9 @@ export const keys = {
     all: ['curator'] as const,
     runs: () => ['curator', 'runs'] as const,
   },
+  commandCenter: {
+    all: ['commandCenter'] as const,
+    roles: () => ['commandCenter', 'roles'] as const,
+    activity: () => ['commandCenter', 'activity'] as const,
+  },
 } as const;

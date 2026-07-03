@@ -605,6 +605,15 @@ Alle drei sind `KG_VIEW`-gated und circle-gefiltert (`services/kg_graph_service.
 
 **Szene (volumetrisch, seit 2026-07):** Cluster-Zentren, Hubs und beide Focus-Schalen werden per Fibonacci-Verteilung über Kugeln platziert (deterministisch, stabil über Reloads) — die frühere Darstellung kollabierte auf eine flache XZ-„Ekliptik". Knotenfarbe = Circle-Tier (DESIGN.md-Tier-Token, Tier zusätzlich als Text im Label — Farbe nie alleiniges Signal), Knotengröße = Mention-/Importance-Anteil, Cluster-Hüllen alternieren nur Markenfarben (Crimson/Türkis/Cream). Focus-Modus zeichnet die echten Relationskanten des Backends; Hover hebt die inzidenten Kanten in Akzent-Türkis hervor. Kamera framet die Bounding-Sphere; langsamer Auto-Orbit liefert die Tiefen-Parallaxe, stoppt bei der ersten Interaktion und entfällt unter `prefers-reduced-motion`. Ferne Sekundär-Labels werden distanz-gecullt.
 
+## Command Center (Admin-Kommandozentrale)
+
+Live-„Mission Control"-Ansicht unter `/admin/command-center` (Admin-gated): eine radiale Konstellation des laufenden Systems — Kern (aktive Agenten-Rolle), Ring der Agenten-Rollen, Ring der MCP-Tools (gesund/eingeschränkt/ausgefallen), Ring der Räume/Satelliten (online + Belegung), Föderations-Peers als äußerer Bogen. Rein lesend; jeder Knoten verlinkt in seine Admin-Seite (Routing, Integrationen, Satelliten, Föderations-Audit).
+
+- **Live-Puls:** `GET /api/command-center/activity` (Poll, 3 s) liest die letzten Rollen-Aktivierungen aus den persistierten `message_metadata.agent_role` — bewusst **inhaltsfrei** (Rolle + Zeitstempel + Erfolg, kein Nachrichtentext, keine Nutzer-IDs; kiosk-tauglich). Abklingende Puls-Spur der letzten Aktivierungen auf dem Board + Live-Aktivitäts-Leiste rechts.
+- **Agenten-Rollen:** `GET /api/command-center/roles` — die live geladenen Rollen aus `agent_roles.yaml` inkl. `mcp_servers`-Reichweite; Hover/Fokus einer Rolle zeichnet ihre Reich­weiten-Kanten zu den Tools (und invers).
+- **Zustände:** pro Ring eigene Lade-/Fehler-Behandlung; Backend nicht erreichbar → ruhige „System ausgelastet"-Darstellung statt Alarm. `prefers-reduced-motion` respektiert; unterhalb Desktop-Breite gruppierte Listen-Ansicht statt Konstellation.
+- **Design:** DESIGN.md-Token (Crimson-Kern, Türkis-Akzent, Cream) — bewusst KEINE Glow-/Orb-Ästhetik; Status nie nur über Farbe (Formen, gestrichelte Ringe, Labels).
+
 ## Admin Maintenance Page
 
 Zentrale Wartungsseite unter `/admin/maintenance` mit Re-Embedding, Keyword-Refresh, MCP-Status und weiteren Admin-Operationen.

@@ -68,6 +68,7 @@
     "adminToolHealth": "Tool Health",
     "adminTrajectories": "Trajectories",
     "adminCurator": "Curator",
+    "commandCenter": "Command Center",
     "wissen": "Knowledge"
   },
   "auth": {
@@ -1850,8 +1851,36 @@
       "healthy": "Healthy",
       "degraded": "Degraded",
       "down": "Down",
-      "unknown": "Unknown"
-    }
+      "unknown": "Unknown",
+      "active": "Active / occupied"
+    },
+    "busy": "system busy",
+    "loading": "Assembling the constellation…",
+    "unreachableHint": "Backend unreachable or busy — showing the last known state. The board recovers on its own.",
+    "rolesLoadError": "Agent roles could not be loaded",
+    "activityLoadError": "Activity could not be loaded",
+    "activityTitle": "Live activity",
+    "activityEmpty": "Quiet right now — the board lights up with the next question.",
+    "summaryTitle": "At a glance",
+    "occupiedRooms": "Occupied rooms",
+    "turnOk": "succeeded",
+    "turnFailed": "failed",
+    "justNow": "just now",
+    "minutesAgo": "{{n}} min ago",
+    "activeNow": "answering now",
+    "occupants_one": "{{count}} present",
+    "occupants_other": "{{count}} present",
+    "emptyRoom": "empty",
+    "reachable": "reachable",
+    "unreachable": "unreachable",
+    "sectionEmpty": "Nothing configured yet.",
+    "noSatellite": "No satellite",
+    "toolHint_one": "{{count}} tool",
+    "toolHint_other": "{{count}} tools",
+    "openRole": "Open routing: {{role}}",
+    "openTool": "Open integrations: {{tool}}",
+    "openRoom": "Open satellites: {{room}}",
+    "openPeer": "Open federation audit: {{peer}}"
   },
   "routing": {
     "title": "Routing Dashboard",

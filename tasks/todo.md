@@ -1,70 +1,62 @@
-# Plan — H1 per-satellite enrollment credential (PSK)
+# Feature: Command Center — live constellation (Phase 1+2)
 
-Full design + rationale: `docs/private/security/satellite-trust-design.md` (RESOLVED
-decisions + implementation plan). Closes H1 root cause (no per-satellite identity).
-Ship DARK behind `satellite_enrollment_enabled` (default off → byte-identical).
+Primary source: `docs/design/command-center.md`. Prototype exists
+(`src/frontend/src/components/command-center/`), unrouted, demo-fed.
+Goal: the routed, live, admin-gated `/admin/command-center` — stunning
+**within DESIGN.md** (warm editorial, no glowing-orb slop).
 
-## Locked decisions
-- Credential = **PSK** (bcrypt-hashed server-side), carried in the **register
-  first-frame** (`token` field) — smallest satellite transport change.
-- Enrollment = **Ansible + UI**; issuance endpoint **ADMIN-gated**.
-- Rollout = **auto-flip with persisted latch** ("all `satellites` rows seen
-  authenticated", not just connected) behind `satellite_enrollment_autoflip_enabled`.
-- Effective-mode state machine: OFF (legacy default) → PERMISSIVE (soak) → ENFORCING.
+## Reality corrections vs the design doc (from exploration)
+- `/api/roles` = RBAC system roles, NOT agent roles. Agent roles live only in
+  `app.state.agent_router.roles` (loaded from `config/agent_roles.yaml`) —
+  **no REST endpoint exists** → add one (read-only, ADMIN).
+- The chat WS is chat-page-local (`useChatWebSocket`, no global WS context) and
+  per-session — an admin page riding it would only ever see *its own* turns.
+  → Better: poll a tiny content-free **activity endpoint** reading
+  `messages.message_metadata->>'agent_role'` (persisted by role-surfacing,
+  chat_handler:2211). Household-wide pulse, kiosk-safe (role + timestamp only).
+- Tools ring source: `GET /api/mcp/status` (per-server connected/last_error)
+  blended with `GET /api/tool-health` (failure rates) for degraded.
+- Rooms ring: `GET /api/satellites` (online) + `GET /api/presence/rooms` (occupants).
+- Peers: `GET /api/federation/peers` (last_seen_at).
 
-## PR-A — backend core (dark) — IMPLEMENTED (branch `security/satellite-enrollment-h1`)
-- [x] `ha_glue/models/database.py` — `Satellite` + `SatelliteFleetState` models (+ re-export in `models/database.py`).
-- [x] migration `pc20260624_satellite_enrollment` (down_revision = `pc20260619_ble_irk_store`,
-      the real head; apply TARGETED); `satellites` + singleton `satellite_fleet_state`.
-- [x] `ha_glue/services/satellite_enrollment_service.py` — enroll/rotate / verify (constant-time +
-      dummy_verify) / revoke / is_enforcing / maybe_autoflip (latch) / authorize_register (state machine).
-- [x] `ha_glue/api/websocket/satellite_handler.py` — register-handler PSK verify + reject + mode;
-      passes `authenticated` to register + `is_enrolled_authenticated` to the IRK push. Flag-off skips the block.
-- [x] `ha_glue/services/satellite_manager.py` — `SatelliteInfo.authenticated` + eviction guard
-      (unauth newcomer cannot evict an authenticated incumbent) + `is_connected()`.
-- [x] `ha_glue/services/presence_service.py` — BOTH IRK push paths (`irks_for_satellite` +
-      `push_macs_to_satellites`) keyed on enrollment-auth when enabled; allowlist = OFF fallback.
-- [x] `main.py` `/api/ws/token` — 401 when unauthenticated + WS auth on (inert in prod; ws_auth_enabled=False).
-- [x] `utils/config.py` — `satellite_enrollment_enabled` + `_autoflip_enabled` (both False).
-- [x] admin API (own prefix `/api/satellite-enrollment` to avoid the `/api/satellites/{id}` wildcard):
-      `POST /enroll` (PSK once, rotate) · `GET ""` (list, no token) · `GET /status` · `DELETE /{id}`. Mounted in bootstrap.
-- [x] tests authored (run on .159): `test_satellite_enrollment.py` (service + state machine + latch +
-      both IRK gates) + `test_satellite_enrollment_routes.py` (routes + `/api/ws/token` 401 + eviction guard).
-      Conftest route-mount spec added.
-- [x] **Validated on .159**: `36 passed` (25 `test_satellite_enrollment.py` + 11 `test_satellite_enrollment_routes.py`).
-      The only blocker was pre-existing box drift (`rag_service` missing `DuplicateDocumentError` on the stale
-      `wip/lane-c` tree) — overlaid to confirm, box restored after. Local env lacks backend deps.
-- [ ] **Remaining validation**: run the migration up/down on a throwaway PG DB (mechanically trivial; mirrors
-      the proven `pc20260619` pattern; tables already exercised via `create_all` in the 36 tests).
+## Backend (new, small, read-only)
+- [ ] `api/routes/command_center.py` (prefix `/api/command-center`, ADMIN-gated,
+      rate-limited like tool_health.py):
+      - `GET /roles` → `[{name, description{de,en}, mcp_servers, internal_tools}]`
+        from `request.app.state.agent_router.roles` (None-safe → []).
+      - `GET /activity?limit=` → `[{role, at, ok}]` newest-first from assistant
+        messages' `message_metadata.agent_role` (+ `action_success`), dialect-safe
+        (fetch window, extract in Python). NO content, NO user ids.
+- [ ] Mount in `main.py`.
+- [ ] Tests `tests/backend/test_command_center.py` (run on .159).
 
-## PR-B — satellite + provisioning — IMPLEMENTED (same branch)
-- [x] satellite `config.py` — `ServerConfig.enrollment_token` + YAML load (blank→None) + `RENFIELD_ENROLLMENT_TOKEN` env.
-- [x] `network/websocket_client.py` — `enrollment_token` ctor param; `_register()` includes `"token"` only when set
-      (legacy frame shape preserved); wired through in `satellite.py`.
-- [x] `satellite.yaml.j2` — `enrollment_token: "{{ satellite_enrollment_token | default('') }}"`; group_vars default `""`
-      + comment (real token in gitignored host_vars); k8s per-pod `secretKeyRef` (`optional: true` so the pod still boots dark).
-- [x] `bin/enroll_satellite.py` — server-side mint/rotate, prints PSK to stdout once (UI + Ansible share the service path).
-- [x] satellite tests `tests/satellite/test_enrollment_token.py` — config (default/YAML/blank/env) + register frame include/omit.
-- [x] **Validated on .159**: `34 passed` (6 new + 28 existing config/websocket regression). k8s manifest parses. Box restored.
+## Frontend
+- [ ] `api/resources/commandCenter.ts` — `useAgentRolesQuery` (CONFIG stale),
+      `useRoleActivityQuery` (refetchInterval 3s); `keys.commandCenter.*`.
+- [ ] `components/command-center/useCommandCenterModel.ts` — compose the model
+      from the 6 queries; per-ring loading/empty/error; health mapping
+      (connected+clean=healthy, connected+last_error|success_rate<0.8=degraded,
+      disconnected=down, no-data=unknown).
+- [ ] Elevate `AgentConstellation.tsx`:
+      - live pulse + decaying trail (last N activations, opacity decay)
+      - hover role↔tool edges from the role's `mcp_servers`/`internal_tools`
+      - click drill-downs (roles→/admin/routing, tools→/admin/integrations,
+        rooms→/admin/satellites, peers→/brain/audit), keyboard-focusable
+      - all four interaction states; reduced-motion; DESIGN.md tokens only
+- [ ] `pages/CommandCenterPage.tsx` — page shell, constellation board,
+      live activity rail (content-free), narrow-width list fallback (<lg),
+      offline/"system busy" calm state.
+- [ ] Route in `App.tsx` (+lazy) + nav in `Layout.tsx` + i18n de/en
+      (nav key + new commandCenter.* additions in BOTH locales).
+- [ ] Vitest RTL tests `tests/frontend/react/pages/CommandCenterPage.test.tsx`.
 
-## PR-C — UI — IMPLEMENTED (same branch)
-- [x] `api/resources/satelliteEnrollment.ts` — list/status/enroll/revoke hooks (+ `keys.satellites.enrollment*`).
-- [x] `components/satellites/SatelliteEnrollment.tsx` — status badges (enabled/enforcing/permissive/pending),
-      enroll form (id datalist of connected sats + room), **one-time token reveal** (copy), enrolled list
-      (connected dot + last-auth + rotate + revoke). Patterned on `IrkPairing.tsx`.
-- [x] Wired into `SatellitesPage.tsx` (section after the satellite list).
-- [x] i18n: 26 keys under `satellites.enrollment.*` in de.json + en.json (minimal-diff insert).
-- [x] MSW default handlers for `/api/satellite-enrollment[/status]` (empty/disabled fleet).
-- [x] Tests: `tests/frontend/react/components/SatelliteEnrollment.test.tsx` (mint+reveal / list+revoke / enforcing badge).
-- [x] **Validated**: vitest 6/6 (3 new + 3 existing SatellitesPage regression — fixed a datalist room-text
-      collision); `tsc --noEmit` clean for my files (2 errors pre-existing, unrelated); eslint clean for my
-      files (2 errors pre-existing in SatellitesPage transcription line).
+## Verification loop (iterate until perfect)
+- [ ] `npm run typecheck` + targeted vitest.
+- [ ] `npm run build` (prod Tailwind pass).
+- [ ] Browser walkthrough (light + dark, wide + narrow, reduced-motion).
+- [ ] `/review` + docs sweep (CLAUDE.md, docs/FEATURES.md, TODOS.md) before merge.
 
-## Rollout (ops, post-merge, staged)
-- [ ] enroll fleet → write PSKs to host_vars / k8s secrets → re-provision → flip
-      `enabled=True` (PERMISSIVE) → verify all rows `last_authenticated_at` → flip
-      `autoflip_enabled=True` → latch enforces. Break-glass: `enabled=False`.
-
-## Open sub-decision (confirm during build)
-- Enforcing-latch storage: recommend a tiny singleton `satellite_fleet_state` row
-  (boolean + timestamp) in the same migration vs. overloading a generic settings table.
+## Deliberately NOT in scope (per design doc)
+Write actions; Phase-3 kiosk authz; always-on role↔tool edges (hover only);
+WS transport for the pulse (polling is household-wide + kiosk-safe; the chat WS
+is per-session and page-local).
