@@ -53,10 +53,6 @@ const LED: Record<SatelliteState, string> = {
   error: '#ff4d4d',
 };
 
-// The big ambient wash stays warm & friendly whatever the state (it's "the
-// room"); only the core orb + the room dots carry LED status colour.
-const AMBIENT = C.amber;
-
 const CORE_COLOR: Record<CoreState, string> = {
   idle: LED.idle,
   listening: LED.listening,
@@ -64,6 +60,18 @@ const CORE_COLOR: Record<CoreState, string> = {
   speaking: LED.speaking,
   busy: LED.error, // fleet error / backend unreachable
 };
+
+/** A very dark tint of the core colour (colour × amount, over black) — used to
+ *  tint the whole ambient field to the CORE's LED colour so the background
+ *  tracks the state (blue at idle, green while listening, …) instead of a
+ *  fixed hue. `amount` ~0.06–0.16 keeps it near-black so the rings stay legible. */
+function tintDark(hex: string, amount: number): string {
+  const n = parseInt(hex.replace('#', ''), 16);
+  const r = Math.round(((n >> 16) & 255) * amount);
+  const g = Math.round(((n >> 8) & 255) * amount);
+  const b = Math.round((n & 255) * amount);
+  return `rgb(${r}, ${g}, ${b})`;
+}
 
 function polar(r: number, deg: number): [number, number] {
   const a = ((deg - 90) * Math.PI) / 180;
@@ -125,10 +133,13 @@ export default function KioskConstellation({ kiosk }: Props) {
   return (
     <div
       className="relative w-full h-full overflow-hidden select-none"
-      // Warm base as a CSS gradient on the DIV (not the SVG) so it fills ANY
-      // aspect ratio — the wall TVs are landscape, but the room tablets are
-      // portrait, where the `meet` SVG letterboxes; those bands stay warm.
-      style={{ background: 'radial-gradient(ellipse 82% 82% at 50% 46%, #1c1512 0%, #0c0a0d 55%, #050406 100%)' }}
+      // Base as a CSS gradient on the DIV (not the SVG) so it fills ANY aspect
+      // ratio — the wall TVs are landscape, the room tablets portrait, where the
+      // `meet` SVG letterboxes; those bands must stay coloured, not black. The
+      // tint tracks the CORE's LED colour so the whole field matches the state.
+      style={{
+        background: `radial-gradient(ellipse 82% 82% at 50% 46%, ${tintDark(coreColor, 0.16)} 0%, ${tintDark(coreColor, 0.06)} 52%, #050406 100%)`,
+      }}
     >
       {/* meet (not slice): the whole constellation is always visible and never
           cropped — portrait tablets show all rings, just scaled to fit width. */}
@@ -138,14 +149,14 @@ export default function KioskConstellation({ kiosk }: Props) {
           present: telemetry.peoplePresent, online: telemetry.satellitesOnline, total: telemetry.satellitesTotal,
         })}>
         <defs>
-          {/* The big warm wash across the whole field — what stops the
-              background reading as flat black. Fixed WARM (ambient "room"
-              light), independent of the LED status colour on the core. */}
+          {/* The big wash across the whole field — what stops the background
+              reading as flat black. Tinted to the CORE's LED colour so the
+              field matches the state (blue idle, green listening, …). */}
           <radialGradient id="k-halo" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor={AMBIENT} stopOpacity={0.32} />
-            <stop offset="32%" stopColor={AMBIENT} stopOpacity={0.15} />
-            <stop offset="64%" stopColor={AMBIENT} stopOpacity={0.04} />
-            <stop offset="100%" stopColor={AMBIENT} stopOpacity={0} />
+            <stop offset="0%" stopColor={coreColor} stopOpacity={0.32} />
+            <stop offset="32%" stopColor={coreColor} stopOpacity={0.15} />
+            <stop offset="64%" stopColor={coreColor} stopOpacity={0.04} />
+            <stop offset="100%" stopColor={coreColor} stopOpacity={0} />
           </radialGradient>
           {/* Translucent hologram sphere: the centre lets the warm halo glow
               through, the body luminesces, and a bright thin rim reads as the
@@ -161,26 +172,27 @@ export default function KioskConstellation({ kiosk }: Props) {
             <stop offset="0%" stopColor={coreColor} stopOpacity={0.5} />
             <stop offset="100%" stopColor={coreColor} stopOpacity={0} />
           </radialGradient>
-          {/* Drifting nebula clouds — warm embers so the field reads amber,
-              not black. Stronger + warmer than the first (too-subtle) pass. */}
+          {/* Drifting nebula clouds — core-coloured so the field reads in the
+              state's colour, not black. Three for depth (positions/drift/opacity
+              differ). */}
           <radialGradient id="k-neb1" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="#b0661d" stopOpacity={0.30} />
-            <stop offset="100%" stopColor="#b0661d" stopOpacity={0} />
+            <stop offset="0%" stopColor={coreColor} stopOpacity={0.24} />
+            <stop offset="100%" stopColor={coreColor} stopOpacity={0} />
           </radialGradient>
           <radialGradient id="k-neb2" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="#7d3418" stopOpacity={0.28} />
-            <stop offset="100%" stopColor="#7d3418" stopOpacity={0} />
+            <stop offset="0%" stopColor={coreColor} stopOpacity={0.20} />
+            <stop offset="100%" stopColor={coreColor} stopOpacity={0} />
           </radialGradient>
           <radialGradient id="k-neb3" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="#c9902f" stopOpacity={0.20} />
-            <stop offset="100%" stopColor="#c9902f" stopOpacity={0} />
+            <stop offset="0%" stopColor={coreColor} stopOpacity={0.14} />
+            <stop offset="100%" stopColor={coreColor} stopOpacity={0} />
           </radialGradient>
-          {/* Slow radar sweep: a one-sided soft glow rotated around the core.
-              Warm (ambient), part of the "room" light, not the LED status. */}
+          {/* Slow radar sweep: a one-sided soft glow rotated around the core,
+              in the core's LED colour so it belongs to the same light. */}
           <linearGradient id="k-sweep" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stopColor={AMBIENT} stopOpacity={0} />
-            <stop offset="86%" stopColor={AMBIENT} stopOpacity={0} />
-            <stop offset="100%" stopColor={AMBIENT} stopOpacity={0.10} />
+            <stop offset="0%" stopColor={coreColor} stopOpacity={0} />
+            <stop offset="86%" stopColor={coreColor} stopOpacity={0} />
+            <stop offset="100%" stopColor={coreColor} stopOpacity={0.10} />
           </linearGradient>
           <filter id="k-glow" x="-120%" y="-120%" width="340%" height="340%">
             <feGaussianBlur stdDeviation="6" result="b" />
