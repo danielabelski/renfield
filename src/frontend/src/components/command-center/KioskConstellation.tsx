@@ -36,12 +36,16 @@ const C = {
   down: '#e63e54',
   unknown: '#5b6472',
   crimson: '#e63e54',
+  amber: '#f2a63d', // warm JARVIS gold — the resting/idle core glow
   cream: '#f0e6d3',
   dim: '#7d8794',
 } as const;
 
+// The core colour drives the whole scene's ambient wash (see #k-halo), so idle
+// is a warm amber-gold (JARVIS) rather than an alarm red — the resting kiosk
+// glows warm; active voice states shift it cool (turquoise) / bright (cream).
 const CORE_COLOR: Record<CoreState, string> = {
-  idle: C.crimson,
+  idle: C.amber,
   listening: C.active,
   processing: C.cream,
   speaking: C.active,
@@ -113,10 +117,19 @@ export default function KioskConstellation({ kiosk }: Props) {
           present: telemetry.peoplePresent, online: telemetry.satellitesOnline, total: telemetry.satellitesTotal,
         })}>
         <defs>
-          <radialGradient id="k-bg" cx="50%" cy="46%" r="75%">
-            <stop offset="0%" stopColor="#0d1524" />
-            <stop offset="55%" stopColor="#080d18" />
-            <stop offset="100%" stopColor="#03050a" />
+          <radialGradient id="k-bg" cx="50%" cy="46%" r="78%">
+            <stop offset="0%" stopColor="#1c1512" />
+            <stop offset="55%" stopColor="#0c0a0d" />
+            <stop offset="100%" stopColor="#050406" />
+          </radialGradient>
+          {/* The big warm wash the core casts across the whole field — this is
+              what stops the background reading as flat black. Core-coloured, so
+              the room glows amber at rest and cool while listening (JARVIS). */}
+          <radialGradient id="k-halo" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor={coreColor} stopOpacity={0.34} />
+            <stop offset="32%" stopColor={coreColor} stopOpacity={0.16} />
+            <stop offset="64%" stopColor={coreColor} stopOpacity={0.04} />
+            <stop offset="100%" stopColor={coreColor} stopOpacity={0} />
           </radialGradient>
           <radialGradient id="k-core" cx="42%" cy="38%" r="70%">
             <stop offset="0%" stopColor="#ffffff" stopOpacity={0.95} />
@@ -127,24 +140,26 @@ export default function KioskConstellation({ kiosk }: Props) {
             <stop offset="0%" stopColor={coreColor} stopOpacity={0.5} />
             <stop offset="100%" stopColor={coreColor} stopOpacity={0} />
           </radialGradient>
-          {/* Drifting nebula clouds — the dark field is no longer flat black. */}
+          {/* Drifting nebula clouds — warm embers so the field reads amber,
+              not black. Stronger + warmer than the first (too-subtle) pass. */}
           <radialGradient id="k-neb1" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="#0f6b8f" stopOpacity={0.22} />
-            <stop offset="100%" stopColor="#0f6b8f" stopOpacity={0} />
+            <stop offset="0%" stopColor="#b0661d" stopOpacity={0.30} />
+            <stop offset="100%" stopColor="#b0661d" stopOpacity={0} />
           </radialGradient>
           <radialGradient id="k-neb2" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="#5a2b7a" stopOpacity={0.20} />
-            <stop offset="100%" stopColor="#5a2b7a" stopOpacity={0} />
+            <stop offset="0%" stopColor="#7d3418" stopOpacity={0.28} />
+            <stop offset="100%" stopColor="#7d3418" stopOpacity={0} />
           </radialGradient>
           <radialGradient id="k-neb3" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="#134b6b" stopOpacity={0.16} />
-            <stop offset="100%" stopColor="#134b6b" stopOpacity={0} />
+            <stop offset="0%" stopColor="#c9902f" stopOpacity={0.20} />
+            <stop offset="100%" stopColor="#c9902f" stopOpacity={0} />
           </radialGradient>
-          {/* Slow radar sweep: a one-sided soft glow rotated around the core. */}
+          {/* Slow radar sweep: a one-sided soft glow rotated around the core,
+              tinted to the core colour so it belongs to the same light. */}
           <linearGradient id="k-sweep" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stopColor={C.active} stopOpacity={0} />
-            <stop offset="86%" stopColor={C.active} stopOpacity={0} />
-            <stop offset="100%" stopColor={C.active} stopOpacity={0.09} />
+            <stop offset="0%" stopColor={coreColor} stopOpacity={0} />
+            <stop offset="86%" stopColor={coreColor} stopOpacity={0} />
+            <stop offset="100%" stopColor={coreColor} stopOpacity={0.10} />
           </linearGradient>
           <filter id="k-glow" x="-120%" y="-120%" width="340%" height="340%">
             <feGaussianBlur stdDeviation="6" result="b" />
@@ -163,6 +178,7 @@ export default function KioskConstellation({ kiosk }: Props) {
           .k-spike  { transform-box: fill-box; transform-origin: center; animation: kSpin 22s linear infinite; }
           .k-spike2 { transform-box: fill-box; transform-origin: center; animation: kSpin 30s linear infinite reverse; }
           .k-sweep  { transform-box: fill-box; transform-origin: center; animation: kSpin 60s linear infinite; }
+          .k-halo   { transform-box: fill-box; transform-origin: center; animation: kHalo 11s ease-in-out infinite; }
           .k-twinkle { animation: kTwinkle 5s ease-in-out infinite; }
           .k-neb-a { transform-box: fill-box; transform-origin: center; animation: kNebA 34s ease-in-out infinite alternate; }
           .k-neb-b { transform-box: fill-box; transform-origin: center; animation: kNebB 46s ease-in-out infinite alternate; }
@@ -176,13 +192,18 @@ export default function KioskConstellation({ kiosk }: Props) {
           @keyframes kNebA { from { transform: translate(0,0) scale(1); } to { transform: translate(70px,44px) scale(1.12); } }
           @keyframes kNebB { from { transform: translate(0,0) scale(1.05); } to { transform: translate(-64px,-38px) scale(1); } }
           @keyframes kNebC { from { transform: translate(0,0) scale(1); } to { transform: translate(40px,-52px) scale(1.1); } }
+          @keyframes kHalo { 0%,100% { opacity: .82; transform: scale(1); } 50% { opacity: 1; transform: scale(1.035); } }
           @media (prefers-reduced-motion: reduce) {
             .k-breathe, .k-bloom, .k-occ, .k-active-edge, .k-spike, .k-spike2,
-            .k-sweep, .k-twinkle, .k-neb-a, .k-neb-b, .k-neb-c { animation: none; }
+            .k-sweep, .k-twinkle, .k-neb-a, .k-neb-b, .k-neb-c, .k-halo { animation: none; }
           }
         `}</style>
 
         <rect x={0} y={0} width={VW} height={VH} fill="url(#k-bg)" />
+
+        {/* the core's big warm ambient wash — lights the whole field so it
+            never reads as flat black (JARVIS-style glow). Core-coloured. */}
+        <circle cx={CX} cy={CY} r={1180} fill="url(#k-halo)" className={reduced ? undefined : 'k-halo'} />
 
         {/* drifting nebula clouds (behind stars) — kills the flat-black look */}
         <ellipse cx={540} cy={360} rx={620} ry={460} fill="url(#k-neb1)" className={reduced ? undefined : 'k-neb-a'} />
