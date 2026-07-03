@@ -51,56 +51,21 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 import apiClient from '../../utils/axios';
 import type {
-  FocusEdge,
   FocusEntity,
   FocusNeighborhood,
   SearchHit,
 } from '../../api/resources/wissensbasis';
 
-interface Hub {
-  entity_id: string;
-  name: string;
-  entity_type: string;
-  mention_count: number;
-  circle_tier?: number;
-}
+import {
+  isFocusNeighborhood,
+  isGraphResponse,
+  type Cluster,
+  type GraphResponse,
+  type Hub,
+} from './graphResponseGuards';
 
-interface Cluster {
-  id: string;
-  label: string;
-  sub_label: string;
-  entity_count: number;
-  hubs: Hub[];
-  hub_edges?: FocusEdge[];
-  color_seed: number;
-  namesake_entity_id: string | null;
-}
-
-interface GraphResponse {
-  clusters: Cluster[];
-  total_entities: number;
-  total_relations: number;
-  truncated: boolean;
-}
-
-// A rolling backend can briefly serve the SPA index.html for an /api path
-// (backend momentarily unavailable → nginx/Traefik fallback), so axios can
-// resolve with a NON-graph body (an HTML string). Validate the shape before
-// trusting it — otherwise `corpus.clusters.length` / the scene builder read
-// `.length` off undefined and crash the whole view into the error boundary.
-function isGraphResponse(data: unknown): data is GraphResponse {
-  return !!data && typeof data === 'object' && Array.isArray((data as GraphResponse).clusters);
-}
-
-function isFocusNeighborhood(data: unknown): data is FocusNeighborhood {
-  return (
-    !!data &&
-    typeof data === 'object' &&
-    !!(data as FocusNeighborhood).focus &&
-    Array.isArray((data as FocusNeighborhood).hop1) &&
-    Array.isArray((data as FocusNeighborhood).hop2)
-  );
-}
+// Re-export so downstream type references in this file stay unqualified.
+export type { Cluster, GraphResponse, Hub };
 
 // DESIGN.md tier ladder (0 self … 4 public) — node colour IS the access
 // signal, so these are the locked tier tokens, not decorative hues.
@@ -148,11 +113,23 @@ export default function GraphView() {
   const [corpus, setCorpus] = useState<GraphResponse | null>(null);
   const [focusData, setFocusData] = useState<FocusNeighborhood | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Bumped by the error view's retry button so the load effect re-runs even
+  // when focusId is unchanged (the corpus view's only other dep).
+  const [retryNonce, setRetryNonce] = useState(0);
 
   // Mode selector. Fetches the appropriate endpoint; clears the other.
   useEffect(() => {
     let cancelled = false;
     setLoadError(null);
+    // A failure tears down any prior scene so the Three.js RAF loop stops
+    // (its effect keys on corpus/focusData) instead of rendering to the
+    // now-detached canvas behind the error view.
+    const fail = (msg: string) => {
+      if (cancelled) return;
+      setLoadError(msg);
+      setCorpus(null);
+      setFocusData(null);
+    };
     if (focusId) {
       apiClient.get<FocusNeighborhood>('/api/wissensbasis/focus', {
         params: { entity_id: focusId, hops: 2 },
@@ -160,20 +137,20 @@ export default function GraphView() {
         .then(res => {
           if (cancelled) return;
           if (isFocusNeighborhood(res.data)) { setFocusData(res.data); setCorpus(null); }
-          else setLoadError('malformed');
+          else fail('malformed');
         })
-        .catch(err => { if (!cancelled) setLoadError(err?.message || String(err)); });
+        .catch(err => fail(err?.message || String(err)));
     } else {
       apiClient.get<GraphResponse>('/api/wissensbasis/graph')
         .then(res => {
           if (cancelled) return;
           if (isGraphResponse(res.data)) { setCorpus(res.data); setFocusData(null); }
-          else setLoadError('malformed');
+          else fail('malformed');
         })
-        .catch(err => { if (!cancelled) setLoadError(err?.message || String(err)); });
+        .catch(err => fail(err?.message || String(err)));
     }
     return () => { cancelled = true; };
-  }, [focusId]);
+  }, [focusId, retryNonce]);
 
   // Three.js scene lifecycle.
   useEffect(() => {
@@ -494,11 +471,21 @@ export default function GraphView() {
     // show a calm, retryable message rather than a raw error string.
     const message =
       loadError === 'malformed'
-        ? t('knowledgeGraph.graph.unavailable', 'Graph temporarily unavailable — please retry in a moment.')
-        : t('knowledgeGraph.graph.loadError', 'Could not load graph: {{err}}', { err: loadError });
+        ? t('knowledgeGraph.graphUnavailable', 'Graph temporarily unavailable.')
+        : t('knowledgeGraph.graphLoadError', 'Could not load graph: {{err}}', { err: loadError });
     return (
-      <div role="alert" className="text-xs text-red-700 dark:text-red-300 px-3 py-2 bg-red-50 dark:bg-red-900/20 rounded">
-        {message}
+      <div
+        role="alert"
+        className="flex items-center gap-3 text-xs text-red-700 dark:text-red-300 px-3 py-2 bg-red-50 dark:bg-red-900/20 rounded"
+      >
+        <span>{message}</span>
+        <button
+          type="button"
+          onClick={() => { setLoadError(null); setRetryNonce((n) => n + 1); }}
+          className="shrink-0 px-2 py-0.5 rounded border border-red-300 dark:border-red-700 hover:bg-red-100 dark:hover:bg-red-900/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+        >
+          {t('knowledgeGraph.graphRetry', 'Retry')}
+        </button>
       </div>
     );
   }
