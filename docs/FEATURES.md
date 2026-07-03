@@ -612,7 +612,17 @@ Live-„Mission Control"-Ansicht unter `/admin/command-center` (Admin-gated): ei
 - **Live-Puls:** `GET /api/command-center/activity` (Poll, 3 s) liest die letzten Rollen-Aktivierungen aus den persistierten `message_metadata.agent_role` — bewusst **inhaltsfrei** (Rolle + Zeitstempel + Erfolg, kein Nachrichtentext, keine Nutzer-IDs; kiosk-tauglich). Abklingende Puls-Spur der letzten Aktivierungen auf dem Board + Live-Aktivitäts-Leiste rechts.
 - **Agenten-Rollen:** `GET /api/command-center/roles` — die live geladenen Rollen aus `agent_roles.yaml` inkl. `mcp_servers`-Reichweite; Hover/Fokus einer Rolle zeichnet ihre Reich­weiten-Kanten zu den Tools (und invers).
 - **Zustände:** pro Ring eigene Lade-/Fehler-Behandlung; Backend nicht erreichbar → ruhige „System ausgelastet"-Darstellung statt Alarm. `prefers-reduced-motion` respektiert; unterhalb Desktop-Breite gruppierte Listen-Ansicht statt Konstellation.
-- **Design:** DESIGN.md-Token (Crimson-Kern, Türkis-Akzent, Cream) — bewusst KEINE Glow-/Orb-Ästhetik; Status nie nur über Farbe (Formen, gestrichelte Ringe, Labels).
+- **Design (Admin-Board):** DESIGN.md-Token (Crimson-Kern, Türkis-Akzent, Cream) — auf dem `/admin/command-center`-Board bewusst KEINE Glow-/Orb-Ästhetik; Status nie nur über Farbe (Formen, gestrichelte Ringe, Labels).
+
+### Fullscreen-Kiosk (`/kiosk`)
+
+Kinoreife Vollbild-Variante fürs Wandtablet/-display (Admin-gated, außerhalb des App-Layouts). Bricht DESIGN.md **bewusst** (Glow/Bloom, JARVIS-Ästhetik) — diese Optik lebt NUR im Kiosk, nie auf dem zurückhaltenden Admin-Board.
+
+- **Kern:** durchscheinender Licht-Globus (Meridian-Filamente, heller Rand, kein Status-Text) statt massiver Scheibe.
+- **Status = physische Satelliten-LEDs** (`hardware/led.py`): idle=blau, listening=grün, processing=gelb, speaking=cyan, error=rot, offline=dunkel-gestrichelt — angewandt auf Kern, Raum-Punkte (pro Raum der signifikanteste Live-Zustand seiner Online-Satelliten) und Legende. **Das gesamte Ambiente-Feld** (Halo/Nebel/Basis-Verlauf/Sweep) folgt der Kernfarbe, damit der Hintergrund den Zustand mitträgt (blau im Ruhezustand, grün beim Zuhören …).
+- **Ambiente-Kacheln** (je über einen neuen, rein lesenden Admin-Endpoint, blenden sich bei Nichtverfügbarkeit aus): **Wetter** (`GET /api/command-center/weather`, Wetter-MCP für `KIOSK_WEATHER_LOCATION`, ~10-min-Cache) und **Now-Playing** (`GET /api/command-center/now-playing` aus `MediaFollowService.active_sessions()`, ein Eintrag pro Raum, inhaltsminimal — keine Nutzer-IDs).
+- **Orientierungs-agnostisch:** `preserveAspectRatio="meet"` (Konstellation nie beschnitten) + Basis-Verlauf als CSS-Gradient am Wrapper — Landscape-Wand-TVs UND Portrait-Raumtablets rendern korrekt. `prefers-reduced-motion` respektiert; inhaltsfrei by design.
+- Öffnbar über den „Kiosk"-Button im Admin-Board-Header.
 
 ## Admin Maintenance Page
 
