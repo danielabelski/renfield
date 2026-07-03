@@ -82,6 +82,11 @@ const shellColor = (seed: number) => SHELL_COLORS[seed % SHELL_COLORS.length];
 const EDGE_COLOR = 0x475569;
 const EDGE_HIGHLIGHT = 0x00e4b8;
 
+// Clusters with fewer entities than this stay unlabelled in the corpus
+// overview (their orb is still visible; the caption appears on hover) — 17
+// captions at once was an unreadable wall of overlapping text.
+const CLUSTER_LABEL_MIN_ENTITIES = 5;
+
 /** i-th of n directions distributed by golden angle over the unit sphere. */
 function fibonacciDirection(i: number, n: number): THREE.Vector3 {
   if (n <= 1) return new THREE.Vector3(0, 1, 0);
@@ -160,7 +165,9 @@ export default function GraphView() {
     if (!corpus && !focusData) return;
 
     const scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2(0x0a0f1c, 0.016);
+    // Fog is set AFTER the camera fit below (it must scale with the scene size
+    // — a fixed density fogged the whole graph to black once the volumetric
+    // spread pushed the camera far back).
 
     const W = () => root.clientWidth;
     const H = () => root.clientHeight;
@@ -202,6 +209,8 @@ export default function GraphView() {
       entityId?: string;
       /** Exempt from distance culling (focus-mode hop1 — the point of the view). */
       alwaysLabel?: boolean;
+      /** Small-cluster primary label — hidden until hovered. */
+      minor?: boolean;
     }> = [];
     const clickable: Array<{ mesh: THREE.Object3D; entityId: string }> = [];
     // entity id → incident relation lines, for the hover highlight.
@@ -227,9 +236,13 @@ export default function GraphView() {
       sphere.radius = 16;
     }
     const fitDistance =
-      (sphere.radius / Math.tan((camera.fov * Math.PI) / 360)) * 1.18;
-    const viewDir = new THREE.Vector3(0.42, 0.3, 1).normalize();
+      (sphere.radius / Math.tan((camera.fov * Math.PI) / 360)) * 0.92;
+    const viewDir = new THREE.Vector3(0.35, 0.22, 1).normalize();
     camera.position.copy(sphere.center.clone().add(viewDir.multiplyScalar(fitDistance)));
+    // Depth fog scaled to the scene: clear through the near/mid orbs, only the
+    // far back of the cloud recedes. Tied to fitDistance so it never blacks the
+    // graph out regardless of how far the fit pushes the camera.
+    scene.fog = new THREE.Fog(0x0a0f1c, fitDistance * 0.35, fitDistance + sphere.radius * 2.2);
     controls.target.copy(sphere.center);
     controls.minDistance = Math.max(2, sphere.radius * 0.2);
     controls.maxDistance = fitDistance * 2.4;
@@ -262,8 +275,8 @@ export default function GraphView() {
         // readable in the default camera frame. Primary labels stay
         // fully opaque; the hovered entity's label snaps to full.
         let opacity = 1;
+        const hovered = !!item.entityId && item.entityId === hoveredEntityId;
         if (item.tier === 'secondary') {
-          const hovered = !!item.entityId && item.entityId === hoveredEntityId;
           // Cull far secondary labels entirely — the corpus overview reads
           // as cluster names; hub captions appear as you fly closer (or on
           // hover), instead of 30+ labels shouting at once. Focus-mode hop1
@@ -272,6 +285,15 @@ export default function GraphView() {
           opacity = hovered
             ? 1
             : Math.max(0.4, Math.min(1, 1.3 - (distance - 12) / 20));
+        } else if (item.tier === 'primary') {
+          // Small clusters stay unlabelled in the overview (declutter) —
+          // hovering the orb reveals the caption.
+          if (item.minor && !hovered) continue;
+          if (!hovered) {
+            // Primary labels fade with depth so orbs facing away or far back
+            // recede instead of all shouting at full strength.
+            opacity = Math.max(0.5, Math.min(1, 1.25 - Math.max(0, distance - 55) / 80));
+          }
         }
 
         const div = document.createElement('div');
@@ -291,11 +313,16 @@ export default function GraphView() {
         div.style.transform = 'translate(-50%, -100%)';
         div.style.textShadow = '0 1px 2px rgba(0,0,0,0.95), 0 0 4px rgba(0,0,0,0.85)';
         div.style.opacity = String(opacity);
-        if (item.tier === 'secondary') {
-          // Pill background so labels stay readable when they overlap.
+        // Pill background so labels stay readable when they overlap — the
+        // primary (cluster) pills are a touch stronger + centred.
+        div.style.borderRadius = '4px';
+        if (item.tier === 'primary') {
+          div.style.padding = '2px 7px';
+          div.style.background = 'rgba(10,15,28,0.72)';
+          div.style.textAlign = 'center';
+        } else {
           div.style.padding = '1px 5px';
           div.style.background = 'rgba(10,15,28,0.55)';
-          div.style.borderRadius = '3px';
         }
         if (clickableLabel) {
           const eid = item.entityId!;
@@ -541,6 +568,9 @@ type Labeled = {
   entityId?: string;
   /** Exempt from distance culling (focus-mode hop1 — the point of the view). */
   alwaysLabel?: boolean;
+  /** Small-cluster primary label — hidden until hovered so the overview isn't
+   *  a wall of 17 overlapping captions. */
+  minor?: boolean;
 };
 
 type EdgeMap = Map<string, THREE.Line[]>;
@@ -579,98 +609,83 @@ function buildCorpusScene(
     ...data.clusters.flatMap((c) => c.hubs.map((h) => h.mention_count)),
   );
 
+  void edgesByEntity; // corpus mode draws no hover-edges (see hub studs below)
+
   data.clusters.forEach((c, i) => {
-    // Volumetric placement: golden-angle direction over the sphere plus a
-    // staggered shell radius — clusters fill the room instead of lining a
-    // flat ring. Importance rank (i) keeps the layout stable across loads
-    // (backend orders clusters deterministically).
+    // Volumetric placement: golden-angle direction plus a wide, layered
+    // shell radius so the orbs — and their labels — spread through the room
+    // instead of piling up. Importance rank (i) keeps the layout stable
+    // across loads (backend orders clusters deterministically).
     const dir = fibonacciDirection(i, N);
-    const shellR = N <= 1 ? 0 : 12 + (i % 3) * 4.2 + i * 0.25;
+    const shellR = N <= 1 ? 0 : 15 + (i % 3) * 5.5 + i * 0.35;
     const pos = dir.multiplyScalar(shellR);
     const accent = shellColor(c.color_seed);
-    const radius = Math.max(2.0, Math.min(5.0, 1.4 + Math.sqrt(c.entity_count)));
+    // The core IS the cluster — a solid, bright, weight-sized orb (the old
+    // near-transparent body fogged everything into invisibility).
+    const coreR = Math.max(1.0, Math.min(4.2, 0.9 + Math.sqrt(c.entity_count) * 0.42));
 
     const group = new THREE.Group();
     group.position.copy(pos);
     group.userData = { cluster: c };
 
-    // Translucent body — keep clickable so users can grab the whole
-    // cluster from anywhere on the sphere, not just the small core.
-    const body = new THREE.Mesh(
-      new THREE.SphereGeometry(radius, 32, 32),
-      new THREE.MeshBasicMaterial({ color: accent, transparent: true, opacity: 0.09, depthWrite: false }),
-    );
-    group.add(body);
-    group.add(new THREE.Mesh(
-      new THREE.SphereGeometry(radius * 1.02, 24, 16),
-      new THREE.MeshBasicMaterial({ color: accent, wireframe: true, transparent: true, opacity: 0.25 }),
-    ));
+    // Faint spoke from the centre → depth cue + constellation structure.
+    scene.add(makeEdgeLine(new THREE.Vector3(0, 0, 0), pos, 0.06));
+
     const core = new THREE.Mesh(
-      new THREE.SphereGeometry(0.5, 16, 16),
-      new THREE.MeshStandardMaterial({ color: accent, emissive: accent, emissiveIntensity: 0.45, roughness: 0.4 }),
+      new THREE.SphereGeometry(coreR, 32, 24),
+      new THREE.MeshStandardMaterial({
+        color: accent, emissive: accent, emissiveIntensity: 0.9, roughness: 0.35, metalness: 0.1,
+      }),
     );
     group.add(core);
+    // Thin wireframe halo — a hint of extent without a fogging solid body.
+    group.add(new THREE.Mesh(
+      new THREE.SphereGeometry(coreR * 1.4, 24, 16),
+      new THREE.MeshBasicMaterial({ color: accent, wireframe: true, transparent: true, opacity: 0.14 }),
+    ));
 
-    // Cluster centre is clickable when we have a namesake. Click
-    // anywhere on the body or core → focus on the cluster's namesake
-    // entity. Loose-ends has no namesake so the cluster stays
-    // non-clickable (its individual hubs remain clickable instead).
+    // Click anywhere on the orb → focus its namesake. Loose-ends has no
+    // namesake, so it stays non-clickable (its hub studs remain clickable).
     if (c.namesake_entity_id) {
-      const eid = c.namesake_entity_id;
-      body.userData = { entityId: eid };
-      core.userData = { entityId: eid };
-      clickable.push({ mesh: body, entityId: eid });
-      clickable.push({ mesh: core, entityId: eid });
+      core.userData = { entityId: c.namesake_entity_id };
+      clickable.push({ mesh: core, entityId: c.namesake_entity_id });
     }
 
-    // Hubs cover the whole cluster sphere (Fibonacci), not an equator
-    // band; colour = circle tier; size = mention share.
-    const hubPositions = new Map<string, THREE.Vector3>();
+    // Hubs as bright, tier-coloured studs sitting ON the orb surface — the
+    // cluster reads as a glowing sphere flecked with its top entities.
     c.hubs.forEach((hub, hi) => {
-      const r = radius * 0.72;
-      const hubPos = fibonacciDirection(hi, c.hubs.length).multiplyScalar(r);
+      const hubPos = fibonacciDirection(hi, c.hubs.length).multiplyScalar(coreR * 1.02);
       const color = tierColor(hub.circle_tier);
-      const size =
-        0.3 + 0.28 * Math.sqrt(hub.mention_count / maxMention) + (hi === 0 ? 0.1 : 0);
+      const size = 0.28 + 0.5 * Math.sqrt(hub.mention_count / maxMention);
       const hubMesh = new THREE.Mesh(
-        new THREE.SphereGeometry(size, 12, 12),
-        new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.5, roughness: 0.35 }),
+        new THREE.SphereGeometry(size, 14, 14),
+        new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.85, roughness: 0.3 }),
       );
       hubMesh.position.copy(hubPos);
       hubMesh.userData = { entityId: hub.entity_id, hub };
       group.add(hubMesh);
-      hubPositions.set(hub.entity_id, hubPos);
       clickable.push({ mesh: hubMesh, entityId: hub.entity_id });
       labeled.push({
         object: hubMesh,
         name: hub.name,
         sub: `${hub.entity_type} · ${tierName(hub.circle_tier)}`,
-        yOffset: 0.7,
+        yOffset: size + 0.5,
         tier: 'secondary',
         entityId: hub.entity_id,
       });
     });
-
-    // Real hub↔hub relations as faint filaments inside the shell — the
-    // cluster shows its actual structure, not free-floating dots.
-    for (const edge of c.hub_edges ?? []) {
-      const from = hubPositions.get(edge.from_entity);
-      const to = hubPositions.get(edge.to_entity);
-      if (!from || !to) continue;
-      const line = makeEdgeLine(from, to, 0.3);
-      group.add(line);
-      registerEdge(edgesByEntity, edge.from_entity, line);
-      registerEdge(edgesByEntity, edge.to_entity, line);
-    }
 
     scene.add(group);
     labeled.push({
       object: group,
       name: c.label,
       sub: c.sub_label,
-      yOffset: radius * 1.1,
+      yOffset: coreR + 1.6,
       tier: 'primary',
       entityId: c.namesake_entity_id || undefined,
+      // Only the sizeable clusters stay labelled in the overview; small ones
+      // reveal their caption on hover (the orb itself is always visible).
+      minor: c.entity_count < CLUSTER_LABEL_MIN_ENTITIES,
     });
   });
 }
