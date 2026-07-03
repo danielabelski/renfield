@@ -50,6 +50,7 @@ const AdminToolHealthPage = lazy(() => import('./pages/AdminToolHealthPage'));
 const AdminTrajectoriesPage = lazy(() => import('./pages/AdminTrajectoriesPage'));
 const AdminCuratorPage = lazy(() => import('./pages/AdminCuratorPage'));
 const CommandCenterPage = lazy(() => import('./pages/CommandCenterPage'));
+const KioskPage = lazy(() => import('./pages/KioskPage'));
 const WissenLayout = lazy(() => import('./pages/wissen/WissenLayout'));
 const OverviewLens = lazy(() => import('./pages/wissen/OverviewLens'));
 
@@ -66,6 +67,14 @@ function AppRoutes() {
       {/* Public routes without layout */}
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
+
+      {/* Fullscreen wall-display kiosk — deliberately OUTSIDE the app Layout
+          (no sidebar/header). Admin-gated (auth-off = open, like the board). */}
+      <Route path="/kiosk" element={
+        <AdminRoute>
+          <KioskPage />
+        </AdminRoute>
+      } />
 
       {/* Routes with layout */}
       <Route path="/*" element={
