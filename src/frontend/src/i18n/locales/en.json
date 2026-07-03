@@ -1853,7 +1853,8 @@
       "listening": "listening",
       "processing": "thinking",
       "speaking": "speaking",
-      "busy": "system busy"
+      "busy": "system busy",
+      "error": "Error"
     },
     "telemetry": {
       "satellites": "Satellites",

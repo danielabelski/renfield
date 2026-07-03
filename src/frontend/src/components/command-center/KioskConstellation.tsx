@@ -15,7 +15,7 @@ import { useTranslation } from 'react-i18next';
 import { Music2, Radio as RadioIcon, Film, ListMusic } from 'lucide-react';
 
 import { iconForCode } from '../chat/artifacts/WeatherArtifact';
-import type { NodeHealth } from './types';
+import type { NodeHealth, SatelliteState } from './types';
 import type { CoreState, KioskState } from './useKioskModel';
 import type { KioskNowPlaying } from '../../api/resources/commandCenter';
 
@@ -30,26 +30,40 @@ const R_PEERS = 520;
 const R_CORE = 96;
 
 const C = {
-  active: '#00e4b8', // turquoise
+  active: '#00e4b8', // turquoise (tool-health accent, a different axis than LED state)
   healthy: '#00e4b8',
   degraded: '#f7a4ae',
   down: '#e63e54',
   unknown: '#5b6472',
   crimson: '#e63e54',
-  amber: '#f2a63d', // warm JARVIS gold — the resting/idle core glow
+  amber: '#f2a63d', // warm ambient wash
   cream: '#f0e6d3',
   dim: '#7d8794',
+  off: '#4a5361', // an offline satellite — its LED ring is dark
 } as const;
 
-// The core colour drives the whole scene's ambient wash (see #k-halo), so idle
-// is a warm amber-gold (JARVIS) rather than an alarm red — the resting kiosk
-// glows warm; active voice states shift it cool (turquoise) / bright (cream).
+// Satellite LED ring colours (src/satellite/renfield_satellite/hardware/led.py):
+// the kiosk colour-codes voice STATUS to match the LEDs the household actually
+// sees on the physical devices — idle=blue, listening=green, processing=yellow,
+// speaking=cyan, error=red.
+const LED: Record<SatelliteState, string> = {
+  idle: '#2f6bff',
+  listening: '#25de5f',
+  processing: '#f4cd2a',
+  speaking: '#22e0e0',
+  error: '#ff4d4d',
+};
+
+// The big ambient wash stays warm & friendly whatever the state (it's "the
+// room"); only the core orb + the room dots carry LED status colour.
+const AMBIENT = C.amber;
+
 const CORE_COLOR: Record<CoreState, string> = {
-  idle: C.amber,
-  listening: C.active,
-  processing: C.cream,
-  speaking: C.active,
-  busy: C.unknown,
+  idle: LED.idle,
+  listening: LED.listening,
+  processing: LED.processing,
+  speaking: LED.speaking,
+  busy: LED.error, // fleet error / backend unreachable
 };
 
 function polar(r: number, deg: number): [number, number] {
@@ -122,14 +136,14 @@ export default function KioskConstellation({ kiosk }: Props) {
             <stop offset="55%" stopColor="#0c0a0d" />
             <stop offset="100%" stopColor="#050406" />
           </radialGradient>
-          {/* The big warm wash the core casts across the whole field — this is
-              what stops the background reading as flat black. Core-coloured, so
-              the room glows amber at rest and cool while listening (JARVIS). */}
+          {/* The big warm wash across the whole field — what stops the
+              background reading as flat black. Fixed WARM (ambient "room"
+              light), independent of the LED status colour on the core. */}
           <radialGradient id="k-halo" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor={coreColor} stopOpacity={0.34} />
-            <stop offset="32%" stopColor={coreColor} stopOpacity={0.16} />
-            <stop offset="64%" stopColor={coreColor} stopOpacity={0.04} />
-            <stop offset="100%" stopColor={coreColor} stopOpacity={0} />
+            <stop offset="0%" stopColor={AMBIENT} stopOpacity={0.32} />
+            <stop offset="32%" stopColor={AMBIENT} stopOpacity={0.15} />
+            <stop offset="64%" stopColor={AMBIENT} stopOpacity={0.04} />
+            <stop offset="100%" stopColor={AMBIENT} stopOpacity={0} />
           </radialGradient>
           {/* Translucent hologram sphere: the centre lets the warm halo glow
               through, the body luminesces, and a bright thin rim reads as the
@@ -159,12 +173,12 @@ export default function KioskConstellation({ kiosk }: Props) {
             <stop offset="0%" stopColor="#c9902f" stopOpacity={0.20} />
             <stop offset="100%" stopColor="#c9902f" stopOpacity={0} />
           </radialGradient>
-          {/* Slow radar sweep: a one-sided soft glow rotated around the core,
-              tinted to the core colour so it belongs to the same light. */}
+          {/* Slow radar sweep: a one-sided soft glow rotated around the core.
+              Warm (ambient), part of the "room" light, not the LED status. */}
           <linearGradient id="k-sweep" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stopColor={coreColor} stopOpacity={0} />
-            <stop offset="86%" stopColor={coreColor} stopOpacity={0} />
-            <stop offset="100%" stopColor={coreColor} stopOpacity={0.10} />
+            <stop offset="0%" stopColor={AMBIENT} stopOpacity={0} />
+            <stop offset="86%" stopColor={AMBIENT} stopOpacity={0} />
+            <stop offset="100%" stopColor={AMBIENT} stopOpacity={0.10} />
           </linearGradient>
           <filter id="k-glow" x="-120%" y="-120%" width="340%" height="340%">
             <feGaussianBlur stdDeviation="6" result="b" />
@@ -263,23 +277,25 @@ export default function KioskConstellation({ kiosk }: Props) {
           const [x, y] = polar(R_ROOMS, deg);
           const [lx, ly] = polar(R_ROOMS + 30, deg);
           const occupied = room.online && room.occupants > 0;
-          // Online satellites are turquoise — BRIGHT + filled when someone's
-          // there, DIM ring when the room is empty. Only a genuinely offline
-          // satellite is crimson/dashed. (An online-but-empty room must never
-          // read as "unknown/grey" — that was the earlier bug.)
-          const col = room.online ? C.active : C.down;
+          // Dot colour = the satellite's live LED state (idle=blue, listening=
+          // green, processing=yellow, speaking=cyan, error=red). Offline = the
+          // LED is dark → a dim dashed ring. Occupancy adds a presence halo +
+          // count, but colour always tracks the LED so the wall mirrors the
+          // physical devices.
+          const st: SatelliteState | undefined = room.online ? (room.state ?? 'idle') : undefined;
+          const col = st ? LED[st] : C.off;
           return (
             <g key={`room-${room.id}`}>
               {occupied && <circle cx={x} cy={y} r={30} fill={col} opacity={0.16} filter="url(#k-soft)" className={reduced ? undefined : 'k-occ'} />}
               <circle cx={x} cy={y} r={occupied ? 13 : 9}
-                fill={occupied ? col : 'none'}
+                fill={room.online ? col : 'none'}
+                fillOpacity={room.online ? (occupied ? 1 : 0.85) : 1}
                 stroke={col} strokeWidth={2.5}
-                strokeOpacity={room.online ? (occupied ? 1 : 0.5) : 1}
                 strokeDasharray={room.online ? undefined : '4 4'}
-                filter={occupied ? 'url(#k-glow)' : undefined} />
-              {occupied && <text x={x} y={y + 5} textAnchor="middle" fontSize={15} fontWeight={700} fill="#05121a">{room.occupants}</text>}
+                filter={room.online ? 'url(#k-glow)' : undefined} />
+              {occupied && <text x={x} y={y + 5} textAnchor="middle" fontSize={15} fontWeight={700} fill="#ffffff">{room.occupants}</text>}
               <text x={lx} y={ly + 6} textAnchor={anchorFor(lx)} fontSize={19} fontWeight={occupied ? 600 : 500}
-                fill={occupied ? '#eaf2ff' : room.online ? '#8fa6b8' : C.dim} letterSpacing="0.02em">{room.label}</text>
+                fill={occupied ? '#eaf2ff' : room.online ? '#aeb9c6' : C.dim} letterSpacing="0.02em">{room.label}</text>
             </g>
           );
         })}
@@ -439,15 +455,17 @@ export default function KioskConstellation({ kiosk }: Props) {
         </div>
       )}
 
-      {/* legend — one row per visual encoding actually on screen */}
+      {/* legend — the satellite LED status colours (matches the physical ring) */}
       <div className="absolute bottom-8 right-10 flex flex-col gap-1.5 text-[13px]">
         {([
-          { label: t('kiosk.legend.present', { defaultValue: 'Present / healthy' }), swatch: { background: C.healthy } },
-          { label: t('kiosk.legend.empty', { defaultValue: 'Online · empty' }), swatch: { border: `1.5px solid ${C.active}`, opacity: 0.6 } },
-          { label: t('commandCenter.legend.degraded', { defaultValue: 'Degraded' }), swatch: { background: C.degraded } },
-          { label: t('kiosk.legend.offline', { defaultValue: 'Offline' }), swatch: { border: `1.5px dashed ${C.down}` } },
+          { label: t('kiosk.state.idle', { defaultValue: 'ready' }), swatch: { background: LED.idle } },
+          { label: t('kiosk.state.listening', { defaultValue: 'listening' }), swatch: { background: LED.listening } },
+          { label: t('kiosk.state.processing', { defaultValue: 'thinking' }), swatch: { background: LED.processing } },
+          { label: t('kiosk.state.speaking', { defaultValue: 'speaking' }), swatch: { background: LED.speaking } },
+          { label: t('kiosk.state.error', { defaultValue: 'error' }), swatch: { background: LED.error } },
+          { label: t('kiosk.legend.offline', { defaultValue: 'Offline' }), swatch: { border: `1.5px dashed ${C.off}` } },
         ]).map((row) => (
-          <span key={row.label} className="inline-flex items-center justify-end gap-2 text-white/45">
+          <span key={row.label} className="inline-flex items-center justify-end gap-2 text-white/45 capitalize">
             {row.label}
             <span className="inline-block w-2.5 h-2.5 rounded-full" style={row.swatch} />
           </span>

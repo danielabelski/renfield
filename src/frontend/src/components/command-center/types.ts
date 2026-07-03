@@ -35,12 +35,20 @@ export interface ToolNode {
   hint?: string;
 }
 
+/** The satellite voice states, colour-coded on the kiosk to match the physical
+ *  LED ring (src/satellite/.../hardware/led.py). */
+export type SatelliteState = 'idle' | 'listening' | 'processing' | 'speaking' | 'error';
+
 export interface RoomNode {
   id: string;
   label: string;
   online: boolean;
   /** Number of people the presence service currently places in this room. */
   occupants: number;
+  /** Most significant live state among the room's online satellites (kiosk
+   *  colour-codes the dot by this, matching the satellite LED ring). Absent
+   *  when the room has no satellite / is offline. */
+  state?: SatelliteState;
   /** Tooltip detail, e.g. the satellite id or occupant names. */
   hint?: string;
 }

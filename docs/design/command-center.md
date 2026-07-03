@@ -29,12 +29,16 @@ by a new read-only ADMIN endpoint and self-hiding when unavailable:
   content-minimal — room + what's playing + media kind, **no user ids**); empty
   when media-follow is off or nothing plays.
 
-**Room-status colour fix (2026-07-03):** an online-but-empty room used to render
-in the grey "unknown" colour and read as offline. Now every ONLINE satellite is
-turquoise (bright + occupant count when someone's there, a dim ring when empty)
-and only a genuinely offline satellite is crimson-dashed; the legend was
-rewritten to the encodings actually on screen (Present / Online·empty /
-Degraded / Offline).
+**Kiosk status colours = the physical satellite LED ring (2026-07-03).** The
+kiosk colour-codes voice STATUS to match the LEDs the household sees on the
+devices (`src/satellite/renfield_satellite/hardware/led.py`): **idle=blue,
+listening=green, processing=yellow, speaking=cyan, error=red**, offline=dark
+dashed. Applied to the core orb (`CORE_COLOR`), the per-room dots (coloured by
+`RoomNode.state` — the most-significant live state across a room's online
+satellites, aggregated in `useCommandCenterModel`), and the legend. The big
+**ambient wash is decoupled** (`AMBIENT`, fixed warm amber) so the background
+stays warm/friendly whatever the state — only the core + dots carry LED colour.
+(This superseded the earlier turquoise/crimson room encoding.)
 
 Two reality corrections vs the plan below, discovered during implementation:
 

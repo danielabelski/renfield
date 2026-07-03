@@ -54,6 +54,9 @@ afterEach(() => server.resetHandlers());
 describe('KioskPage', () => {
   // Tests run in the German locale (test-utils sets it), so captions are the
   // German strings: idle → "bereit", listening → "hört zu", healthy → "gesund".
+  // The core CAPTION is uppercased ("BEREIT"); the LED legend lists the same
+  // words lowercase ("bereit") — so caption assertions match on EXACT case to
+  // avoid colliding with the always-present legend rows.
   it('renders the fullscreen kiosk with wordmark, telemetry and rings', async () => {
     mockAll('idle');
     renderWithProviders(<KioskPage />);
@@ -72,7 +75,7 @@ describe('KioskPage', () => {
     mockAll('listening');
     renderWithProviders(<KioskPage />);
     await waitFor(() => {
-      expect(screen.getAllByText(/hört zu/i).length).toBeGreaterThan(0);
+      expect(screen.getByText('HÖRT ZU')).toBeInTheDocument();
     });
     // active room is surfaced content-free (room name only)
     expect(screen.getAllByText(/Wohnzimmer/).length).toBeGreaterThan(0);
@@ -82,7 +85,7 @@ describe('KioskPage', () => {
     mockAll('idle');
     renderWithProviders(<KioskPage />);
     await waitFor(() => {
-      expect(screen.getAllByText(/bereit/i).length).toBeGreaterThan(0);
+      expect(screen.getByText('BEREIT')).toBeInTheDocument();
     });
   });
 
@@ -102,9 +105,10 @@ describe('KioskPage', () => {
     renderWithProviders(<KioskPage />);
     // real count from the satellite list, not the deduped room union
     await waitFor(() => expect(screen.getByText('2/3 online')).toBeInTheDocument());
-    // the stale 'listening' satellite does NOT drive the core
-    expect(screen.getAllByText(/bereit/i).length).toBeGreaterThan(0);
-    expect(screen.queryByText(/hört zu/i)).toBeNull();
+    // the stale 'listening' satellite does NOT drive the core (caption stays
+    // "BEREIT"; the lowercase legend "hört zu" is not the caption)
+    expect(screen.getByText('BEREIT')).toBeInTheDocument();
+    expect(screen.queryByText('HÖRT ZU')).toBeNull();
   });
 
   it('shows the weather tile when a reading is available', async () => {
@@ -141,8 +145,8 @@ describe('KioskPage', () => {
     })));
     renderWithProviders(<KioskPage />);
     await waitFor(() => {
-      expect(screen.getAllByText(/System ausgelastet/i).length).toBeGreaterThan(0);
+      expect(screen.getByText('SYSTEM AUSGELASTET')).toBeInTheDocument();
     });
-    expect(screen.queryByText(/bereit/i)).toBeNull();
+    expect(screen.queryByText('BEREIT')).toBeNull();
   });
 });

@@ -1853,7 +1853,8 @@
       "listening": "hört zu",
       "processing": "denkt nach",
       "speaking": "spricht",
-      "busy": "System ausgelastet"
+      "busy": "System ausgelastet",
+      "error": "Fehler"
     },
     "telemetry": {
       "satellites": "Satelliten",
