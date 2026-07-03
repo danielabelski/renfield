@@ -83,6 +83,25 @@ interface GraphResponse {
   truncated: boolean;
 }
 
+// A rolling backend can briefly serve the SPA index.html for an /api path
+// (backend momentarily unavailable → nginx/Traefik fallback), so axios can
+// resolve with a NON-graph body (an HTML string). Validate the shape before
+// trusting it — otherwise `corpus.clusters.length` / the scene builder read
+// `.length` off undefined and crash the whole view into the error boundary.
+function isGraphResponse(data: unknown): data is GraphResponse {
+  return !!data && typeof data === 'object' && Array.isArray((data as GraphResponse).clusters);
+}
+
+function isFocusNeighborhood(data: unknown): data is FocusNeighborhood {
+  return (
+    !!data &&
+    typeof data === 'object' &&
+    !!(data as FocusNeighborhood).focus &&
+    Array.isArray((data as FocusNeighborhood).hop1) &&
+    Array.isArray((data as FocusNeighborhood).hop2)
+  );
+}
+
 // DESIGN.md tier ladder (0 self … 4 public) — node colour IS the access
 // signal, so these are the locked tier tokens, not decorative hues.
 const TIER_COLORS: number[] = [0xa5162f, 0xe63e54, 0xf0e6d3, 0x71fbd0, 0x00937c];
@@ -138,11 +157,19 @@ export default function GraphView() {
       apiClient.get<FocusNeighborhood>('/api/wissensbasis/focus', {
         params: { entity_id: focusId, hops: 2 },
       })
-        .then(res => { if (!cancelled) { setFocusData(res.data); setCorpus(null); } })
+        .then(res => {
+          if (cancelled) return;
+          if (isFocusNeighborhood(res.data)) { setFocusData(res.data); setCorpus(null); }
+          else setLoadError('malformed');
+        })
         .catch(err => { if (!cancelled) setLoadError(err?.message || String(err)); });
     } else {
       apiClient.get<GraphResponse>('/api/wissensbasis/graph')
-        .then(res => { if (!cancelled) { setCorpus(res.data); setFocusData(null); } })
+        .then(res => {
+          if (cancelled) return;
+          if (isGraphResponse(res.data)) { setCorpus(res.data); setFocusData(null); }
+          else setLoadError('malformed');
+        })
         .catch(err => { if (!cancelled) setLoadError(err?.message || String(err)); });
     }
     return () => { cancelled = true; };
@@ -463,9 +490,15 @@ export default function GraphView() {
   }
 
   if (loadError) {
+    // A 'malformed' body is the transient deploy case (SPA fallback for /api) —
+    // show a calm, retryable message rather than a raw error string.
+    const message =
+      loadError === 'malformed'
+        ? t('knowledgeGraph.graph.unavailable', 'Graph temporarily unavailable — please retry in a moment.')
+        : t('knowledgeGraph.graph.loadError', 'Could not load graph: {{err}}', { err: loadError });
     return (
       <div role="alert" className="text-xs text-red-700 dark:text-red-300 px-3 py-2 bg-red-50 dark:bg-red-900/20 rounded">
-        {t('knowledgeGraph.graph.loadError', 'Could not load graph: {{err}}', { err: loadError })}
+        {message}
       </div>
     );
   }
