@@ -10,7 +10,6 @@
 // and an ambient telemetry corner. Content-free by design (counts, role names,
 // room names only) so it is safe on a shared screen.
 import { useEffect, useMemo, useState } from 'react';
-import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
 import { Music2, Radio as RadioIcon, Film, ListMusic } from 'lucide-react';
 
@@ -124,18 +123,21 @@ export default function KioskConstellation({ kiosk }: Props) {
   );
 
   return (
-    <div className="relative w-full h-full overflow-hidden bg-black select-none">
-      <svg viewBox={`0 0 ${VW} ${VH}`} className="w-full h-full" preserveAspectRatio="xMidYMid slice" role="img"
+    <div
+      className="relative w-full h-full overflow-hidden select-none"
+      // Warm base as a CSS gradient on the DIV (not the SVG) so it fills ANY
+      // aspect ratio — the wall TVs are landscape, but the room tablets are
+      // portrait, where the `meet` SVG letterboxes; those bands stay warm.
+      style={{ background: 'radial-gradient(ellipse 82% 82% at 50% 46%, #1c1512 0%, #0c0a0d 55%, #050406 100%)' }}
+    >
+      {/* meet (not slice): the whole constellation is always visible and never
+          cropped — portrait tablets show all rings, just scaled to fit width. */}
+      <svg viewBox={`0 0 ${VW} ${VH}`} className="w-full h-full" preserveAspectRatio="xMidYMid meet" role="img"
         aria-label={t('kiosk.srSummary', {
           defaultValue: 'Renfield command center. {{present}} people present, {{online}} of {{total}} satellites online.',
           present: telemetry.peoplePresent, online: telemetry.satellitesOnline, total: telemetry.satellitesTotal,
         })}>
         <defs>
-          <radialGradient id="k-bg" cx="50%" cy="46%" r="78%">
-            <stop offset="0%" stopColor="#1c1512" />
-            <stop offset="55%" stopColor="#0c0a0d" />
-            <stop offset="100%" stopColor="#050406" />
-          </radialGradient>
           {/* The big warm wash across the whole field — what stops the
               background reading as flat black. Fixed WARM (ambient "room"
               light), independent of the LED status colour on the core. */}
@@ -220,8 +222,6 @@ export default function KioskConstellation({ kiosk }: Props) {
             .k-globe, .k-globe2 { animation: none; }
           }
         `}</style>
-
-        <rect x={0} y={0} width={VW} height={VH} fill="url(#k-bg)" />
 
         {/* the core's big warm ambient wash — lights the whole field so it
             never reads as flat black (JARVIS-style glow). Core-coloured. */}
@@ -377,8 +377,10 @@ export default function KioskConstellation({ kiosk }: Props) {
             word sits as an elegant caption below. */}
         <circle cx={CX} cy={CY} r={R_CORE * 2.8} fill="url(#k-bloom)" className={reduced ? undefined : 'k-bloom'} />
         {/* outer group positions the globe; inner group owns the breathe scale
-            (a CSS-animated transform would otherwise clobber an inline one). */}
-        <g transform={`translate(${CX} ${CY})`}>
+            (a CSS-animated transform would otherwise clobber an inline one).
+            data-core-state exposes the live state (conveyed visually by colour)
+            for tests + tooling, since there's no longer a caption word. */}
+        <g transform={`translate(${CX} ${CY})`} data-core-state={core}>
           <g className={reduced ? undefined : 'k-breathe'}>
             {/* luminous translucent body */}
             <circle cx={0} cy={0} r={R_CORE} fill="url(#k-core)" />
@@ -398,22 +400,15 @@ export default function KioskConstellation({ kiosk }: Props) {
             <circle cx={0} cy={0} r={9} fill="#fff" opacity={0.92} filter="url(#k-glow)" />
           </g>
         </g>
-        {/* state caption below the globe (+ room/role context line) */}
-        <text x={CX} y={CY + R_CORE + 52} textAnchor="middle" fontSize={24} fontWeight={600}
-          fill={coreColor} letterSpacing="0.32em" className="font-display">
-          {coreCaption(core, t).toUpperCase()}
-        </text>
-        {(() => {
-          const sub = core !== 'idle' && activeRoom
-            ? activeRoom
-            : core === 'idle' && activeRoleLabel
-              ? activeRoleLabel
-              : null;
-          return sub ? (
-            <text x={CX} y={CY + R_CORE + 82} textAnchor="middle" fontSize={16}
-              fill="#c7d2de" opacity={0.75} letterSpacing="0.08em">{sub}</text>
-          ) : null;
-        })()}
+        {/* No state word on the core — its LED colour + the legend carry the
+            status. Only the active room surfaces (which room is talking), and
+            only during a live voice interaction. */}
+        {core !== 'idle' && activeRoom && (
+          <text x={CX} y={CY + R_CORE + 50} textAnchor="middle" fontSize={18}
+            fill={coreColor} opacity={0.85} letterSpacing="0.14em" className="font-display">
+            {activeRoom}
+          </text>
+        )}
       </svg>
 
       {/* ---- HTML overlays (crisp typography over the SVG) ---- */}
@@ -473,16 +468,6 @@ export default function KioskConstellation({ kiosk }: Props) {
       </div>
     </div>
   );
-}
-
-function coreCaption(core: CoreState, t: TFunction): string {
-  switch (core) {
-    case 'listening': return t('kiosk.state.listening', { defaultValue: 'listening' });
-    case 'processing': return t('kiosk.state.processing', { defaultValue: 'thinking' });
-    case 'speaking': return t('kiosk.state.speaking', { defaultValue: 'speaking' });
-    case 'busy': return t('kiosk.state.busy', { defaultValue: 'system busy' });
-    default: return t('kiosk.state.idle', { defaultValue: 'ready' });
-  }
 }
 
 function WeatherTile({ weather }: { weather: NonNullable<KioskState['weather']> }) {

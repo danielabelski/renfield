@@ -52,11 +52,11 @@ function mockAll(satState: string) {
 afterEach(() => server.resetHandlers());
 
 describe('KioskPage', () => {
-  // Tests run in the German locale (test-utils sets it), so captions are the
-  // German strings: idle → "bereit", listening → "hört zu", healthy → "gesund".
-  // The core CAPTION is uppercased ("BEREIT"); the LED legend lists the same
-  // words lowercase ("bereit") — so caption assertions match on EXACT case to
-  // avoid colliding with the always-present legend rows.
+  // Tests run in the German locale (test-utils sets it). The core no longer
+  // renders a state WORD (its LED colour conveys the state); the live state is
+  // exposed as `data-core-state` on the core group for assertions.
+  const coreState = () =>
+    document.querySelector('[data-core-state]')?.getAttribute('data-core-state');
   it('renders the fullscreen kiosk with wordmark, telemetry and rings', async () => {
     mockAll('idle');
     renderWithProviders(<KioskPage />);
@@ -75,7 +75,7 @@ describe('KioskPage', () => {
     mockAll('listening');
     renderWithProviders(<KioskPage />);
     await waitFor(() => {
-      expect(screen.getByText('HÖRT ZU')).toBeInTheDocument();
+      expect(coreState()).toBe('listening');
     });
     // active room is surfaced content-free (room name only)
     expect(screen.getAllByText(/Wohnzimmer/).length).toBeGreaterThan(0);
@@ -85,7 +85,7 @@ describe('KioskPage', () => {
     mockAll('idle');
     renderWithProviders(<KioskPage />);
     await waitFor(() => {
-      expect(screen.getByText('BEREIT')).toBeInTheDocument();
+      expect(coreState()).toBe('idle');
     });
   });
 
@@ -105,10 +105,8 @@ describe('KioskPage', () => {
     renderWithProviders(<KioskPage />);
     // real count from the satellite list, not the deduped room union
     await waitFor(() => expect(screen.getByText('2/3 online')).toBeInTheDocument());
-    // the stale 'listening' satellite does NOT drive the core (caption stays
-    // "BEREIT"; the lowercase legend "hört zu" is not the caption)
-    expect(screen.getByText('BEREIT')).toBeInTheDocument();
-    expect(screen.queryByText('HÖRT ZU')).toBeNull();
+    // the stale 'listening' satellite does NOT drive the core
+    expect(coreState()).toBe('idle');
   });
 
   it('shows the weather tile when a reading is available', async () => {
@@ -145,8 +143,7 @@ describe('KioskPage', () => {
     })));
     renderWithProviders(<KioskPage />);
     await waitFor(() => {
-      expect(screen.getByText('SYSTEM AUSGELASTET')).toBeInTheDocument();
+      expect(coreState()).toBe('busy');
     });
-    expect(screen.queryByText('BEREIT')).toBeNull();
   });
 });

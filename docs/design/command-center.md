@@ -6,6 +6,14 @@ Status: **Phase 1+2+3 IMPLEMENTED** (2026-07, `feature/command-center-kiosk`):
 reach-edges, a content-free activity rail, and a grouped-list fallback below
 `lg`.
 
+The core shows **no state word** — its LED colour + the legend carry the status
+(only the active room name surfaces, during a live voice turn); the live state
+is exposed as `data-core-state` for tests. The kiosk is **orientation-agnostic**:
+the SVG uses `preserveAspectRatio="xMidYMid meet"` (the whole constellation is
+always visible, never cropped) and the warm base is a CSS gradient on the
+wrapper div (fills any aspect ratio), so the landscape wall TVs and the
+**portrait room tablets** both render correctly.
+
 **Phase 3 — fullscreen kiosk (SHIPPED).** `/kiosk` (a separate route OUTSIDE
 the app Layout, `<AdminRoute>`) renders the cinematic wall-display variant
 (`KioskConstellation.tsx`, driven by `useKioskModel.ts`): a glowing bloom core
