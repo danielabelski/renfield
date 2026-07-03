@@ -60,6 +60,7 @@ class _Entity:
     name: str
     entity_type: str
     mention_count: int
+    circle_tier: int = 0
 
 
 @dataclass
@@ -152,6 +153,7 @@ class KGGraphService:
                 name=e.name,
                 entity_type=e.entity_type,
                 mention_count=int(e.mention_count or 1),
+                circle_tier=int(e.circle_tier if e.circle_tier is not None else 0),
             )
             for e in rows
         ]
@@ -252,6 +254,7 @@ class KGGraphService:
             e.id: _Entity(
                 id=e.id, name=e.name, entity_type=e.entity_type,
                 mention_count=int(e.mention_count or 1),
+                circle_tier=int(e.circle_tier if e.circle_tier is not None else 0),
             )
             for e in rows
         }
@@ -359,6 +362,7 @@ class KGGraphService:
                 "display_name": e.name,
                 "entity_type": e.entity_type,
                 "importance": float(e.mention_count),
+                "circle_tier": e.circle_tier,
             }
 
         return {
@@ -420,34 +424,58 @@ class KGGraphService:
                     "name": by_id[i].name,
                     "entity_type": by_id[i].entity_type,
                     "mention_count": by_id[i].mention_count,
+                    "circle_tier": by_id[i].circle_tier,
                 }
                 for i in top
             ]
+
+        def hub_edges_for(hubs: list[dict]) -> list[dict]:
+            # Relations whose BOTH endpoints are rendered hubs of this
+            # cluster — lets the scene draw real structure inside the
+            # cluster sphere instead of free-floating dots.
+            hub_ids = {int(h["entity_id"]) for h in hubs}
+            out: list[dict] = []
+            seen: set[tuple[int, int]] = set()
+            for s_id, o_id, pred in relations:
+                if s_id in hub_ids and o_id in hub_ids and (s_id, o_id) not in seen:
+                    seen.add((s_id, o_id))
+                    out.append(
+                        {
+                            "from_entity": str(s_id),
+                            "to_entity": str(o_id),
+                            "relation": pred,
+                        }
+                    )
+            return out
 
         for seed, member_ids in enumerate(rendered):
             # member_ids preserves importance order (union-find kept input
             # order), so the first member is the namesake.
             namesake = by_id[member_ids[0]]
+            hubs = hubs_for(member_ids)
             clusters.append(
                 {
                     "id": f"c{namesake.id}",
                     "label": namesake.name,
                     "sub_label": f"{len(member_ids)} {entity_word}",
                     "entity_count": len(member_ids),
-                    "hubs": hubs_for(member_ids),
+                    "hubs": hubs,
+                    "hub_edges": hub_edges_for(hubs),
                     "color_seed": seed,
                     "namesake_entity_id": str(namesake.id),
                 }
             )
 
         if loose_ids:
+            loose_hubs = hubs_for(loose_ids)
             clusters.append(
                 {
                     "id": "loose",
                     "label": loose_label,
                     "sub_label": f"{len(loose_ids)} {entity_word}",
                     "entity_count": len(loose_ids),
-                    "hubs": hubs_for(loose_ids),
+                    "hubs": loose_hubs,
+                    "hub_edges": hub_edges_for(loose_hubs),
                     "color_seed": len(rendered),
                     "namesake_entity_id": None,
                 }

@@ -52,6 +52,9 @@ export interface FocusEntity {
   display_name: string;
   entity_type: string;
   importance: number;
+  /** Circle tier (0 self … 4 public) — drives the tier-token node colour in
+   *  the 3D scene. Optional so older API responses still deserialize. */
+  circle_tier?: number;
 }
 
 export interface FocusEdge {
