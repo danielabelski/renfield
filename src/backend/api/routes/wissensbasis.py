@@ -40,11 +40,20 @@ router = APIRouter()
 # --- Response schemas (mirror src/frontend/src/api/resources/wissensbasis.ts) ---
 
 
+class FocusEdge(BaseModel):
+    from_entity: str
+    to_entity: str
+    relation: str
+
+
 class Hub(BaseModel):
     entity_id: str
     name: str
     entity_type: str
     mention_count: int
+    # Circle tier of the entity (0 self … 4 public) — drives the tier-token
+    # node colour in the 3D scene. Defaulted for backward compatibility.
+    circle_tier: int = 0
 
 
 class Cluster(BaseModel):
@@ -53,6 +62,9 @@ class Cluster(BaseModel):
     sub_label: str
     entity_count: int
     hubs: list[Hub]
+    # Relations whose both endpoints are rendered hubs of this cluster —
+    # real intra-cluster structure for the scene's filament lines.
+    hub_edges: list[FocusEdge] = []
     color_seed: int
     namesake_entity_id: str | None
 
@@ -69,12 +81,7 @@ class FocusEntity(BaseModel):
     display_name: str
     entity_type: str
     importance: float
-
-
-class FocusEdge(BaseModel):
-    from_entity: str
-    to_entity: str
-    relation: str
+    circle_tier: int = 0
 
 
 class FocusNeighborhood(BaseModel):
