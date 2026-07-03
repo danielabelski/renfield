@@ -1,10 +1,52 @@
 # Command Center — live constellation of the running system
 
-Status: **Phase 1+2 IMPLEMENTED** (2026-07, `feature/command-center-phase1`):
+Status: **Phase 1+2+3 IMPLEMENTED** (2026-07, `feature/command-center-kiosk`):
 `/admin/command-center` is routed (`<AdminRoute>` + nav entry), fed live by
 `useCommandCenterModel`, with drill-downs, a decaying pulse trail, hover
 reach-edges, a content-free activity rail, and a grouped-list fallback below
-`lg`. Phase 3 (kiosk) remains open.
+`lg`.
+
+The core shows **no state word** — its LED colour + the legend carry the status
+(only the active room name surfaces, during a live voice turn); the live state
+is exposed as `data-core-state` for tests. The kiosk is **orientation-agnostic**:
+the SVG uses `preserveAspectRatio="xMidYMid meet"` (the whole constellation is
+always visible, never cropped) and the warm base is a CSS gradient on the
+wrapper div (fills any aspect ratio), so the landscape wall TVs and the
+**portrait room tablets** both render correctly.
+
+**Phase 3 — fullscreen kiosk (SHIPPED).** `/kiosk` (a separate route OUTSIDE
+the app Layout, `<AdminRoute>`) renders the cinematic wall-display variant
+(`KioskConstellation.tsx`, driven by `useKioskModel.ts`): a glowing bloom core
+that reacts to real household voice activity (idle/listening/processing/
+speaking, from the satellites' own `state`), concentric role/tool/room/peer
+rings, a "Kiosk" launch button on the admin header, and an alive dark field
+(drifting nebula + twinkling stars + a slow radar sweep, all reduced-motion
+gated). It DELIBERATELY breaks DESIGN.md's restraint (glow/bloom) per TODOS.md
+line 315 — the glow aesthetic lives ONLY here, never in the restrained admin
+board. Content-free by construction (counts, role names, room names).
+
+Two **ambient tiles** (2026-07-03) add glanceable household context, each fed
+by a new read-only ADMIN endpoint and self-hiding when unavailable:
+- **Weather** (under the wordmark) — `GET /api/command-center/weather` calls the
+  weather MCP for the configured home location (`KIOSK_WEATHER_LOCATION`, env
+  only — never committed), process-local ~10-min TTL cache; `null` when weather
+  is disabled / no location / MCP down (reuses the chat weather artifact's
+  WMO→icon mapping).
+- **Now-playing** (bottom-center) — `GET /api/command-center/now-playing` off
+  `MediaFollowService.active_sessions()` (one entry per room, PLAYING-only,
+  content-minimal — room + what's playing + media kind, **no user ids**); empty
+  when media-follow is off or nothing plays.
+
+**Kiosk status colours = the physical satellite LED ring (2026-07-03).** The
+kiosk colour-codes voice STATUS to match the LEDs the household sees on the
+devices (`src/satellite/renfield_satellite/hardware/led.py`): **idle=blue,
+listening=green, processing=yellow, speaking=cyan, error=red**, offline=dark
+dashed. Applied to the core orb (`CORE_COLOR`), the per-room dots (coloured by
+`RoomNode.state` — the most-significant live state across a room's online
+satellites, aggregated in `useCommandCenterModel`), and the legend. The big
+**ambient wash is decoupled** (`AMBIENT`, fixed warm amber) so the background
+stays warm/friendly whatever the state — only the core + dots carry LED colour.
+(This superseded the earlier turquoise/crimson room encoding.)
 
 Two reality corrections vs the plan below, discovered during implementation:
 

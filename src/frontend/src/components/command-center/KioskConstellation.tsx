@@ -10,11 +10,13 @@
 // and an ambient telemetry corner. Content-free by design (counts, role names,
 // room names only) so it is safe on a shared screen.
 import { useEffect, useMemo, useState } from 'react';
-import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
+import { Music2, Radio as RadioIcon, Film, ListMusic } from 'lucide-react';
 
-import type { NodeHealth } from './types';
+import { iconForCode } from '../chat/artifacts/WeatherArtifact';
+import type { NodeHealth, SatelliteState } from './types';
 import type { CoreState, KioskState } from './useKioskModel';
+import type { KioskNowPlaying } from '../../api/resources/commandCenter';
 
 const VW = 1920;
 const VH = 1080;
@@ -27,22 +29,40 @@ const R_PEERS = 520;
 const R_CORE = 96;
 
 const C = {
-  active: '#00e4b8', // turquoise
+  active: '#00e4b8', // turquoise (tool-health accent, a different axis than LED state)
   healthy: '#00e4b8',
   degraded: '#f7a4ae',
   down: '#e63e54',
   unknown: '#5b6472',
   crimson: '#e63e54',
+  amber: '#f2a63d', // warm ambient wash
   cream: '#f0e6d3',
   dim: '#7d8794',
+  off: '#4a5361', // an offline satellite — its LED ring is dark
 } as const;
 
+// Satellite LED ring colours (src/satellite/renfield_satellite/hardware/led.py):
+// the kiosk colour-codes voice STATUS to match the LEDs the household actually
+// sees on the physical devices — idle=blue, listening=green, processing=yellow,
+// speaking=cyan, error=red.
+const LED: Record<SatelliteState, string> = {
+  idle: '#2f6bff',
+  listening: '#25de5f',
+  processing: '#f4cd2a',
+  speaking: '#22e0e0',
+  error: '#ff4d4d',
+};
+
+// The big ambient wash stays warm & friendly whatever the state (it's "the
+// room"); only the core orb + the room dots carry LED status colour.
+const AMBIENT = C.amber;
+
 const CORE_COLOR: Record<CoreState, string> = {
-  idle: C.crimson,
-  listening: C.active,
-  processing: C.cream,
-  speaking: C.active,
-  busy: C.unknown,
+  idle: LED.idle,
+  listening: LED.listening,
+  processing: LED.processing,
+  speaking: LED.speaking,
+  busy: LED.error, // fleet error / backend unreachable
 };
 
 function polar(r: number, deg: number): [number, number] {
@@ -64,11 +84,18 @@ function anchorFor(x: number): 'start' | 'middle' | 'end' {
   return 'middle';
 }
 
-// Deterministic star field (no Math.random — SSR/rebuild-stable).
+// Deterministic star field (no Math.random — SSR/rebuild-stable). `d` is a
+// per-star twinkle delay so the field shimmers out of phase, not in lockstep.
 const STARS = Array.from({ length: 140 }, (_, i) => {
   const a = (i * 2654435761) % 2147483647;
   const b = (i * 40503 + 12345) % 2147483647;
-  return { x: (a % VW), y: (b % VH), r: 0.5 + ((a >> 8) % 10) / 8, o: 0.06 + ((b >> 6) % 30) / 120 };
+  return {
+    x: (a % VW),
+    y: (b % VH),
+    r: 0.5 + ((a >> 8) % 10) / 8,
+    o: 0.06 + ((b >> 6) % 30) / 120,
+    d: ((a >> 4) % 60) / 10, // 0–6s
+  };
 });
 
 interface Props {
@@ -77,7 +104,7 @@ interface Props {
 
 export default function KioskConstellation({ kiosk }: Props) {
   const { t } = useTranslation();
-  const { model, core, activeRoom, activeRoleLabel, telemetry } = kiosk;
+  const { model, core, activeRoom, activeRoleLabel, telemetry, weather, nowPlaying } = kiosk;
   const { roles, tools, rooms, peers = [] } = model;
 
   const reduced = usePrefersReducedMotion();
@@ -96,27 +123,65 @@ export default function KioskConstellation({ kiosk }: Props) {
   );
 
   return (
-    <div className="relative w-full h-full overflow-hidden bg-black select-none">
-      <svg viewBox={`0 0 ${VW} ${VH}`} className="w-full h-full" preserveAspectRatio="xMidYMid slice" role="img"
+    <div
+      className="relative w-full h-full overflow-hidden select-none"
+      // Warm base as a CSS gradient on the DIV (not the SVG) so it fills ANY
+      // aspect ratio — the wall TVs are landscape, but the room tablets are
+      // portrait, where the `meet` SVG letterboxes; those bands stay warm.
+      style={{ background: 'radial-gradient(ellipse 82% 82% at 50% 46%, #1c1512 0%, #0c0a0d 55%, #050406 100%)' }}
+    >
+      {/* meet (not slice): the whole constellation is always visible and never
+          cropped — portrait tablets show all rings, just scaled to fit width. */}
+      <svg viewBox={`0 0 ${VW} ${VH}`} className="w-full h-full" preserveAspectRatio="xMidYMid meet" role="img"
         aria-label={t('kiosk.srSummary', {
           defaultValue: 'Renfield command center. {{present}} people present, {{online}} of {{total}} satellites online.',
           present: telemetry.peoplePresent, online: telemetry.satellitesOnline, total: telemetry.satellitesTotal,
         })}>
         <defs>
-          <radialGradient id="k-bg" cx="50%" cy="46%" r="75%">
-            <stop offset="0%" stopColor="#0d1524" />
-            <stop offset="55%" stopColor="#080d18" />
-            <stop offset="100%" stopColor="#03050a" />
+          {/* The big warm wash across the whole field — what stops the
+              background reading as flat black. Fixed WARM (ambient "room"
+              light), independent of the LED status colour on the core. */}
+          <radialGradient id="k-halo" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor={AMBIENT} stopOpacity={0.32} />
+            <stop offset="32%" stopColor={AMBIENT} stopOpacity={0.15} />
+            <stop offset="64%" stopColor={AMBIENT} stopOpacity={0.04} />
+            <stop offset="100%" stopColor={AMBIENT} stopOpacity={0} />
           </radialGradient>
-          <radialGradient id="k-core" cx="42%" cy="38%" r="70%">
-            <stop offset="0%" stopColor="#ffffff" stopOpacity={0.95} />
-            <stop offset="30%" stopColor={coreColor} stopOpacity={0.95} />
-            <stop offset="100%" stopColor={coreColor} stopOpacity={0.65} />
+          {/* Translucent hologram sphere: the centre lets the warm halo glow
+              through, the body luminesces, and a bright thin rim reads as the
+              globe's edge — a light-globe, not a solid disc. */}
+          <radialGradient id="k-core" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor={coreColor} stopOpacity={0.10} />
+            <stop offset="55%" stopColor={coreColor} stopOpacity={0.16} />
+            <stop offset="83%" stopColor={coreColor} stopOpacity={0.42} />
+            <stop offset="94%" stopColor="#ffffff" stopOpacity={0.72} />
+            <stop offset="100%" stopColor={coreColor} stopOpacity={0} />
           </radialGradient>
           <radialGradient id="k-bloom" cx="50%" cy="50%" r="50%">
             <stop offset="0%" stopColor={coreColor} stopOpacity={0.5} />
             <stop offset="100%" stopColor={coreColor} stopOpacity={0} />
           </radialGradient>
+          {/* Drifting nebula clouds — warm embers so the field reads amber,
+              not black. Stronger + warmer than the first (too-subtle) pass. */}
+          <radialGradient id="k-neb1" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor="#b0661d" stopOpacity={0.30} />
+            <stop offset="100%" stopColor="#b0661d" stopOpacity={0} />
+          </radialGradient>
+          <radialGradient id="k-neb2" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor="#7d3418" stopOpacity={0.28} />
+            <stop offset="100%" stopColor="#7d3418" stopOpacity={0} />
+          </radialGradient>
+          <radialGradient id="k-neb3" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor="#c9902f" stopOpacity={0.20} />
+            <stop offset="100%" stopColor="#c9902f" stopOpacity={0} />
+          </radialGradient>
+          {/* Slow radar sweep: a one-sided soft glow rotated around the core.
+              Warm (ambient), part of the "room" light, not the LED status. */}
+          <linearGradient id="k-sweep" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor={AMBIENT} stopOpacity={0} />
+            <stop offset="86%" stopColor={AMBIENT} stopOpacity={0} />
+            <stop offset="100%" stopColor={AMBIENT} stopOpacity={0.10} />
+          </linearGradient>
           <filter id="k-glow" x="-120%" y="-120%" width="340%" height="340%">
             <feGaussianBlur stdDeviation="6" result="b" />
             <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
@@ -133,19 +198,60 @@ export default function KioskConstellation({ kiosk }: Props) {
           .k-active-edge { stroke-dasharray: 7 10; animation: kDash 1s linear infinite; }
           .k-spike  { transform-box: fill-box; transform-origin: center; animation: kSpin 22s linear infinite; }
           .k-spike2 { transform-box: fill-box; transform-origin: center; animation: kSpin 30s linear infinite reverse; }
+          .k-sweep  { transform-box: fill-box; transform-origin: center; animation: kSpin 60s linear infinite; }
+          .k-halo   { transform-box: fill-box; transform-origin: center; animation: kHalo 11s ease-in-out infinite; }
+          .k-globe  { transform-box: fill-box; transform-origin: center; animation: kSpin 44s linear infinite; }
+          .k-globe2 { transform-box: fill-box; transform-origin: center; animation: kSpin 64s linear infinite reverse; }
+          .k-twinkle { animation: kTwinkle 5s ease-in-out infinite; }
+          .k-neb-a { transform-box: fill-box; transform-origin: center; animation: kNebA 34s ease-in-out infinite alternate; }
+          .k-neb-b { transform-box: fill-box; transform-origin: center; animation: kNebB 46s ease-in-out infinite alternate; }
+          .k-neb-c { transform-box: fill-box; transform-origin: center; animation: kNebC 40s ease-in-out infinite alternate; }
           @keyframes kBreathe { 0%,100% { transform: scale(1); } 50% { transform: scale(1.03); } }
           @keyframes kBloom { 0%,100% { opacity: .55; transform: scale(1); } 50% { opacity: .85; transform: scale(1.08); } }
           @keyframes kPulse { 0%,100% { opacity: .5; } 50% { opacity: 1; } }
           @keyframes kDash { to { stroke-dashoffset: -34; } }
           @keyframes kSpin { to { transform: rotate(360deg); } }
+          @keyframes kTwinkle { 0%,100% { opacity: var(--o,0.3); } 50% { opacity: calc(var(--o,0.3) * 0.28); } }
+          @keyframes kNebA { from { transform: translate(0,0) scale(1); } to { transform: translate(70px,44px) scale(1.12); } }
+          @keyframes kNebB { from { transform: translate(0,0) scale(1.05); } to { transform: translate(-64px,-38px) scale(1); } }
+          @keyframes kNebC { from { transform: translate(0,0) scale(1); } to { transform: translate(40px,-52px) scale(1.1); } }
+          @keyframes kHalo { 0%,100% { opacity: .82; transform: scale(1); } 50% { opacity: 1; transform: scale(1.035); } }
           @media (prefers-reduced-motion: reduce) {
-            .k-breathe, .k-bloom, .k-occ, .k-active-edge, .k-spike, .k-spike2 { animation: none; }
+            .k-breathe, .k-bloom, .k-occ, .k-active-edge, .k-spike, .k-spike2,
+            .k-sweep, .k-twinkle, .k-neb-a, .k-neb-b, .k-neb-c, .k-halo,
+            .k-globe, .k-globe2 { animation: none; }
           }
         `}</style>
 
-        <rect x={0} y={0} width={VW} height={VH} fill="url(#k-bg)" />
+        {/* the core's big warm ambient wash — lights the whole field so it
+            never reads as flat black (JARVIS-style glow). Core-coloured. */}
+        <circle cx={CX} cy={CY} r={1180} fill="url(#k-halo)" className={reduced ? undefined : 'k-halo'} />
+
+        {/* drifting nebula clouds (behind stars) — kills the flat-black look */}
+        <ellipse cx={540} cy={360} rx={620} ry={460} fill="url(#k-neb1)" className={reduced ? undefined : 'k-neb-a'} />
+        <ellipse cx={1430} cy={760} rx={680} ry={520} fill="url(#k-neb2)" className={reduced ? undefined : 'k-neb-b'} />
+        <ellipse cx={1360} cy={250} rx={520} ry={420} fill="url(#k-neb3)" className={reduced ? undefined : 'k-neb-c'} />
+
+        {/* slow radar sweep around the core (symmetric disc → clean rotation) */}
+        {!reduced && (
+          <g transform={`translate(${CX} ${CY})`}>
+            <g className="k-sweep">
+              <circle cx={0} cy={0} r={R_PEERS + 60} fill="url(#k-sweep)" />
+            </g>
+          </g>
+        )}
+
         {STARS.map((s, i) => (
-          <circle key={i} cx={s.x} cy={s.y} r={s.r} fill="#cfe6ff" opacity={s.o} />
+          <circle
+            key={i}
+            cx={s.x}
+            cy={s.y}
+            r={s.r}
+            fill="#cfe6ff"
+            opacity={s.o}
+            className={reduced ? undefined : 'k-twinkle'}
+            style={reduced ? undefined : ({ '--o': s.o, animationDelay: `${s.d}s` } as React.CSSProperties)}
+          />
         ))}
 
         {/* faint ring guides */}
@@ -171,14 +277,25 @@ export default function KioskConstellation({ kiosk }: Props) {
           const [x, y] = polar(R_ROOMS, deg);
           const [lx, ly] = polar(R_ROOMS + 30, deg);
           const occupied = room.online && room.occupants > 0;
-          const col = !room.online ? C.down : occupied ? C.active : C.unknown;
+          // Dot colour = the satellite's live LED state (idle=blue, listening=
+          // green, processing=yellow, speaking=cyan, error=red). Offline = the
+          // LED is dark → a dim dashed ring. Occupancy adds a presence halo +
+          // count, but colour always tracks the LED so the wall mirrors the
+          // physical devices.
+          const st: SatelliteState | undefined = room.online ? (room.state ?? 'idle') : undefined;
+          const col = st ? LED[st] : C.off;
           return (
             <g key={`room-${room.id}`}>
               {occupied && <circle cx={x} cy={y} r={30} fill={col} opacity={0.16} filter="url(#k-soft)" className={reduced ? undefined : 'k-occ'} />}
-              <circle cx={x} cy={y} r={13} fill={room.online ? col : 'none'} stroke={col} strokeWidth={2.5}
-                strokeDasharray={room.online ? undefined : '4 4'} filter={room.online ? 'url(#k-glow)' : undefined} />
-              {occupied && <text x={x} y={y + 5} textAnchor="middle" fontSize={15} fontWeight={700} fill="#05121a">{room.occupants}</text>}
-              <text x={lx} y={ly + 6} textAnchor={anchorFor(lx)} fontSize={19} fontWeight={600} fill={occupied ? '#eaf2ff' : C.dim} letterSpacing="0.02em">{room.label}</text>
+              <circle cx={x} cy={y} r={occupied ? 13 : 9}
+                fill={room.online ? col : 'none'}
+                fillOpacity={room.online ? (occupied ? 1 : 0.85) : 1}
+                stroke={col} strokeWidth={2.5}
+                strokeDasharray={room.online ? undefined : '4 4'}
+                filter={room.online ? 'url(#k-glow)' : undefined} />
+              {occupied && <text x={x} y={y + 5} textAnchor="middle" fontSize={15} fontWeight={700} fill="#ffffff">{room.occupants}</text>}
+              <text x={lx} y={ly + 6} textAnchor={anchorFor(lx)} fontSize={19} fontWeight={occupied ? 600 : 500}
+                fill={occupied ? '#eaf2ff' : room.online ? '#aeb9c6' : C.dim} letterSpacing="0.02em">{room.label}</text>
             </g>
           );
         })}
@@ -223,7 +340,7 @@ export default function KioskConstellation({ kiosk }: Props) {
           const [x, y] = polar(R_PEERS, deg);
           return (
             <g key={`peer-${peer.id}`}>
-              <circle cx={x} cy={y} r={9} fill="none" stroke={peer.online ? C.active : C.unknown} strokeWidth={2.5} strokeDasharray="2 4" filter={peer.online ? 'url(#k-glow)' : undefined} />
+              <circle cx={x} cy={y} r={9} fill="none" stroke={peer.online ? C.active : C.down} strokeWidth={2.5} strokeDasharray="2 4" filter={peer.online ? 'url(#k-glow)' : undefined} />
               <text x={x} y={y - 18} textAnchor="middle" fontSize={15} fill={C.dim}>{peer.label}</text>
             </g>
           );
@@ -254,22 +371,42 @@ export default function KioskConstellation({ kiosk }: Props) {
           </g>
         )}
 
-        {/* CORE bloom + orb */}
-        <circle cx={CX} cy={CY} r={R_CORE * 2.6} fill="url(#k-bloom)" className={reduced ? undefined : 'k-bloom'} />
-        <g className={reduced ? undefined : 'k-breathe'}>
-          <circle cx={CX} cy={CY} r={R_CORE} fill="url(#k-core)" filter="url(#k-glow)" />
-          <text x={CX} y={CY - 8} textAnchor="middle" fontSize={46} fill="#fff" className="font-display" style={{ letterSpacing: '0.01em' }}>Renfield</text>
-          <text x={CX} y={CY + 26} textAnchor="middle" fontSize={17} fontWeight={700} fill="#08131b" letterSpacing="0.22em">
-            {coreCaption(core, t).toUpperCase()}
-          </text>
+        {/* CORE — a translucent light-globe (JARVIS), NOT a solid disc. Outer
+            bloom → luminous translucent body → rotating meridian filaments →
+            bright rim → a small bright heart. No text stamped on it; the state
+            word sits as an elegant caption below. */}
+        <circle cx={CX} cy={CY} r={R_CORE * 2.8} fill="url(#k-bloom)" className={reduced ? undefined : 'k-bloom'} />
+        {/* outer group positions the globe; inner group owns the breathe scale
+            (a CSS-animated transform would otherwise clobber an inline one).
+            data-core-state exposes the live state (conveyed visually by colour)
+            for tests + tooling, since there's no longer a caption word. */}
+        <g transform={`translate(${CX} ${CY})`} data-core-state={core}>
+          <g className={reduced ? undefined : 'k-breathe'}>
+            {/* luminous translucent body */}
+            <circle cx={0} cy={0} r={R_CORE} fill="url(#k-core)" />
+            {/* rotating meridian filaments — the wireframe-globe structure */}
+            <g className={reduced ? undefined : 'k-globe'} fill="none" stroke={coreColor} filter="url(#k-glow)">
+              <ellipse cx={0} cy={0} rx={R_CORE} ry={R_CORE * 0.34} strokeOpacity={0.45} strokeWidth={1.4} />
+              <ellipse cx={0} cy={0} rx={R_CORE * 0.34} ry={R_CORE} strokeOpacity={0.45} strokeWidth={1.4} />
+              <ellipse cx={0} cy={0} rx={R_CORE * 0.94} ry={R_CORE * 0.66} strokeOpacity={0.28} strokeWidth={1.2} transform="rotate(32)" />
+              <ellipse cx={0} cy={0} rx={R_CORE * 0.66} ry={R_CORE * 0.94} strokeOpacity={0.28} strokeWidth={1.2} transform="rotate(-32)" />
+            </g>
+            <g className={reduced ? undefined : 'k-globe2'} fill="none" stroke="#ffffff" filter="url(#k-glow)">
+              <ellipse cx={0} cy={0} rx={R_CORE * 0.86} ry={R_CORE * 0.5} strokeOpacity={0.18} strokeWidth={1} transform="rotate(-14)" />
+            </g>
+            {/* bright rim = the globe's edge */}
+            <circle cx={0} cy={0} r={R_CORE} fill="none" stroke={coreColor} strokeOpacity={0.9} strokeWidth={2} filter="url(#k-glow)" />
+            {/* bright heart */}
+            <circle cx={0} cy={0} r={9} fill="#fff" opacity={0.92} filter="url(#k-glow)" />
+          </g>
         </g>
-        {(activeRoom || activeRoleLabel) && (
-          <text x={CX} y={CY + R_CORE + 40} textAnchor="middle" fontSize={17} fill={coreColor} letterSpacing="0.06em">
-            {core === 'idle' && activeRoleLabel
-              ? activeRoleLabel
-              : activeRoom
-                ? t('kiosk.inRoom', { defaultValue: '{{state}} · {{room}}', state: coreCaption(core, t), room: activeRoom })
-                : ''}
+        {/* No state word on the core — its LED colour + the legend carry the
+            status. Only the active room surfaces (which room is talking), and
+            only during a live voice interaction. */}
+        {core !== 'idle' && activeRoom && (
+          <text x={CX} y={CY + R_CORE + 50} textAnchor="middle" fontSize={18}
+            fill={coreColor} opacity={0.85} letterSpacing="0.14em" className="font-display">
+            {activeRoom}
           </text>
         )}
       </svg>
@@ -301,18 +438,31 @@ export default function KioskConstellation({ kiosk }: Props) {
           value={activeRoleLabel ?? t('kiosk.idle', { defaultValue: 'idle' })} />
       </div>
 
-      {/* legend */}
+      {/* weather tile (under the wordmark) — hidden when no reading */}
+      {weather && <WeatherTile weather={weather} />}
+
+      {/* now-playing (bottom center) — media-follow sessions, one per room */}
+      {nowPlaying.length > 0 && (
+        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2">
+          {nowPlaying.slice(0, 3).map((s, i) => (
+            <NowPlaying key={`${s.room}-${i}`} session={s} />
+          ))}
+        </div>
+      )}
+
+      {/* legend — the satellite LED status colours (matches the physical ring) */}
       <div className="absolute bottom-8 right-10 flex flex-col gap-1.5 text-[13px]">
-        {([['healthy', t('commandCenter.legend.healthy', { defaultValue: 'Healthy / present' })],
-           ['degraded', t('commandCenter.legend.degraded', { defaultValue: 'Degraded' })],
-           ['down', t('commandCenter.legend.down', { defaultValue: 'Down / offline' })],
-           ['unknown', t('commandCenter.legend.unknown', { defaultValue: 'Idle / unknown' })]] as [NodeHealth, string][]).map(([h, label]) => (
-          <span key={h} className="inline-flex items-center justify-end gap-2 text-white/45">
-            {label}
-            <span className="inline-block w-2.5 h-2.5 rounded-full"
-              style={h === 'down' || h === 'unknown'
-                ? { border: `1.5px ${h === 'down' ? 'dashed' : 'solid'} ${healthColor(h)}` }
-                : { background: healthColor(h) }} />
+        {([
+          { label: t('kiosk.state.idle', { defaultValue: 'ready' }), swatch: { background: LED.idle } },
+          { label: t('kiosk.state.listening', { defaultValue: 'listening' }), swatch: { background: LED.listening } },
+          { label: t('kiosk.state.processing', { defaultValue: 'thinking' }), swatch: { background: LED.processing } },
+          { label: t('kiosk.state.speaking', { defaultValue: 'speaking' }), swatch: { background: LED.speaking } },
+          { label: t('kiosk.state.error', { defaultValue: 'error' }), swatch: { background: LED.error } },
+          { label: t('kiosk.legend.offline', { defaultValue: 'Offline' }), swatch: { border: `1.5px dashed ${C.off}` } },
+        ]).map((row) => (
+          <span key={row.label} className="inline-flex items-center justify-end gap-2 text-white/45 capitalize">
+            {row.label}
+            <span className="inline-block w-2.5 h-2.5 rounded-full" style={row.swatch} />
           </span>
         ))}
       </div>
@@ -320,14 +470,55 @@ export default function KioskConstellation({ kiosk }: Props) {
   );
 }
 
-function coreCaption(core: CoreState, t: TFunction): string {
-  switch (core) {
-    case 'listening': return t('kiosk.state.listening', { defaultValue: 'listening' });
-    case 'processing': return t('kiosk.state.processing', { defaultValue: 'thinking' });
-    case 'speaking': return t('kiosk.state.speaking', { defaultValue: 'speaking' });
-    case 'busy': return t('kiosk.state.busy', { defaultValue: 'system busy' });
-    default: return t('kiosk.state.idle', { defaultValue: 'ready' });
-  }
+function WeatherTile({ weather }: { weather: NonNullable<KioskState['weather']> }) {
+  const Icon = iconForCode(weather.code);
+  const hasRange = weather.high != null && weather.low != null;
+  return (
+    <div className="absolute top-[7.5rem] left-10 flex items-center gap-4 text-white">
+      <Icon className="w-11 h-11 shrink-0" strokeWidth={1.4} style={{ color: C.active }} aria-hidden="true" />
+      <div className="leading-tight">
+        <div className="flex items-baseline gap-2">
+          <span className="text-4xl font-display tabular-nums">{Math.round(weather.temp)}{weather.unit}</span>
+          {hasRange && (
+            <span className="text-sm text-white/45 tabular-nums">
+              {Math.round(weather.high as number)}° / {Math.round(weather.low as number)}°
+            </span>
+          )}
+        </div>
+        <div className="text-sm text-white/55 mt-0.5">
+          {weather.condition}
+          {weather.location ? <span className="text-white/35"> · {weather.location}</span> : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function nowPlayingIcon(kind: string) {
+  if (kind === 'radio') return RadioIcon;
+  if (kind === 'dlna_video') return Film;
+  if (kind === 'dlna_album') return ListMusic;
+  return Music2;
+}
+
+function NowPlaying({ session }: { session: KioskNowPlaying }) {
+  const Icon = nowPlayingIcon(session.kind);
+  const line = session.title || session.subtitle || '';
+  return (
+    <div className="inline-flex items-center gap-2.5 px-4 py-1.5 rounded-full
+      bg-white/[0.04] border border-white/10 backdrop-blur-sm max-w-[42rem]">
+      <Icon className="w-4 h-4 shrink-0" style={{ color: C.active }} aria-hidden="true" />
+      <span className="text-[13px] tracking-wide font-medium" style={{ color: C.active }}>
+        {session.room}
+      </span>
+      {line && (
+        <>
+          <span className="text-white/25">·</span>
+          <span className="text-[13px] text-white/70 truncate">{line}</span>
+        </>
+      )}
+    </div>
+  );
 }
 
 function Telem({ label, value, alert }: { label: string; value: string; alert?: boolean }) {

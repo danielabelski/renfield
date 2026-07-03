@@ -210,3 +210,116 @@ class TestActivity:
         assert resp.status_code == 422
         resp = await async_client.get("/api/command-center/activity?limit=999")
         assert resp.status_code == 422
+
+
+# ============================================================ WEATHER TILE
+@pytest.mark.asyncio
+class TestKioskWeather:
+    async def test_weather_requires_admin(
+        self, async_client: AsyncClient, auth_as_regular,
+    ):
+        resp = await async_client.get("/api/command-center/weather")
+        assert resp.status_code in (401, 403)
+
+    async def test_weather_null_when_disabled(
+        self, async_client: AsyncClient, auth_as_admin, monkeypatch,
+    ):
+        from api.routes import command_center as cc
+        monkeypatch.setattr(cc.settings, "weather_enabled", False)
+        monkeypatch.setattr(cc.settings, "kiosk_weather_location", "Testville")
+        resp = await async_client.get("/api/command-center/weather")
+        assert resp.status_code == 200
+        assert resp.json() is None
+
+    async def test_weather_null_when_no_location(
+        self, async_client: AsyncClient, auth_as_admin, monkeypatch,
+    ):
+        from api.routes import command_center as cc
+        monkeypatch.setattr(cc.settings, "weather_enabled", True)
+        monkeypatch.setattr(cc.settings, "kiosk_weather_location", "  ")
+        resp = await async_client.get("/api/command-center/weather")
+        assert resp.status_code == 200
+        assert resp.json() is None
+
+    async def test_weather_reading_from_mcp(
+        self, async_client: AsyncClient, auth_as_admin, app_with_test_db,
+        monkeypatch,
+    ):
+        from api.routes import command_center as cc
+        # Reset the process-local cache so no prior reading leaks across tests.
+        cc._weather_cache["value"] = None
+        cc._weather_cache["at"] = 0.0
+        monkeypatch.setattr(cc.settings, "weather_enabled", True)
+        monkeypatch.setattr(cc.settings, "kiosk_weather_location", "Testville")
+
+        class _MCP:
+            async def execute_tool(self, name, args):
+                assert name == "mcp.weather.get_weather"
+                return {"success": True, "data": {
+                    "location": {"name": "Testville"},
+                    "current": {"temperature": 18.6, "weather_code": 3,
+                                "weather_description": "Bewölkt"},
+                    "daily": [{"temp_max": 20, "temp_min": 11}],
+                }}
+
+        prior = getattr(app_with_test_db.state, "mcp_manager", None)
+        app_with_test_db.state.mcp_manager = _MCP()
+        try:
+            resp = await async_client.get("/api/command-center/weather")
+        finally:
+            app_with_test_db.state.mcp_manager = prior
+            cc._weather_cache["value"] = None
+            cc._weather_cache["at"] = 0.0
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["location"] == "Testville"
+        assert body["temp"] == 18.6
+        assert body["code"] == 3
+        assert body["condition"] == "Bewölkt"
+        assert body["high"] == 20
+        assert body["low"] == 11
+
+
+# ============================================================ NOW-PLAYING TILE
+@pytest.mark.asyncio
+class TestKioskNowPlaying:
+    async def test_now_playing_requires_admin(
+        self, async_client: AsyncClient, auth_as_regular,
+    ):
+        resp = await async_client.get("/api/command-center/now-playing")
+        assert resp.status_code in (401, 403)
+
+    async def test_now_playing_empty_when_disabled(
+        self, async_client: AsyncClient, auth_as_admin, monkeypatch,
+    ):
+        from ha_glue.utils.config import ha_glue_settings
+        monkeypatch.setattr(ha_glue_settings, "media_follow_enabled", False)
+        resp = await async_client.get("/api/command-center/now-playing")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    async def test_now_playing_lists_sessions(
+        self, async_client: AsyncClient, auth_as_admin, monkeypatch,
+    ):
+        from ha_glue.utils.config import ha_glue_settings
+        monkeypatch.setattr(ha_glue_settings, "media_follow_enabled", True)
+
+        class _Svc:
+            def active_sessions(self):
+                return [{
+                    "room": "Wohnzimmer", "kind": "radio",
+                    "title": "Radio X", "subtitle": None,
+                    "track": None, "total": None,
+                }]
+
+        monkeypatch.setattr(
+            "ha_glue.services.media_follow_service.get_media_follow_service",
+            lambda: _Svc(),
+        )
+        resp = await async_client.get("/api/command-center/now-playing")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert len(body) == 1
+        assert body[0]["room"] == "Wohnzimmer"
+        assert body[0]["kind"] == "radio"
+        assert body[0]["title"] == "Radio X"

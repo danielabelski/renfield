@@ -129,6 +129,10 @@ class Settings(BaseSettings):
 
     # MCP integration toggles (used by mcp_servers.yaml)
     weather_enabled: bool = False
+    # Home location for the kiosk weather tile (city or postal code). Empty =
+    # no weather tile on /kiosk. Kept in the env, never in git (no real place
+    # names committed). Only used by GET /api/command-center/weather.
+    kiosk_weather_location: str = ""
     news_enabled: bool = False
     search_enabled: bool = False
     calendar_enabled: bool = False

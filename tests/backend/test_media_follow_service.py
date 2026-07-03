@@ -691,3 +691,43 @@ class TestMediaHandoffNotify:
 
         # _notify_user is only called inside the success branch → no broadcasts.
         dm.broadcast_to_room.assert_not_called()
+
+
+# =============================================================================
+# active_sessions() — the content-minimal snapshot for the kiosk tile
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestActiveSessions:
+    def test_empty_when_no_sessions(self, service):
+        assert service.active_sessions() == []
+
+    def test_lists_playing_session_content_minimal(self, playing_session):
+        rows = playing_session.active_sessions()
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["room"] == "Arbeitszimmer"
+        assert row["kind"] == "radio"
+        assert row["title"] == "BBC Radio 1"  # station_name → title fallback
+        # no user id leaves the snapshot
+        assert "user_id" not in row
+
+    def test_suspended_session_is_omitted(self, playing_session):
+        playing_session._sessions[1].state = SessionState.SUSPENDED
+        assert playing_session.active_sessions() == []
+
+    def test_one_entry_per_room_keeps_newest(self, service):
+        service.register_playback(
+            user_id=1, room_id=10, room_name="Wohnzimmer",
+            media_type=MediaType.RADIO, station_name="Old Station",
+        )
+        service._sessions[1].started_at = 100.0
+        service.register_playback(
+            user_id=2, room_id=10, room_name="Wohnzimmer",
+            media_type=MediaType.RADIO, station_name="New Station",
+        )
+        service._sessions[2].started_at = 200.0
+        rows = service.active_sessions()
+        assert len(rows) == 1
+        assert rows[0]["title"] == "New Station"

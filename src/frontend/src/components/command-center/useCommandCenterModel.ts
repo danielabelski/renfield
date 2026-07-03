@@ -194,20 +194,38 @@ export function useCommandCenterModel(): CommandCenterState {
       if (!room.room_name) continue;
       occupantsByRoom.set(room.room_name.toLowerCase(), room.occupants.length);
     }
+    // Voice-state salience: the dot shows the room's most significant live
+    // state (an erroring or actively-conversing satellite wins over an idle
+    // one), colour-coded to match the physical LED ring.
+    const STATE_RANK: Record<string, number> = {
+      idle: 0, listening: 1, processing: 2, speaking: 3, error: 4,
+    };
     const rooms = new Map<
       string,
-      { id: string; label: string; online: boolean; occupants: number; hint?: string }
+      {
+        id: string; label: string; online: boolean; occupants: number;
+        state?: 'idle' | 'listening' | 'processing' | 'speaking' | 'error';
+        hint?: string;
+      }
     >();
     for (const sat of satellitesData?.satellites ?? []) {
       const key = sat.room.toLowerCase();
       const online = sat.heartbeat_ago_seconds < SATELLITE_OFFLINE_S;
       const existing = rooms.get(key);
+      // Aggregate the most significant state across a room's ONLINE satellites.
+      let state = existing?.state;
+      if (online) {
+        if (!state || (STATE_RANK[sat.state] ?? 0) > (STATE_RANK[state] ?? 0)) {
+          state = sat.state;
+        }
+      }
       rooms.set(key, {
         id: key,
         label: sat.room,
         // Several satellites can share a room; one alive keeps the room online.
         online: (existing?.online ?? false) || online,
         occupants: occupantsByRoom.get(key) ?? 0,
+        state,
         hint: sat.satellite_id,
       });
     }

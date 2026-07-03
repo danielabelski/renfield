@@ -11,8 +11,9 @@ import {
 } from 'lucide-react';
 import type { WeatherData } from './artifactSchema';
 
-/** WMO weather code → condition icon (Open-Meteo coding). */
-function iconForCode(code: number): LucideIcon {
+/** WMO weather code → condition icon (Open-Meteo coding). Exported so the
+ *  kiosk weather tile shares the exact same mapping as the chat artifact. */
+export function iconForCode(code: number): LucideIcon {
   if (code === 0) return Sun;                                   // clear
   if (code <= 2) return CloudSun;                               // mainly clear / partly cloudy
   if (code === 3) return Cloud;                                 // overcast

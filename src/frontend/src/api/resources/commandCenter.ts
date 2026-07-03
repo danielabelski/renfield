@@ -86,3 +86,66 @@ export function useRoleActivityQuery(limit = 30) {
     'commandCenter.activityLoadError',
   );
 }
+
+// ---- ambient kiosk tiles: weather + now-playing ---------------------------
+
+export interface KioskWeather {
+  location: string;
+  temp: number;
+  unit: string;
+  /** WMO weather code → icon on the tile. */
+  code: number;
+  condition: string;
+  high: number | null;
+  low: number | null;
+}
+
+export interface KioskNowPlaying {
+  room: string;
+  kind: string;
+  title: string;
+  subtitle: string | null;
+  track: number | null;
+  total: number | null;
+}
+
+/** Home-location weather for the kiosk tile. `null` when weather is disabled or
+ *  no location is configured — the tile hides. Backend caches ~10 min, so the
+ *  poll is cheap; refetch every 10 min. */
+export function useKioskWeatherQuery(enabled = true) {
+  return useApiQuery(
+    {
+      queryKey: keys.commandCenter.weather(),
+      queryFn: async () => {
+        const response = await apiClient.get<KioskWeather | null>(
+          '/api/command-center/weather',
+        );
+        return response.data ?? null;
+      },
+      enabled,
+      staleTime: 10 * 60_000,
+      refetchInterval: 10 * 60_000,
+    },
+    'commandCenter.weatherLoadError',
+  );
+}
+
+/** Live media-follow sessions (one per room). Empty when nothing plays. 15s
+ *  poll — media transitions are user-paced, not sub-second. */
+export function useKioskNowPlayingQuery(enabled = true) {
+  return useApiQuery(
+    {
+      queryKey: keys.commandCenter.nowPlaying(),
+      queryFn: async () => {
+        const response = await apiClient.get<KioskNowPlaying[]>(
+          '/api/command-center/now-playing',
+        );
+        return response.data ?? [];
+      },
+      enabled,
+      staleTime: STALE.LIVE,
+      refetchInterval: 15_000,
+    },
+    'commandCenter.nowPlayingLoadError',
+  );
+}
