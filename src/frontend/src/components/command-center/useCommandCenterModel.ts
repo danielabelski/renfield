@@ -4,15 +4,15 @@
 // read-only command-center feeds (agent roles + the content-free activity
 // pulse). Each ring carries its own RingStatus so a single failing source
 // degrades ONE ring to its error treatment instead of blanking the board.
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { roleLabel } from '../chat/AgentRoleBadge';
 import {
   useAgentRolesQuery,
+  useMcpStatusStrictQuery,
   useRoleActivityQuery,
 } from '../../api/resources/commandCenter';
-import { useMcpStatusQuery } from '../../api/resources/integrations';
 import { useToolStatsQuery } from '../../api/resources/toolHealth';
 import { useSatellitesQuery } from '../../api/resources/satellites';
 import { usePresenceRoomsQuery } from '../../api/resources/presence';
@@ -28,6 +28,17 @@ import type {
 const ACTIVE_WINDOW_MS = 90_000;
 /** Trail entries older than this are fully decayed and dropped from the board. */
 export const TRAIL_WINDOW_MS = 15 * 60_000;
+/** Clock-tick cadence: the memo must also recompute by the PASSAGE OF TIME
+ *  (active-role expiry, trail decay), not only on new data — structural
+ *  sharing keeps identical poll payloads referentially stable. */
+const CLOCK_TICK_MS = 15_000;
+
+/** The backend emits naive-UTC ISO strings (no zone suffix); anchor them so
+ *  Date.parse doesn't read them as LOCAL time (UTC+2 would render every
+ *  fresh federation peer as 2h stale = permanently unreachable). */
+function parseNaiveUtcMs(iso: string): number {
+  return Date.parse(iso.endsWith('Z') ? iso : `${iso}Z`);
+}
 /** A satellite whose last heartbeat is older than this renders offline. */
 const SATELLITE_OFFLINE_S = 90;
 /** A federation peer unseen for longer than this renders unreachable. */
@@ -76,7 +87,6 @@ export interface CommandCenterState {
   backendUnreachable: boolean;
   /** Newest-first, decayed to the trail window — feeds the activity rail. */
   trail: PulseEntry[];
-  refetchAll: () => void;
 }
 
 export function useCommandCenterModel(): CommandCenterState {
@@ -84,13 +94,21 @@ export function useCommandCenterModel(): CommandCenterState {
 
   const rolesQuery = useAgentRolesQuery();
   const activityQuery = useRoleActivityQuery();
-  const mcpQuery = useMcpStatusQuery();
+  const mcpQuery = useMcpStatusStrictQuery();
   const toolStatsQuery = useToolStatsQuery(null);
   const satellitesQuery = useSatellitesQuery(true);
   const presenceQuery = usePresenceRoomsQuery(true);
   const peersQuery = useFederationPeersQuery();
 
   const lang = i18n.language?.startsWith('de') ? 'de' : 'en';
+
+  // Wall-clock input for the memo: active-role expiry and trail decay must
+  // advance even when every poll returns byte-identical data.
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNowTick(Date.now()), CLOCK_TICK_MS);
+    return () => clearInterval(id);
+  }, []);
 
   // Destructured so the memo depends on stable data references, not on the
   // per-render query result objects.
@@ -116,12 +134,11 @@ export function useCommandCenterModel(): CommandCenterState {
     }));
 
     // ---- pulse trail ------------------------------------------------------
-    const now = Date.now();
+    const now = nowTick;
     const trail: PulseEntry[] = (activityData ?? [])
       .map((entry) => ({
         roleId: entry.role,
-        // The API returns naive-UTC timestamps (no zone suffix); anchor them.
-        at: Date.parse(entry.at.endsWith('Z') ? entry.at : `${entry.at}Z`),
+        at: parseNaiveUtcMs(entry.at),
         ok: entry.ok,
       }))
       .filter((entry) => Number.isFinite(entry.at) && now - entry.at < TRAIL_WINDOW_MS);
@@ -210,7 +227,7 @@ export function useCommandCenterModel(): CommandCenterState {
 
     // ---- peers arc --------------------------------------------------------
     const peers = (peersData ?? []).map((peer) => {
-      const lastSeen = peer.last_seen_at ? Date.parse(peer.last_seen_at) : NaN;
+      const lastSeen = peer.last_seen_at ? parseNaiveUtcMs(peer.last_seen_at) : NaN;
       return {
         id: String(peer.id),
         label: peer.remote_display_name,
@@ -235,6 +252,7 @@ export function useCommandCenterModel(): CommandCenterState {
   }, [
     t,
     lang,
+    nowTick,
     rolesData,
     activityData,
     mcpData,
@@ -257,15 +275,11 @@ export function useCommandCenterModel(): CommandCenterState {
     presenceQuery,
     peersQuery,
   ];
-  // useMcpStatusQuery swallows fetch errors (resolves to an empty status), so
-  // it can never report isError — judge reachability by the queries that can.
-  const errorCapable = allQueries.filter((q) => q !== mcpQuery);
 
   return {
     model,
     bootLoading: allQueries.every((q) => q.isLoading),
-    backendUnreachable: errorCapable.every((q) => q.isError),
+    backendUnreachable: allQueries.every((q) => q.isError),
     trail: model.trail ?? [],
-    refetchAll: () => allQueries.forEach((q) => void q.refetch()),
   };
 }

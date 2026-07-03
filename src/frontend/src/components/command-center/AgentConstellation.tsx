@@ -13,6 +13,7 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
 
 import type { CommandCenterModel, NodeHealth, RingStatus } from './types';
+import { TRAIL_WINDOW_MS } from './useCommandCenterModel';
 import { demoModel } from './demoData';
 
 const C = 450; // svg centre (viewBox 900×900)
@@ -101,6 +102,9 @@ export default function AgentConstellation({
 
   const { core, roles, tools, rooms, peers = [], trail = [], ringStatus = {} } = model;
   const activeRole = roles.find((r) => r.id === core.activeRoleId);
+  // A role can be active without appearing in the ring (renamed role, ring
+  // still loading) — show its raw id rather than a false "idle".
+  const activeLabel = activeRole?.label ?? core.activeRoleId;
 
   // even angular spread per ring (0° = top, clockwise); each ring is offset by
   // half a slot vs its neighbour so labels don't stack along one radius
@@ -178,8 +182,8 @@ export default function AgentConstellation({
     <div className={className}>
       <svg
         viewBox="0 0 900 900"
-        className="w-full h-auto max-w-[820px] mx-auto block"
-        role="img"
+        className="w-full h-auto max-w-[820px] max-h-[76vh] mx-auto block"
+        role="group"
         aria-labelledby="cc-title cc-desc"
       >
         <title id="cc-title">{t('commandCenter.title', { defaultValue: 'Command Center' })}</title>
@@ -190,7 +194,7 @@ export default function AgentConstellation({
             roles: roles.length,
             tools: tools.length,
             rooms: rooms.length,
-            active: activeRole?.label ?? t('commandCenter.idle', { defaultValue: 'idle' }),
+            active: activeLabel ?? t('commandCenter.idle', { defaultValue: 'idle' }),
           })}
         </desc>
 
@@ -200,7 +204,7 @@ export default function AgentConstellation({
           .cc-occupied { animation: ccPulse 2.8s ease-in-out infinite; }
           .cc-loading { animation: ccPulse 1.8s ease-in-out infinite; }
           .cc-node { cursor: pointer; outline: none; }
-          .cc-node .cc-focus { opacity: 0; }
+          .cc-focus { opacity: 0; }
           .cc-node:hover .cc-focus, .cc-node:focus-visible .cc-focus { opacity: 1; }
           @keyframes ccBreathe { 0%,100% { transform: scale(1); } 50% { transform: scale(1.025); } }
           @keyframes ccDash { to { stroke-dashoffset: -28; } }
@@ -391,7 +395,7 @@ export default function AgentConstellation({
           const isActive = role.id === core.activeRoleId;
           const lastAt = trailByRole.get(role.id);
           // 0..1 recency of the last activation inside the trail window
-          const recency = lastAt ? Math.max(0, 1 - (now - lastAt) / (15 * 60_000)) : 0;
+          const recency = lastAt ? Math.max(0, 1 - (now - lastAt) / TRAIL_WINDOW_MS) : 0;
           const highlighted =
             hover?.kind === 'role'
               ? hover.id === role.id
@@ -482,7 +486,7 @@ export default function AgentConstellation({
               />
               <text
                 x={x}
-                y={y - 14}
+                y={y + 22}
                 textAnchor="middle"
                 fontSize={11}
                 fill="currentColor"
@@ -517,7 +521,7 @@ export default function AgentConstellation({
           >
             {muted
               ? t('commandCenter.busy', { defaultValue: 'system busy' })
-              : activeRole?.label ?? t('commandCenter.idle', { defaultValue: 'idle' })}
+              : activeLabel ?? t('commandCenter.idle', { defaultValue: 'idle' })}
           </text>
         </g>
       </svg>

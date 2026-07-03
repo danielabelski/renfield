@@ -130,7 +130,7 @@ describe('CommandCenterPage', () => {
       expect(screen.getAllByText('Wohnzimmer').length).toBeGreaterThan(0);
     });
     // tools ring: server names prettified
-    expect(screen.getAllByText('Homeassistant').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Home Assistant').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Paperless').length).toBeGreaterThan(0);
     // peers arc
     expect(screen.getAllByText('Reva').length).toBeGreaterThan(0);
@@ -143,7 +143,7 @@ describe('CommandCenterPage', () => {
     await waitFor(() => {
       expect(screen.getAllByText('Wohnzimmer').length).toBeGreaterThan(0);
     });
-    const svg = document.querySelector('svg[role="img"]') as SVGElement;
+    const svg = document.querySelector('svg[role="group"]') as SVGElement;
     expect(svg).toBeTruthy();
     // Wohnzimmer has 2 occupants — the count renders inside the room node
     expect(within(svg as unknown as HTMLElement).getByText('2')).toBeInTheDocument();
@@ -160,7 +160,7 @@ describe('CommandCenterPage', () => {
     await waitFor(() => {
       expect(screen.getAllByText('Renfield').length).toBeGreaterThan(0);
     });
-    const svg = document.querySelector('svg[role="img"]') as SVGElement;
+    const svg = document.querySelector('svg[role="group"]') as SVGElement;
     // the core subtext names the active role (localized smart_home label)
     const activeLabel = within(svg as unknown as HTMLElement).getAllByText(
       /smart home/i,
@@ -182,9 +182,9 @@ describe('CommandCenterPage', () => {
   it('drill-down nodes are keyboard-focusable links with aria labels', async () => {
     renderWithProviders(<CommandCenterPage />);
     await waitFor(() => {
-      expect(screen.getAllByText('Homeassistant').length).toBeGreaterThan(0);
+      expect(screen.getAllByText('Home Assistant').length).toBeGreaterThan(0);
     });
-    const svg = document.querySelector('svg[role="img"]') as SVGElement;
+    const svg = document.querySelector('svg[role="group"]') as SVGElement;
     const links = within(svg as unknown as HTMLElement).getAllByRole('link');
     // 3 roles + 3 tools + 2 rooms + 1 peer
     expect(links.length).toBe(9);

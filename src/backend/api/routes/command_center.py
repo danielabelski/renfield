@@ -90,10 +90,13 @@ async def recent_role_activity(
     (JSON, not JSONB, column — portable across the test sqlite shim and prod
     Postgres without dialect-specific JSON operators).
     """
+    # Order by the PK, not the unindexed timestamp column: id order is insert
+    # order (≈ chronological), and the PK index turns the 3s poll into a
+    # bounded backward index scan instead of a full-table sort.
     result = await db.execute(
         select(Message.timestamp, Message.message_metadata)
         .where(Message.role == "assistant")
-        .order_by(Message.timestamp.desc())
+        .order_by(Message.id.desc())
         .limit(_ACTIVITY_SCAN_WINDOW)
     )
     entries: list[RoleActivityEntry] = []

@@ -1,6 +1,7 @@
 import apiClient from '../../utils/axios';
 import { useApiQuery } from '../hooks';
 import { keys, STALE } from '../keys';
+import type { McpStatus } from './integrations';
 
 /**
  * Command Center feeds (docs/design/command-center.md).
@@ -51,6 +52,24 @@ export function useAgentRolesQuery() {
       staleTime: STALE.CONFIG,
     },
     'commandCenter.rolesLoadError',
+  );
+}
+
+/** MCP status WITHOUT the error-swallowing of useMcpStatusQuery — the board's
+ *  per-ring error treatment needs a query that can actually report isError
+ *  (integrations.ts resolves failures to an empty status, which would render
+ *  as "no integrations configured" instead of "the status feed is failing"). */
+export function useMcpStatusStrictQuery() {
+  return useApiQuery(
+    {
+      queryKey: [...keys.commandCenter.all, 'mcpStatus'] as const,
+      queryFn: async () => {
+        const response = await apiClient.get<McpStatus>('/api/mcp/status');
+        return response.data;
+      },
+      staleTime: STALE.DEFAULT,
+    },
+    'integrations.loadError',
   );
 }
 

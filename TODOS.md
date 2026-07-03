@@ -288,8 +288,10 @@ The hybrid extractor (deterministic Steuernummer/IBAN with whitespace normalizat
 
 ## P3 — Conditional / on signal
 
-### Command Center — live constellation of the running system
+### Command Center — Phase 3 kiosk mode (Phase 1+2 SHIPPED 2026-07)
 Origin: 2026-06-27, sparked by the "Apex" (Reznikov Engineering) radial mission-control UI. Design doc + on-brand React prototype landed on `docs/command-center`; cinematic video mockups in `renfield-video/`. **Primary source: `docs/design/command-center.md`.**
+
+**Phase 1+2 SHIPPED** (`feature/command-center-phase1`): `/admin/command-center` is routed + live — model composed from `/api/mcp/status` + `/api/tool-health` + `/api/satellites` + `/api/presence/rooms` + `/api/federation/peers` + the NEW read-only ADMIN `/api/command-center/{roles,activity}` (agent roles had no REST surface; the pulse polls the persisted `message_metadata.agent_role` instead of the chat WS, which is page-local + per-session — the poll is household-wide and content-free/kiosk-safe). Decaying pulse trail, hover role↔tool reach-edges, drill-downs, activity rail, grouped-list fallback < lg. **Remaining: Phase 3 kiosk** (circle-aware non-admin projection) — the item below.
 - **WHAT:** A single read-first "mission control" page (`/admin/command-center`) that unifies what's today scattered across six admin pages (`/admin/routing`, `tool-health`, `trajectories`, `satellites`, `presence`, `integrations`) into one live radial board: a core (active agent role, live off the chat WS `done` frame) → ring of agent roles → ring of MCP tools coloured by health → ring of satellites/rooms coloured by presence → federation peers. Read-only, every node drills into its existing admin page.
 - **WHY:** All the data already exists and is emitted; nothing surfaces it together or *live*. Replaces "open six tabs to understand the system" with one at-a-glance board; reuses role-surfacing's `agent_role` for the live pulse + `presence_map` data for the rooms ring.
 - **PROS:** Mostly frontend composition over existing endpoints + the WS pulse — no new inference, no new endpoints, no schema change. Phase-3 payoff (a circle-aware household **kiosk**, "what's the house doing") is genuinely Renfield-unique — no other chat UI has satellites/rooms to show.
