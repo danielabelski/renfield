@@ -1839,9 +1839,34 @@
       "openInGraph": "Open in Graph"
     }
   },
+  "kiosk": {
+    "loading": "Waking the command center…",
+    "disconnected": "Reconnecting to Renfield…",
+    "srSummary": "Renfield command center. {{present}} people present, {{online}} of {{total}} satellites online.",
+    "idle": "idle",
+    "online": "online",
+    "healthy": "healthy",
+    "inRoom": "{{state}} · {{room}}",
+    "presentValue": "{{people}} in {{rooms}} rooms",
+    "state": {
+      "idle": "ready",
+      "listening": "listening",
+      "processing": "thinking",
+      "speaking": "speaking",
+      "busy": "system busy"
+    },
+    "telemetry": {
+      "satellites": "Satellites",
+      "present": "Present",
+      "tools": "Tools",
+      "agent": "Agent"
+    }
+  },
   "commandCenter": {
     "title": "Command Center",
     "subtitle": "Live constellation of the running system",
+    "kiosk": "Kiosk",
+    "openKiosk": "Open the fullscreen wall display",
     "idle": "idle",
     "srSummary": "{{roles}} agent roles, {{tools}} tools, {{rooms}} rooms. Active role: {{active}}.",
     "ring": {

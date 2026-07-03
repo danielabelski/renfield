@@ -12,6 +12,7 @@ import {
   Bot,
   CheckCircle2,
   CloudOff,
+  Maximize2,
   Radar,
   Server,
   Sofa,
@@ -216,7 +217,18 @@ export default function CommandCenterPage() {
         subtitle={t('commandCenter.subtitle', {
           defaultValue: 'Live constellation of the running system',
         })}
-      />
+      >
+        <Link
+          to="/kiosk"
+          target="_blank"
+          rel="noopener"
+          className="btn btn-secondary inline-flex items-center gap-2"
+          title={t('commandCenter.openKiosk', { defaultValue: 'Open the fullscreen wall display' })}
+        >
+          <Maximize2 className="w-4 h-4" aria-hidden="true" />
+          {t('commandCenter.kiosk', { defaultValue: 'Kiosk' })}
+        </Link>
+      </PageHeader>
 
       {backendUnreachable && (
         <div

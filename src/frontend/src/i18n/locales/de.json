@@ -1839,9 +1839,34 @@
       "openInGraph": "Im Graph öffnen"
     }
   },
+  "kiosk": {
+    "loading": "Kommandozentrale wird geweckt…",
+    "disconnected": "Verbindung zu Renfield wird wiederhergestellt…",
+    "srSummary": "Renfield-Kommandozentrale. {{present}} Personen anwesend, {{online}} von {{total}} Satelliten online.",
+    "idle": "inaktiv",
+    "online": "online",
+    "healthy": "gesund",
+    "inRoom": "{{state}} · {{room}}",
+    "presentValue": "{{people}} in {{rooms}} Räumen",
+    "state": {
+      "idle": "bereit",
+      "listening": "hört zu",
+      "processing": "denkt nach",
+      "speaking": "spricht",
+      "busy": "System ausgelastet"
+    },
+    "telemetry": {
+      "satellites": "Satelliten",
+      "present": "Anwesend",
+      "tools": "Werkzeuge",
+      "agent": "Agent"
+    }
+  },
   "commandCenter": {
     "title": "Kommandozentrale",
     "subtitle": "Live-Konstellation des laufenden Systems",
+    "kiosk": "Kiosk",
+    "openKiosk": "Vollbild-Wandanzeige öffnen",
     "idle": "inaktiv",
     "srSummary": "{{roles}} Agenten-Rollen, {{tools}} Werkzeuge, {{rooms}} Räume. Aktive Rolle: {{active}}.",
     "ring": {
