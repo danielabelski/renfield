@@ -340,13 +340,21 @@ function Telem({ label, value, alert }: { label: string; value: string; alert?: 
 }
 
 function usePrefersReducedMotion(): boolean {
-  const [reduced, setReduced] = useState(false);
+  const [reduced, setReduced] = useState(
+    () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false,
+  );
   useEffect(() => {
     const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
     const on = () => setReduced(mq.matches);
     on();
-    mq.addEventListener('change', on);
-    return () => mq.removeEventListener('change', on);
+    // Older WebKit (some wall-display browsers) only has the legacy add/remove
+    // Listener API — fall back so the effect never throws and blanks the kiosk.
+    if (mq.addEventListener) {
+      mq.addEventListener('change', on);
+      return () => mq.removeEventListener('change', on);
+    }
+    mq.addListener(on);
+    return () => mq.removeListener(on);
   }, []);
   return reduced;
 }

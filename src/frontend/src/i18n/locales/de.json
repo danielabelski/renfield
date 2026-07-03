@@ -1841,6 +1841,7 @@
   },
   "kiosk": {
     "loading": "Kommandozentrale wird geweckt…",
+    "disconnected": "Verbindung zu Renfield wird wiederhergestellt…",
     "srSummary": "Renfield-Kommandozentrale. {{present}} Personen anwesend, {{online}} von {{total}} Satelliten online.",
     "idle": "inaktiv",
     "online": "online",

@@ -81,4 +81,40 @@ describe('KioskPage', () => {
       expect(screen.getAllByText(/bereit/i).length).toBeGreaterThan(0);
     });
   });
+
+  it('counts the real satellite list and ignores a stale satellite in the core', async () => {
+    mockAll('idle');
+    // 3 satellites: two share a room (would collapse to 1 room), one is stale
+    // (heartbeat > 90s) AND still reporting 'listening' — it must not count as
+    // online nor drive the voice core.
+    server.use(http.get(`${BASE}/api/satellites`, () => HttpResponse.json({
+      satellites: [
+        { satellite_id: 'a', room: 'Wohnzimmer', state: 'idle', uptime_seconds: 100, heartbeat_ago_seconds: 3 },
+        { satellite_id: 'b', room: 'Wohnzimmer', state: 'idle', uptime_seconds: 100, heartbeat_ago_seconds: 5 },
+        { satellite_id: 'c', room: 'Esszimmer', state: 'listening', uptime_seconds: 0, heartbeat_ago_seconds: 4000 },
+      ],
+      total_count: 3, online_count: 2, active_sessions: 0, latest_version: '1.4.1',
+    })));
+    renderWithProviders(<KioskPage />);
+    // real count from the satellite list, not the deduped room union
+    await waitFor(() => expect(screen.getByText('2/3 online')).toBeInTheDocument());
+    // the stale 'listening' satellite does NOT drive the core
+    expect(screen.getAllByText(/bereit/i).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/hört zu/i)).toBeNull();
+  });
+
+  it('surfaces a live-satellite error as busy, not a false ready', async () => {
+    mockAll('idle');
+    server.use(http.get(`${BASE}/api/satellites`, () => HttpResponse.json({
+      satellites: [
+        { satellite_id: 'a', room: 'Wohnzimmer', state: 'error', uptime_seconds: 100, heartbeat_ago_seconds: 3 },
+      ],
+      total_count: 1, online_count: 1, active_sessions: 0, latest_version: '1.4.1',
+    })));
+    renderWithProviders(<KioskPage />);
+    await waitFor(() => {
+      expect(screen.getAllByText(/System ausgelastet/i).length).toBeGreaterThan(0);
+    });
+    expect(screen.queryByText(/bereit/i)).toBeNull();
+  });
 });

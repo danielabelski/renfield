@@ -37,7 +37,23 @@ export default function KioskPage() {
           {t('kiosk.loading', { defaultValue: 'Waking the command center…' })}
         </div>
       ) : (
-        <KioskConstellation kiosk={kiosk} />
+        <>
+          <KioskConstellation kiosk={kiosk} />
+          {/* Every source failed after a first load — the constellation is now
+              stale. Flag it plainly so a passerby doesn't read a frozen board
+              as live household state. The core already reads 'system busy'. */}
+          {kiosk.backendUnreachable && (
+            <div
+              role="status"
+              className="absolute top-8 left-1/2 -translate-x-1/2 flex items-center gap-2
+                px-4 py-2 rounded-full bg-[#e63e54]/15 border border-[#e63e54]/40 text-[#f7a4ae]
+                text-sm tracking-wide backdrop-blur-sm"
+            >
+              <span className="inline-block w-2 h-2 rounded-full bg-[#e63e54]" />
+              {t('kiosk.disconnected', { defaultValue: 'Reconnecting to Renfield…' })}
+            </div>
+          )}
+        </>
       )}
     </div>
   );

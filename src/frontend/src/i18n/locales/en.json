@@ -1841,6 +1841,7 @@
   },
   "kiosk": {
     "loading": "Waking the command center…",
+    "disconnected": "Reconnecting to Renfield…",
     "srSummary": "Renfield command center. {{present}} people present, {{online}} of {{total}} satellites online.",
     "idle": "idle",
     "online": "online",
