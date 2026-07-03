@@ -50,6 +50,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 import apiClient from '../../utils/axios';
+import { useTheme } from '../../context/ThemeContext';
 import type {
   FocusEntity,
   FocusNeighborhood,
@@ -109,6 +110,7 @@ function useDebounced<T>(value: T, ms: number): T {
 
 export default function GraphView() {
   const { t } = useTranslation();
+  const { isDark } = useTheme();
   const [searchParams, setSearchParams] = useSearchParams();
   const focusId = searchParams.get('focus') || '';
 
@@ -164,6 +166,19 @@ export default function GraphView() {
     if (!root || !labelsLayer) return;
     if (!corpus && !focusData) return;
 
+    // Theme-aware palette: the 3D scene follows light/dark instead of being a
+    // hardcoded black stage. Light mode uses a warm paper background with
+    // solid (low-emissive) orbs read by lighting; dark mode keeps the glow.
+    const themeBg = isDark ? 0x0a0f1c : 0xeee9df;
+    const th = {
+      isDark,
+      bg: themeBg,
+      emissive: isDark ? 0.9 : 0.32,
+      hubEmissive: isDark ? 0.85 : 0.35,
+      haloOpacity: isDark ? 0.14 : 0.3,
+      spokeOpacity: isDark ? 0.06 : 0.12,
+    };
+
     const scene = new THREE.Scene();
     // Fog is set AFTER the camera fit below (it must scale with the scene size
     // — a fixed density fogged the whole graph to black once the volumetric
@@ -176,18 +191,20 @@ export default function GraphView() {
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(W(), H());
-    renderer.setClearColor(0x0a0f1c, 1);
+    renderer.setClearColor(themeBg, 1);
     root.appendChild(renderer.domElement);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
 
-    scene.add(new THREE.AmbientLight(0x6080a0, 0.55));
-    const key = new THREE.DirectionalLight(0xffffff, 0.6);
+    // Brighter, whiter light in light mode so the low-emissive orbs are lit
+    // into solid saturated colour rather than reading flat.
+    scene.add(new THREE.AmbientLight(isDark ? 0x6080a0 : 0xffffff, isDark ? 0.55 : 0.95));
+    const key = new THREE.DirectionalLight(0xffffff, isDark ? 0.6 : 0.85);
     key.position.set(8, 20, 14);
     scene.add(key);
-    const rim = new THREE.DirectionalLight(0xe63e54, 0.18);
+    const rim = new THREE.DirectionalLight(0xe63e54, isDark ? 0.18 : 0.12);
     rim.position.set(-12, -8, -16);
     scene.add(rim);
 
@@ -220,9 +237,9 @@ export default function GraphView() {
       t(`circles.tier.${Math.min(Math.max(tier ?? 0, 0), 4)}`);
 
     if (corpus) {
-      buildCorpusScene(scene, corpus, labeled, clickable, edgesByEntity, tierName);
+      buildCorpusScene(scene, corpus, labeled, clickable, edgesByEntity, tierName, th);
     } else if (focusData) {
-      buildFocusScene(scene, focusData, labeled, clickable, edgesByEntity, tierName);
+      buildFocusScene(scene, focusData, labeled, clickable, edgesByEntity, tierName, th);
     }
 
     // Frame the whole constellation: bounding sphere → camera distance.
@@ -242,7 +259,7 @@ export default function GraphView() {
     // Depth fog scaled to the scene: clear through the near/mid orbs, only the
     // far back of the cloud recedes. Tied to fitDistance so it never blacks the
     // graph out regardless of how far the fit pushes the camera.
-    scene.fog = new THREE.Fog(0x0a0f1c, fitDistance * 0.35, fitDistance + sphere.radius * 2.2);
+    scene.fog = new THREE.Fog(themeBg, fitDistance * 0.35, fitDistance + sphere.radius * 2.2);
     controls.target.copy(sphere.center);
     controls.minDistance = Math.max(2, sphere.radius * 0.2);
     controls.maxDistance = fitDistance * 2.4;
@@ -256,11 +273,95 @@ export default function GraphView() {
     const stopAutoRotate = () => { controls.autoRotate = false; };
     controls.addEventListener('start', stopAutoRotate);
 
+    // Theme-aware label colours: readable in both the dark 3D stage and the
+    // light-mode warm-paper background.
+    const lbl = {
+      text: isDark ? '#ffffff' : '#1f2937',
+      sub: isDark ? 'rgba(156,163,175,1)' : 'rgba(75,85,99,0.95)',
+      pillPrimary: isDark ? 'rgba(10,15,28,0.72)' : 'rgba(255,253,248,0.85)',
+      pillSecondary: isDark ? 'rgba(10,15,28,0.55)' : 'rgba(255,253,248,0.72)',
+      shadow: isDark
+        ? '0 1px 2px rgba(0,0,0,0.95), 0 0 4px rgba(0,0,0,0.85)'
+        : '0 1px 1px rgba(255,255,255,0.85)',
+    };
+
+    type Rect = { left: number; top: number; right: number; bottom: number };
+    const overlaps = (a: Rect, b: Rect) =>
+      a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+    // Approximate the label's screen box (centred at x, growing upward from y)
+    // so overlaps can be culled without measuring the DOM every frame.
+    const labelBox = (item: Labeled, x: number, y: number): Rect => {
+      const primary = item.tier === 'primary';
+      const maxLen = primary ? 48 : 24;
+      const len = Math.min(item.name.length, maxLen);
+      const w = len * (primary ? 7.6 : 5.4) + (primary ? 16 : 12);
+      const h = item.sub ? (primary ? 34 : 26) : primary ? 24 : 18;
+      return { left: x - w / 2, right: x + w / 2, top: y - h, bottom: y };
+    };
+
+    const makeLabelDiv = (item: Labeled, x: number, y: number, opacity: number) => {
+      const div = document.createElement('div');
+      const clickableLabel = !!item.entityId;
+      div.className = clickableLabel
+        ? 'absolute whitespace-nowrap cursor-pointer select-none'
+        : 'pointer-events-none absolute whitespace-nowrap';
+      // The labels layer is pointer-events-none; clickable captions must opt
+      // back in or every 'click' falls through to the canvas.
+      if (clickableLabel) div.style.pointerEvents = 'auto';
+      div.style.left = `${x}px`;
+      div.style.top = `${y}px`;
+      div.style.transform = 'translate(-50%, -100%)';
+      div.style.textShadow = lbl.shadow;
+      div.style.opacity = String(opacity);
+      div.style.borderRadius = '4px';
+      if (item.tier === 'primary') {
+        div.style.padding = '2px 7px';
+        div.style.background = lbl.pillPrimary;
+        div.style.textAlign = 'center';
+      } else {
+        div.style.padding = '1px 5px';
+        div.style.background = lbl.pillSecondary;
+      }
+      if (clickableLabel) {
+        const eid = item.entityId!;
+        // pointerdown, not click: the label divs are rebuilt every frame, so
+        // mousedown and mouseup never hit the SAME element and a click event
+        // can never assemble.
+        div.addEventListener('pointerdown', (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          setSearchParams((prev) => {
+            const next = new URLSearchParams(prev);
+            next.set('focus', eid);
+            return next;
+          });
+        });
+      }
+      const name = document.createElement('div');
+      name.className = item.tier === 'primary' ? 'font-semibold text-sm' : 'font-medium text-[11px]';
+      name.style.color = lbl.text;
+      if (item.tier === 'primary') name.style.fontFamily = 'Cormorant, Georgia, serif';
+      const maxLen = item.tier === 'primary' ? 48 : 24;
+      name.textContent = item.name.length > maxLen ? item.name.slice(0, maxLen - 1) + '…' : item.name;
+      div.appendChild(name);
+      if (item.sub) {
+        const sub = document.createElement('div');
+        sub.className = item.tier === 'primary' ? 'text-[10px] font-normal' : 'text-[9px] font-normal';
+        sub.style.color = lbl.sub;
+        sub.textContent = item.sub;
+        div.appendChild(sub);
+      }
+      return div;
+    };
+
     const tmpWorld = new THREE.Vector3();
     function updateLabels() {
       if (!labelsLayer) return;
       while (labelsLayer.firstChild) labelsLayer.removeChild(labelsLayer.firstChild);
       const camPos = camera.position;
+
+      // 1. Collect the visible candidates (apply the per-tier cull + fade).
+      const cands: Array<{ item: Labeled; x: number; y: number; distance: number; opacity: number; hovered: boolean }> = [];
       for (const item of labeled) {
         item.object.getWorldPosition(tmpWorld);
         const distance = tmpWorld.distanceTo(camPos);
@@ -269,100 +370,38 @@ export default function GraphView() {
         if (v.z > 1) continue;
         const x = (v.x + 1) * 0.5 * W();
         const y = (1 - (v.y + 1) * 0.5) * H();
-
-        // Secondary labels fade gently with distance so far-back nodes
-        // don't shout louder than close ones, but everything stays
-        // readable in the default camera frame. Primary labels stay
-        // fully opaque; the hovered entity's label snaps to full.
-        let opacity = 1;
         const hovered = !!item.entityId && item.entityId === hoveredEntityId;
+        let opacity = 1;
         if (item.tier === 'secondary') {
-          // Cull far secondary labels entirely — the corpus overview reads
-          // as cluster names; hub captions appear as you fly closer (or on
-          // hover), instead of 30+ labels shouting at once. Focus-mode hop1
-          // opts out (alwaysLabel): those captions ARE the view.
+          // Hub captions appear only up close or on hover (focus-mode hop1
+          // opts out via alwaysLabel) — the overview reads as cluster names.
           if (distance > 26 && !hovered && !item.alwaysLabel) continue;
-          opacity = hovered
-            ? 1
-            : Math.max(0.4, Math.min(1, 1.3 - (distance - 12) / 20));
+          opacity = hovered ? 1 : Math.max(0.4, Math.min(1, 1.3 - (distance - 12) / 20));
         } else if (item.tier === 'primary') {
-          // Small clusters stay unlabelled in the overview (declutter) —
-          // hovering the orb reveals the caption.
-          if (item.minor && !hovered) continue;
-          if (!hovered) {
-            // Primary labels fade with depth so orbs facing away or far back
-            // recede instead of all shouting at full strength.
-            opacity = Math.max(0.5, Math.min(1, 1.25 - Math.max(0, distance - 55) / 80));
-          }
+          if (item.minor && !hovered) continue; // small clusters: hover to reveal
+          if (!hovered) opacity = Math.max(0.5, Math.min(1, 1.25 - Math.max(0, distance - 55) / 80));
         }
+        cands.push({ item, x, y, distance, opacity, hovered });
+      }
 
-        const div = document.createElement('div');
-        // Labels that point to an entity are clickable (the user
-        // naturally aims at the caption, not the small sphere).
-        // Labels with no entityId stay click-transparent so they
-        // don't block scene drag/zoom.
-        const clickableLabel = !!item.entityId;
-        div.className = clickableLabel
-          ? 'absolute whitespace-nowrap cursor-pointer select-none'
-          : 'pointer-events-none absolute whitespace-nowrap';
-        // The labels layer is pointer-events-none; clickable captions must
-        // opt back in or every 'click' falls through to the canvas.
-        if (clickableLabel) div.style.pointerEvents = 'auto';
-        div.style.left = `${x}px`;
-        div.style.top = `${y}px`;
-        div.style.transform = 'translate(-50%, -100%)';
-        div.style.textShadow = '0 1px 2px rgba(0,0,0,0.95), 0 0 4px rgba(0,0,0,0.85)';
-        div.style.opacity = String(opacity);
-        // Pill background so labels stay readable when they overlap — the
-        // primary (cluster) pills are a touch stronger + centred.
-        div.style.borderRadius = '4px';
-        if (item.tier === 'primary') {
-          div.style.padding = '2px 7px';
-          div.style.background = 'rgba(10,15,28,0.72)';
-          div.style.textAlign = 'center';
-        } else {
-          div.style.padding = '1px 5px';
-          div.style.background = 'rgba(10,15,28,0.55)';
-        }
-        if (clickableLabel) {
-          const eid = item.entityId!;
-          // pointerdown, not click: the label divs are rebuilt every frame,
-          // so mousedown and mouseup never hit the SAME element and a click
-          // event can never assemble.
-          div.addEventListener('pointerdown', (e) => {
-            e.stopPropagation();
-            e.preventDefault();
-            setSearchParams((prev) => {
-              const next = new URLSearchParams(prev);
-              next.set('focus', eid);
-              return next;
-            });
-          });
-        }
+      // 2. Priority order: hovered first, then cluster labels over hub labels,
+      //    then nearer over farther — the label a viewer wants most wins the space.
+      cands.sort((a, b) => {
+        if (a.hovered !== b.hovered) return a.hovered ? -1 : 1;
+        const ap = a.item.tier === 'primary' ? 0 : 1;
+        const bp = b.item.tier === 'primary' ? 0 : 1;
+        if (ap !== bp) return ap - bp;
+        return a.distance - b.distance;
+      });
 
-        const name = document.createElement('div');
-        if (item.tier === 'primary') {
-          name.className = 'font-semibold text-white text-sm';
-          name.style.fontFamily = 'Cormorant, Georgia, serif';
-        } else {
-          name.className = 'font-medium text-white/90 text-[11px]';
-        }
-        // Truncate very long names so neighboring labels don't overlap.
-        const maxLen = item.tier === 'primary' ? 48 : 24;
-        name.textContent = item.name.length > maxLen
-          ? item.name.slice(0, maxLen - 1) + '…'
-          : item.name;
-        div.appendChild(name);
-
-        if (item.sub) {
-          const sub = document.createElement('div');
-          sub.className = item.tier === 'primary'
-            ? 'text-[10px] font-normal text-gray-400'
-            : 'text-[9px] font-normal text-gray-400/80';
-          sub.textContent = item.sub;
-          div.appendChild(sub);
-        }
-        labelsLayer.appendChild(div);
+      // 3. Greedily place, skipping any label whose screen box overlaps one
+      //    already placed (a hovered label always shows).
+      const placed: Rect[] = [];
+      for (const c of cands) {
+        const box = labelBox(c.item, c.x, c.y);
+        if (!c.hovered && placed.some((p) => overlaps(box, p))) continue;
+        placed.push(box);
+        labelsLayer.appendChild(makeLabelDiv(c.item, c.x, c.y, c.opacity));
       }
     }
 
@@ -482,7 +521,7 @@ export default function GraphView() {
       renderer.dispose();
       if (root.contains(renderer.domElement)) root.removeChild(renderer.domElement);
     };
-  }, [corpus, focusData, setSearchParams, t]);
+  }, [corpus, focusData, setSearchParams, t, isDark]);
 
   function setFocus(entityId: string | null) {
     setSearchParams((prev) => {
@@ -519,7 +558,11 @@ export default function GraphView() {
 
   return (
     <div className="relative w-full" style={{ height: '70vh', minHeight: 480 }}>
-      <div ref={rootRef} className="absolute inset-0 rounded-lg overflow-hidden bg-[#0a0f1c]" />
+      <div
+        ref={rootRef}
+        className="absolute inset-0 rounded-lg overflow-hidden"
+        style={{ background: isDark ? '#0a0f1c' : '#eee9df' }}
+      />
       <div ref={labelsRef} className="pointer-events-none absolute inset-0" />
 
       <SearchOverlay onPick={(eid) => setFocus(eid)} />
@@ -575,6 +618,15 @@ type Labeled = {
 
 type EdgeMap = Map<string, THREE.Line[]>;
 
+interface SceneTheme {
+  isDark: boolean;
+  bg: number;
+  emissive: number;
+  hubEmissive: number;
+  haloOpacity: number;
+  spokeOpacity: number;
+}
+
 function registerEdge(edgesByEntity: EdgeMap, entityId: string, line: THREE.Line) {
   const list = edgesByEntity.get(entityId);
   if (list) list.push(line);
@@ -602,6 +654,7 @@ function buildCorpusScene(
   clickable: Array<{ mesh: THREE.Object3D; entityId: string }>,
   edgesByEntity: EdgeMap,
   tierName: (tier: number | undefined) => string,
+  theme: SceneTheme,
 ) {
   const N = data.clusters.length;
   const maxMention = Math.max(
@@ -629,19 +682,19 @@ function buildCorpusScene(
     group.userData = { cluster: c };
 
     // Faint spoke from the centre → depth cue + constellation structure.
-    scene.add(makeEdgeLine(new THREE.Vector3(0, 0, 0), pos, 0.06));
+    scene.add(makeEdgeLine(new THREE.Vector3(0, 0, 0), pos, theme.spokeOpacity));
 
     const core = new THREE.Mesh(
       new THREE.SphereGeometry(coreR, 32, 24),
       new THREE.MeshStandardMaterial({
-        color: accent, emissive: accent, emissiveIntensity: 0.9, roughness: 0.35, metalness: 0.1,
+        color: accent, emissive: accent, emissiveIntensity: theme.emissive, roughness: 0.35, metalness: 0.1,
       }),
     );
     group.add(core);
     // Thin wireframe halo — a hint of extent without a fogging solid body.
     group.add(new THREE.Mesh(
       new THREE.SphereGeometry(coreR * 1.4, 24, 16),
-      new THREE.MeshBasicMaterial({ color: accent, wireframe: true, transparent: true, opacity: 0.14 }),
+      new THREE.MeshBasicMaterial({ color: accent, wireframe: true, transparent: true, opacity: theme.haloOpacity }),
     ));
 
     // Click anywhere on the orb → focus its namesake. Loose-ends has no
@@ -659,7 +712,7 @@ function buildCorpusScene(
       const size = 0.28 + 0.5 * Math.sqrt(hub.mention_count / maxMention);
       const hubMesh = new THREE.Mesh(
         new THREE.SphereGeometry(size, 14, 14),
-        new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.85, roughness: 0.3 }),
+        new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: theme.hubEmissive, roughness: 0.3 }),
       );
       hubMesh.position.copy(hubPos);
       hubMesh.userData = { entityId: hub.entity_id, hub };
@@ -697,6 +750,7 @@ function buildFocusScene(
   clickable: Array<{ mesh: THREE.Object3D; entityId: string }>,
   edgesByEntity: EdgeMap,
   tierName: (tier: number | undefined) => string,
+  theme: SceneTheme,
 ) {
   const positions = new Map<string, THREE.Vector3>();
   const maxImportance = Math.max(
@@ -710,7 +764,7 @@ function buildFocusScene(
   const focusMesh = new THREE.Mesh(
     new THREE.SphereGeometry(1.4, 32, 32),
     new THREE.MeshStandardMaterial({
-      color: focusColor, emissive: focusColor, emissiveIntensity: 0.6, roughness: 0.3,
+      color: focusColor, emissive: focusColor, emissiveIntensity: theme.emissive * 0.7, roughness: 0.3,
     }),
   );
   focusMesh.userData = { entityId: data.focus.entity_id, focusEntity: data.focus };
@@ -744,7 +798,7 @@ function buildFocusScene(
       const mesh = new THREE.Mesh(
         new THREE.SphereGeometry(size, 12, 12),
         new THREE.MeshStandardMaterial({
-          color, emissive: color, emissiveIntensity: 0.5, roughness: 0.35,
+          color, emissive: color, emissiveIntensity: theme.hubEmissive * 0.6, roughness: 0.35,
         }),
       );
       mesh.position.copy(posV);
