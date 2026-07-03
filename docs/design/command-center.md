@@ -43,10 +43,12 @@ devices (`src/satellite/renfield_satellite/hardware/led.py`): **idle=blue,
 listening=green, processing=yellow, speaking=cyan, error=red**, offline=dark
 dashed. Applied to the core orb (`CORE_COLOR`), the per-room dots (coloured by
 `RoomNode.state` — the most-significant live state across a room's online
-satellites, aggregated in `useCommandCenterModel`), and the legend. The big
-**ambient wash is decoupled** (`AMBIENT`, fixed warm amber) so the background
-stays warm/friendly whatever the state — only the core + dots carry LED colour.
-(This superseded the earlier turquoise/crimson room encoding.)
+satellites, aggregated in `useCommandCenterModel`), and the legend. The **whole ambient field follows the
+core** — the halo, nebula, radar sweep and the CSS base gradient (`tintDark`) are
+all tinted to the core's current LED colour, so the background tracks the state
+(blue at idle, green while listening, …) and stays cohesive with the orb instead
+of a fixed hue. (This superseded the earlier turquoise/crimson room encoding and
+the interim fixed-warm-amber ambient.)
 
 Two reality corrections vs the plan below, discovered during implementation:
 
