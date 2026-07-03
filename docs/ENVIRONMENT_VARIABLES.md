@@ -1533,6 +1533,11 @@ MCP_ENABLED=true
 # Weather (OpenWeatherMap)
 WEATHER_ENABLED=true
 
+# Home location for the fullscreen kiosk weather tile (/kiosk). City or postal
+# code; empty = no weather tile. Env-only (never committed — no real place in git).
+# Requires WEATHER_ENABLED=true.
+KIOSK_WEATHER_LOCATION=
+
 # Search (SearXNG)
 SEARCH_ENABLED=true
 

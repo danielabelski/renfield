@@ -116,6 +116,35 @@ class MediaFollowService:
     def get_session(self, user_id: int) -> MediaSession | None:
         return self._sessions.get(user_id)
 
+    def active_sessions(self) -> list[dict]:
+        """Content-minimal snapshot of the live PLAYING sessions, for the kiosk
+        now-playing tile. One entry per room (a room plays one thing), newest
+        first. No user ids leave here — only the room, what is playing, and the
+        media kind. Suspended sessions (user left the room) are omitted."""
+        self._cleanup_expired_sessions()
+        by_room: dict[int, MediaSession] = {}
+        for s in self._sessions.values():
+            if s.state is not SessionState.PLAYING:
+                continue
+            # Keep the most recently started session per room.
+            prev = by_room.get(s.room_id)
+            if prev is None or s.started_at > prev.started_at:
+                by_room[s.room_id] = s
+        out: list[dict] = []
+        for s in sorted(by_room.values(), key=lambda x: x.started_at, reverse=True):
+            title = s.title or s.station_name or s.album_name or ""
+            out.append(
+                {
+                    "room": s.room_name,
+                    "kind": s.media_type.value,
+                    "title": title,
+                    "subtitle": s.album_name if title != s.album_name else None,
+                    "track": s.current_track,
+                    "total": s.total_tracks,
+                }
+            )
+        return out
+
     # ------------------------------------------------------------------
     # Presence Hook Handlers
     # ------------------------------------------------------------------

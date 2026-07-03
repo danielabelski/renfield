@@ -5,6 +5,12 @@ import { useMemo } from 'react';
 
 import { useCommandCenterModel } from './useCommandCenterModel';
 import { useSatellitesQuery } from '../../api/resources/satellites';
+import {
+  useKioskWeatherQuery,
+  useKioskNowPlayingQuery,
+  type KioskWeather,
+  type KioskNowPlaying,
+} from '../../api/resources/commandCenter';
 import { roleLabel } from '../chat/AgentRoleBadge';
 import type { CommandCenterModel } from './types';
 import { useTranslation } from 'react-i18next';
@@ -26,6 +32,10 @@ const STATE_PRIORITY: Record<string, number> = {
  *  Mirrors the same window useCommandCenterModel applies. */
 const SATELLITE_OFFLINE_S = 90;
 
+/** Stable empty default so `?? EMPTY` doesn't mint a fresh array reference each
+ *  render (which would defeat the useMemo below). */
+const EMPTY_NOW_PLAYING: KioskNowPlaying[] = [];
+
 export interface KioskState {
   model: CommandCenterModel;
   bootLoading: boolean;
@@ -36,6 +46,10 @@ export interface KioskState {
   activeRoom: string | null;
   /** Localized label of the agent role answering this turn (if any). */
   activeRoleLabel: string | null;
+  /** Home-location weather for the ambient tile (null = hide the tile). */
+  weather: KioskWeather | null;
+  /** Live media-follow sessions for the now-playing tile (empty = hide). */
+  nowPlaying: KioskNowPlaying[];
   /** At-a-glance counts for the ambient telemetry corner. */
   telemetry: {
     satellitesOnline: number;
@@ -52,6 +66,8 @@ export function useKioskModel(): KioskState {
   const { model, bootLoading, backendUnreachable } = useCommandCenterModel();
   const satellitesQuery = useSatellitesQuery(true);
   const sats = satellitesQuery.data?.satellites;
+  const weather = useKioskWeatherQuery().data ?? null;
+  const nowPlaying = useKioskNowPlayingQuery().data ?? EMPTY_NOW_PLAYING;
 
   return useMemo<KioskState>(() => {
     const satList = sats ?? [];
@@ -92,6 +108,8 @@ export function useKioskModel(): KioskState {
       core,
       activeRoom,
       activeRoleLabel,
+      weather,
+      nowPlaying,
       telemetry: {
         // From the real satellite list, not the room union (rooms dedupe
         // multiple satellites and include presence-only rooms).
@@ -103,5 +121,5 @@ export function useKioskModel(): KioskState {
         toolsTotal: model.tools.length,
       },
     };
-  }, [t, model, bootLoading, backendUnreachable, sats]);
+  }, [t, model, bootLoading, backendUnreachable, sats, weather, nowPlaying]);
 }

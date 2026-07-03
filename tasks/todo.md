@@ -26,7 +26,28 @@ the kiosk, stays out of the restrained admin board).
       corner, clock, legend. Matches cc_stunning_smarthome / cc_voice_listening.
 - [ ] Deploy frontend + prod check.
 
-## Fast-follow (not in v1)
-Weather tile · next public Frist · now-playing (media-follow) in the telemetry
-zone; true circle-aware login-free projection (only needed once prod runs
-multi-user — today it's auth-off / one trust domain, kept content-free by design).
+## Fast-follow — ambient tiles (DONE, 2026-07-03)
+- [x] **Weather tile** — `GET /api/command-center/weather` (weather MCP, home
+      location `KIOSK_WEATHER_LOCATION`, ~10-min TTL cache, self-hides). Reuses
+      the chat weather artifact's WMO→icon map (`iconForCode` exported).
+- [x] **Now-playing tile** — `GET /api/command-center/now-playing` off
+      `MediaFollowService.active_sessions()` (one-per-room, PLAYING-only,
+      content-minimal, no user ids). Bottom-center pills.
+- [x] **Dynamic background** — drifting nebula + twinkling stars + slow radar
+      sweep (all reduced-motion gated); no more flat black.
+- [x] **Room-colour fix** — online-empty rooms no longer read as grey "unknown":
+      online = turquoise (dim if empty), offline = crimson-dashed; legend redone.
+- [x] Tests: backend TestKioskWeather/TestKioskNowPlaying/TestActiveSessions
+      (60 passed on .159); frontend KioskPage tile tests (7 passed). Review clean.
+- Skipped per user: next-public-Frist tile.
+
+## Still open
+Next public Frist tile (deferred by user); true circle-aware login-free
+projection (only needed once prod runs multi-user — today it's auth-off / one
+trust domain, kept content-free by design).
+
+## Deploy note
+`KIOSK_WEATHER_LOCATION` must be set in the prod ConfigMap (`renfield-env`) — it
+is env-only (no real place name in git). Empty = weather tile hidden. Needs a
+backend image build (new endpoints) + frontend build; `WEATHER_ENABLED` and
+`MEDIA_FOLLOW_ENABLED` are already `true` in prod.

@@ -1,10 +1,40 @@
 # Command Center — live constellation of the running system
 
-Status: **Phase 1+2 IMPLEMENTED** (2026-07, `feature/command-center-phase1`):
+Status: **Phase 1+2+3 IMPLEMENTED** (2026-07, `feature/command-center-kiosk`):
 `/admin/command-center` is routed (`<AdminRoute>` + nav entry), fed live by
 `useCommandCenterModel`, with drill-downs, a decaying pulse trail, hover
 reach-edges, a content-free activity rail, and a grouped-list fallback below
-`lg`. Phase 3 (kiosk) remains open.
+`lg`.
+
+**Phase 3 — fullscreen kiosk (SHIPPED).** `/kiosk` (a separate route OUTSIDE
+the app Layout, `<AdminRoute>`) renders the cinematic wall-display variant
+(`KioskConstellation.tsx`, driven by `useKioskModel.ts`): a glowing bloom core
+that reacts to real household voice activity (idle/listening/processing/
+speaking, from the satellites' own `state`), concentric role/tool/room/peer
+rings, a "Kiosk" launch button on the admin header, and an alive dark field
+(drifting nebula + twinkling stars + a slow radar sweep, all reduced-motion
+gated). It DELIBERATELY breaks DESIGN.md's restraint (glow/bloom) per TODOS.md
+line 315 — the glow aesthetic lives ONLY here, never in the restrained admin
+board. Content-free by construction (counts, role names, room names).
+
+Two **ambient tiles** (2026-07-03) add glanceable household context, each fed
+by a new read-only ADMIN endpoint and self-hiding when unavailable:
+- **Weather** (under the wordmark) — `GET /api/command-center/weather` calls the
+  weather MCP for the configured home location (`KIOSK_WEATHER_LOCATION`, env
+  only — never committed), process-local ~10-min TTL cache; `null` when weather
+  is disabled / no location / MCP down (reuses the chat weather artifact's
+  WMO→icon mapping).
+- **Now-playing** (bottom-center) — `GET /api/command-center/now-playing` off
+  `MediaFollowService.active_sessions()` (one entry per room, PLAYING-only,
+  content-minimal — room + what's playing + media kind, **no user ids**); empty
+  when media-follow is off or nothing plays.
+
+**Room-status colour fix (2026-07-03):** an online-but-empty room used to render
+in the grey "unknown" colour and read as offline. Now every ONLINE satellite is
+turquoise (bright + occupant count when someone's there, a dim ring when empty)
+and only a genuinely offline satellite is crimson-dashed; the legend was
+rewritten to the encodings actually on screen (Present / Online·empty /
+Degraded / Offline).
 
 Two reality corrections vs the plan below, discovered during implementation:
 

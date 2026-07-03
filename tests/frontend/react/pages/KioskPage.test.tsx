@@ -42,6 +42,10 @@ function mockAll(satState: string) {
       { room_id: 1, room_name: 'Wohnzimmer', occupants: [{ user_id: 1, last_seen: 0, confidence: 0.9 }] },
     ])),
     http.get(`${BASE}/api/federation/peers`, () => HttpResponse.json({ peers: [] })),
+    // Ambient tiles default to "nothing to show" so they stay hidden unless a
+    // test opts in with its own handler.
+    http.get(`${BASE}/api/command-center/weather`, () => HttpResponse.json(null)),
+    http.get(`${BASE}/api/command-center/now-playing`, () => HttpResponse.json([])),
   );
 }
 
@@ -101,6 +105,30 @@ describe('KioskPage', () => {
     // the stale 'listening' satellite does NOT drive the core
     expect(screen.getAllByText(/bereit/i).length).toBeGreaterThan(0);
     expect(screen.queryByText(/hört zu/i)).toBeNull();
+  });
+
+  it('shows the weather tile when a reading is available', async () => {
+    mockAll('idle');
+    server.use(http.get(`${BASE}/api/command-center/weather`, () => HttpResponse.json({
+      location: 'Musterstadt', temp: 21.4, unit: '°C', code: 0,
+      condition: 'Klarer Himmel', high: 24, low: 13,
+    })));
+    renderWithProviders(<KioskPage />);
+    // rounded temp + condition + location render on the tile
+    await waitFor(() => expect(screen.getByText('21°C')).toBeInTheDocument());
+    expect(screen.getByText(/Klarer Himmel/)).toBeInTheDocument();
+    expect(screen.getByText(/Musterstadt/)).toBeInTheDocument();
+  });
+
+  it('shows the now-playing tile for a live media session', async () => {
+    mockAll('idle');
+    server.use(http.get(`${BASE}/api/command-center/now-playing`, () => HttpResponse.json([
+      { room: 'Wohnzimmer', kind: 'radio', title: 'Radio Beispiel', subtitle: null, track: null, total: null },
+    ])));
+    renderWithProviders(<KioskPage />);
+    await waitFor(() => expect(screen.getByText('Radio Beispiel')).toBeInTheDocument());
+    // the room label appears in the now-playing pill (plus possibly the ring)
+    expect(screen.getAllByText(/Wohnzimmer/).length).toBeGreaterThan(0);
   });
 
   it('surfaces a live-satellite error as busy, not a false ready', async () => {

@@ -1860,6 +1860,11 @@
       "present": "Anwesend",
       "tools": "Werkzeuge",
       "agent": "Agent"
+    },
+    "legend": {
+      "present": "Anwesend / gesund",
+      "empty": "Online · leer",
+      "offline": "Offline"
     }
   },
   "commandCenter": {
@@ -1908,7 +1913,9 @@
     "openRole": "Routing öffnen: {{role}}",
     "openTool": "Integrationen öffnen: {{tool}}",
     "openRoom": "Satelliten öffnen: {{room}}",
-    "openPeer": "Föderations-Audit öffnen: {{peer}}"
+    "openPeer": "Föderations-Audit öffnen: {{peer}}",
+    "weatherLoadError": "Wetter konnte nicht geladen werden",
+    "nowPlayingLoadError": "Wiedergabe konnte nicht geladen werden"
   },
   "routing": {
     "title": "Routing-Dashboard",

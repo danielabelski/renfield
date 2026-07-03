@@ -1860,6 +1860,11 @@
       "present": "Present",
       "tools": "Tools",
       "agent": "Agent"
+    },
+    "legend": {
+      "present": "Present / healthy",
+      "empty": "Online · empty",
+      "offline": "Offline"
     }
   },
   "commandCenter": {
@@ -1908,7 +1913,9 @@
     "openRole": "Open routing: {{role}}",
     "openTool": "Open integrations: {{tool}}",
     "openRoom": "Open satellites: {{room}}",
-    "openPeer": "Open federation audit: {{peer}}"
+    "openPeer": "Open federation audit: {{peer}}",
+    "weatherLoadError": "Could not load weather",
+    "nowPlayingLoadError": "Could not load playback"
   },
   "routing": {
     "title": "Routing Dashboard",

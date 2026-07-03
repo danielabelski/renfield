@@ -12,9 +12,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
+import { Music2, Radio as RadioIcon, Film, ListMusic } from 'lucide-react';
 
+import { iconForCode } from '../chat/artifacts/WeatherArtifact';
 import type { NodeHealth } from './types';
 import type { CoreState, KioskState } from './useKioskModel';
+import type { KioskNowPlaying } from '../../api/resources/commandCenter';
 
 const VW = 1920;
 const VH = 1080;
@@ -64,11 +67,18 @@ function anchorFor(x: number): 'start' | 'middle' | 'end' {
   return 'middle';
 }
 
-// Deterministic star field (no Math.random — SSR/rebuild-stable).
+// Deterministic star field (no Math.random — SSR/rebuild-stable). `d` is a
+// per-star twinkle delay so the field shimmers out of phase, not in lockstep.
 const STARS = Array.from({ length: 140 }, (_, i) => {
   const a = (i * 2654435761) % 2147483647;
   const b = (i * 40503 + 12345) % 2147483647;
-  return { x: (a % VW), y: (b % VH), r: 0.5 + ((a >> 8) % 10) / 8, o: 0.06 + ((b >> 6) % 30) / 120 };
+  return {
+    x: (a % VW),
+    y: (b % VH),
+    r: 0.5 + ((a >> 8) % 10) / 8,
+    o: 0.06 + ((b >> 6) % 30) / 120,
+    d: ((a >> 4) % 60) / 10, // 0–6s
+  };
 });
 
 interface Props {
@@ -77,7 +87,7 @@ interface Props {
 
 export default function KioskConstellation({ kiosk }: Props) {
   const { t } = useTranslation();
-  const { model, core, activeRoom, activeRoleLabel, telemetry } = kiosk;
+  const { model, core, activeRoom, activeRoleLabel, telemetry, weather, nowPlaying } = kiosk;
   const { roles, tools, rooms, peers = [] } = model;
 
   const reduced = usePrefersReducedMotion();
@@ -117,6 +127,25 @@ export default function KioskConstellation({ kiosk }: Props) {
             <stop offset="0%" stopColor={coreColor} stopOpacity={0.5} />
             <stop offset="100%" stopColor={coreColor} stopOpacity={0} />
           </radialGradient>
+          {/* Drifting nebula clouds — the dark field is no longer flat black. */}
+          <radialGradient id="k-neb1" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor="#0f6b8f" stopOpacity={0.22} />
+            <stop offset="100%" stopColor="#0f6b8f" stopOpacity={0} />
+          </radialGradient>
+          <radialGradient id="k-neb2" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor="#5a2b7a" stopOpacity={0.20} />
+            <stop offset="100%" stopColor="#5a2b7a" stopOpacity={0} />
+          </radialGradient>
+          <radialGradient id="k-neb3" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor="#134b6b" stopOpacity={0.16} />
+            <stop offset="100%" stopColor="#134b6b" stopOpacity={0} />
+          </radialGradient>
+          {/* Slow radar sweep: a one-sided soft glow rotated around the core. */}
+          <linearGradient id="k-sweep" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor={C.active} stopOpacity={0} />
+            <stop offset="86%" stopColor={C.active} stopOpacity={0} />
+            <stop offset="100%" stopColor={C.active} stopOpacity={0.09} />
+          </linearGradient>
           <filter id="k-glow" x="-120%" y="-120%" width="340%" height="340%">
             <feGaussianBlur stdDeviation="6" result="b" />
             <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
@@ -133,19 +162,53 @@ export default function KioskConstellation({ kiosk }: Props) {
           .k-active-edge { stroke-dasharray: 7 10; animation: kDash 1s linear infinite; }
           .k-spike  { transform-box: fill-box; transform-origin: center; animation: kSpin 22s linear infinite; }
           .k-spike2 { transform-box: fill-box; transform-origin: center; animation: kSpin 30s linear infinite reverse; }
+          .k-sweep  { transform-box: fill-box; transform-origin: center; animation: kSpin 60s linear infinite; }
+          .k-twinkle { animation: kTwinkle 5s ease-in-out infinite; }
+          .k-neb-a { transform-box: fill-box; transform-origin: center; animation: kNebA 34s ease-in-out infinite alternate; }
+          .k-neb-b { transform-box: fill-box; transform-origin: center; animation: kNebB 46s ease-in-out infinite alternate; }
+          .k-neb-c { transform-box: fill-box; transform-origin: center; animation: kNebC 40s ease-in-out infinite alternate; }
           @keyframes kBreathe { 0%,100% { transform: scale(1); } 50% { transform: scale(1.03); } }
           @keyframes kBloom { 0%,100% { opacity: .55; transform: scale(1); } 50% { opacity: .85; transform: scale(1.08); } }
           @keyframes kPulse { 0%,100% { opacity: .5; } 50% { opacity: 1; } }
           @keyframes kDash { to { stroke-dashoffset: -34; } }
           @keyframes kSpin { to { transform: rotate(360deg); } }
+          @keyframes kTwinkle { 0%,100% { opacity: var(--o,0.3); } 50% { opacity: calc(var(--o,0.3) * 0.28); } }
+          @keyframes kNebA { from { transform: translate(0,0) scale(1); } to { transform: translate(70px,44px) scale(1.12); } }
+          @keyframes kNebB { from { transform: translate(0,0) scale(1.05); } to { transform: translate(-64px,-38px) scale(1); } }
+          @keyframes kNebC { from { transform: translate(0,0) scale(1); } to { transform: translate(40px,-52px) scale(1.1); } }
           @media (prefers-reduced-motion: reduce) {
-            .k-breathe, .k-bloom, .k-occ, .k-active-edge, .k-spike, .k-spike2 { animation: none; }
+            .k-breathe, .k-bloom, .k-occ, .k-active-edge, .k-spike, .k-spike2,
+            .k-sweep, .k-twinkle, .k-neb-a, .k-neb-b, .k-neb-c { animation: none; }
           }
         `}</style>
 
         <rect x={0} y={0} width={VW} height={VH} fill="url(#k-bg)" />
+
+        {/* drifting nebula clouds (behind stars) — kills the flat-black look */}
+        <ellipse cx={540} cy={360} rx={620} ry={460} fill="url(#k-neb1)" className={reduced ? undefined : 'k-neb-a'} />
+        <ellipse cx={1430} cy={760} rx={680} ry={520} fill="url(#k-neb2)" className={reduced ? undefined : 'k-neb-b'} />
+        <ellipse cx={1360} cy={250} rx={520} ry={420} fill="url(#k-neb3)" className={reduced ? undefined : 'k-neb-c'} />
+
+        {/* slow radar sweep around the core (symmetric disc → clean rotation) */}
+        {!reduced && (
+          <g transform={`translate(${CX} ${CY})`}>
+            <g className="k-sweep">
+              <circle cx={0} cy={0} r={R_PEERS + 60} fill="url(#k-sweep)" />
+            </g>
+          </g>
+        )}
+
         {STARS.map((s, i) => (
-          <circle key={i} cx={s.x} cy={s.y} r={s.r} fill="#cfe6ff" opacity={s.o} />
+          <circle
+            key={i}
+            cx={s.x}
+            cy={s.y}
+            r={s.r}
+            fill="#cfe6ff"
+            opacity={s.o}
+            className={reduced ? undefined : 'k-twinkle'}
+            style={reduced ? undefined : ({ '--o': s.o, animationDelay: `${s.d}s` } as React.CSSProperties)}
+          />
         ))}
 
         {/* faint ring guides */}
@@ -171,14 +234,23 @@ export default function KioskConstellation({ kiosk }: Props) {
           const [x, y] = polar(R_ROOMS, deg);
           const [lx, ly] = polar(R_ROOMS + 30, deg);
           const occupied = room.online && room.occupants > 0;
-          const col = !room.online ? C.down : occupied ? C.active : C.unknown;
+          // Online satellites are turquoise — BRIGHT + filled when someone's
+          // there, DIM ring when the room is empty. Only a genuinely offline
+          // satellite is crimson/dashed. (An online-but-empty room must never
+          // read as "unknown/grey" — that was the earlier bug.)
+          const col = room.online ? C.active : C.down;
           return (
             <g key={`room-${room.id}`}>
               {occupied && <circle cx={x} cy={y} r={30} fill={col} opacity={0.16} filter="url(#k-soft)" className={reduced ? undefined : 'k-occ'} />}
-              <circle cx={x} cy={y} r={13} fill={room.online ? col : 'none'} stroke={col} strokeWidth={2.5}
-                strokeDasharray={room.online ? undefined : '4 4'} filter={room.online ? 'url(#k-glow)' : undefined} />
+              <circle cx={x} cy={y} r={occupied ? 13 : 9}
+                fill={occupied ? col : 'none'}
+                stroke={col} strokeWidth={2.5}
+                strokeOpacity={room.online ? (occupied ? 1 : 0.5) : 1}
+                strokeDasharray={room.online ? undefined : '4 4'}
+                filter={occupied ? 'url(#k-glow)' : undefined} />
               {occupied && <text x={x} y={y + 5} textAnchor="middle" fontSize={15} fontWeight={700} fill="#05121a">{room.occupants}</text>}
-              <text x={lx} y={ly + 6} textAnchor={anchorFor(lx)} fontSize={19} fontWeight={600} fill={occupied ? '#eaf2ff' : C.dim} letterSpacing="0.02em">{room.label}</text>
+              <text x={lx} y={ly + 6} textAnchor={anchorFor(lx)} fontSize={19} fontWeight={occupied ? 600 : 500}
+                fill={occupied ? '#eaf2ff' : room.online ? '#8fa6b8' : C.dim} letterSpacing="0.02em">{room.label}</text>
             </g>
           );
         })}
@@ -223,7 +295,7 @@ export default function KioskConstellation({ kiosk }: Props) {
           const [x, y] = polar(R_PEERS, deg);
           return (
             <g key={`peer-${peer.id}`}>
-              <circle cx={x} cy={y} r={9} fill="none" stroke={peer.online ? C.active : C.unknown} strokeWidth={2.5} strokeDasharray="2 4" filter={peer.online ? 'url(#k-glow)' : undefined} />
+              <circle cx={x} cy={y} r={9} fill="none" stroke={peer.online ? C.active : C.down} strokeWidth={2.5} strokeDasharray="2 4" filter={peer.online ? 'url(#k-glow)' : undefined} />
               <text x={x} y={y - 18} textAnchor="middle" fontSize={15} fill={C.dim}>{peer.label}</text>
             </g>
           );
@@ -301,18 +373,29 @@ export default function KioskConstellation({ kiosk }: Props) {
           value={activeRoleLabel ?? t('kiosk.idle', { defaultValue: 'idle' })} />
       </div>
 
-      {/* legend */}
+      {/* weather tile (under the wordmark) — hidden when no reading */}
+      {weather && <WeatherTile weather={weather} />}
+
+      {/* now-playing (bottom center) — media-follow sessions, one per room */}
+      {nowPlaying.length > 0 && (
+        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2">
+          {nowPlaying.slice(0, 3).map((s, i) => (
+            <NowPlaying key={`${s.room}-${i}`} session={s} />
+          ))}
+        </div>
+      )}
+
+      {/* legend — one row per visual encoding actually on screen */}
       <div className="absolute bottom-8 right-10 flex flex-col gap-1.5 text-[13px]">
-        {([['healthy', t('commandCenter.legend.healthy', { defaultValue: 'Healthy / present' })],
-           ['degraded', t('commandCenter.legend.degraded', { defaultValue: 'Degraded' })],
-           ['down', t('commandCenter.legend.down', { defaultValue: 'Down / offline' })],
-           ['unknown', t('commandCenter.legend.unknown', { defaultValue: 'Idle / unknown' })]] as [NodeHealth, string][]).map(([h, label]) => (
-          <span key={h} className="inline-flex items-center justify-end gap-2 text-white/45">
-            {label}
-            <span className="inline-block w-2.5 h-2.5 rounded-full"
-              style={h === 'down' || h === 'unknown'
-                ? { border: `1.5px ${h === 'down' ? 'dashed' : 'solid'} ${healthColor(h)}` }
-                : { background: healthColor(h) }} />
+        {([
+          { label: t('kiosk.legend.present', { defaultValue: 'Present / healthy' }), swatch: { background: C.healthy } },
+          { label: t('kiosk.legend.empty', { defaultValue: 'Online · empty' }), swatch: { border: `1.5px solid ${C.active}`, opacity: 0.6 } },
+          { label: t('commandCenter.legend.degraded', { defaultValue: 'Degraded' }), swatch: { background: C.degraded } },
+          { label: t('kiosk.legend.offline', { defaultValue: 'Offline' }), swatch: { border: `1.5px dashed ${C.down}` } },
+        ]).map((row) => (
+          <span key={row.label} className="inline-flex items-center justify-end gap-2 text-white/45">
+            {row.label}
+            <span className="inline-block w-2.5 h-2.5 rounded-full" style={row.swatch} />
           </span>
         ))}
       </div>
@@ -328,6 +411,57 @@ function coreCaption(core: CoreState, t: TFunction): string {
     case 'busy': return t('kiosk.state.busy', { defaultValue: 'system busy' });
     default: return t('kiosk.state.idle', { defaultValue: 'ready' });
   }
+}
+
+function WeatherTile({ weather }: { weather: NonNullable<KioskState['weather']> }) {
+  const Icon = iconForCode(weather.code);
+  const hasRange = weather.high != null && weather.low != null;
+  return (
+    <div className="absolute top-[7.5rem] left-10 flex items-center gap-4 text-white">
+      <Icon className="w-11 h-11 shrink-0" strokeWidth={1.4} style={{ color: C.active }} aria-hidden="true" />
+      <div className="leading-tight">
+        <div className="flex items-baseline gap-2">
+          <span className="text-4xl font-display tabular-nums">{Math.round(weather.temp)}{weather.unit}</span>
+          {hasRange && (
+            <span className="text-sm text-white/45 tabular-nums">
+              {Math.round(weather.high as number)}° / {Math.round(weather.low as number)}°
+            </span>
+          )}
+        </div>
+        <div className="text-sm text-white/55 mt-0.5">
+          {weather.condition}
+          {weather.location ? <span className="text-white/35"> · {weather.location}</span> : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function nowPlayingIcon(kind: string) {
+  if (kind === 'radio') return RadioIcon;
+  if (kind === 'dlna_video') return Film;
+  if (kind === 'dlna_album') return ListMusic;
+  return Music2;
+}
+
+function NowPlaying({ session }: { session: KioskNowPlaying }) {
+  const Icon = nowPlayingIcon(session.kind);
+  const line = session.title || session.subtitle || '';
+  return (
+    <div className="inline-flex items-center gap-2.5 px-4 py-1.5 rounded-full
+      bg-white/[0.04] border border-white/10 backdrop-blur-sm max-w-[42rem]">
+      <Icon className="w-4 h-4 shrink-0" style={{ color: C.active }} aria-hidden="true" />
+      <span className="text-[13px] tracking-wide font-medium" style={{ color: C.active }}>
+        {session.room}
+      </span>
+      {line && (
+        <>
+          <span className="text-white/25">·</span>
+          <span className="text-[13px] text-white/70 truncate">{line}</span>
+        </>
+      )}
+    </div>
+  );
 }
 
 function Telem({ label, value, alert }: { label: string; value: string; alert?: boolean }) {
