@@ -169,14 +169,18 @@ export default function GraphView() {
     // Theme-aware palette: the 3D scene follows light/dark instead of being a
     // hardcoded black stage. Light mode uses a warm paper background with
     // solid (low-emissive) orbs read by lighting; dark mode keeps the glow.
-    const themeBg = isDark ? 0x0a0f1c : 0xeee9df;
-    const th = {
+    // Light background matches the app surface (Tailwind gray-100 / slate-100
+    // = #f1f5f9), not a mismatched cream. Orbs get a neutral slate rim in
+    // light mode (haloColor) so pale/cream orbs still read on the light field.
+    const themeBg = isDark ? 0x0a0f1c : 0xf1f5f9;
+    const th: SceneTheme = {
       isDark,
       bg: themeBg,
       emissive: isDark ? 0.9 : 0.32,
       hubEmissive: isDark ? 0.85 : 0.35,
-      haloOpacity: isDark ? 0.14 : 0.3,
-      spokeOpacity: isDark ? 0.06 : 0.12,
+      haloOpacity: isDark ? 0.14 : 0.55,
+      haloColor: isDark ? null : 0x64748b,
+      spokeOpacity: isDark ? 0.06 : 0.16,
     };
 
     const scene = new THREE.Scene();
@@ -560,8 +564,7 @@ export default function GraphView() {
     <div className="relative w-full" style={{ height: '70vh', minHeight: 480 }}>
       <div
         ref={rootRef}
-        className="absolute inset-0 rounded-lg overflow-hidden"
-        style={{ background: isDark ? '#0a0f1c' : '#eee9df' }}
+        className="absolute inset-0 rounded-lg overflow-hidden bg-gray-100 dark:bg-[#0a0f1c]"
       />
       <div ref={labelsRef} className="pointer-events-none absolute inset-0" />
 
@@ -571,26 +574,30 @@ export default function GraphView() {
         <button
           type="button"
           onClick={() => setFocus(null)}
-          className="absolute top-3 right-3 text-[11px] px-2 py-1 rounded
-            bg-black/50 text-white/80 hover:bg-black/70 hover:text-white"
+          className="absolute top-3 right-3 text-[11px] px-2 py-1 rounded border shadow-sm
+            bg-white/85 text-gray-700 border-gray-300 hover:bg-white
+            dark:bg-black/50 dark:text-white/80 dark:border-transparent dark:hover:bg-black/70 dark:hover:text-white"
           title={t('knowledgeGraph.graph.backToCorpus', 'Back to corpus view')}
         >
           {t('knowledgeGraph.graph.backToCorpus', '← Corpus')}
         </button>
       )}
 
-      <div className="pointer-events-none absolute left-3 bottom-3 text-[10px] text-gray-500 bg-black/40 px-2 py-1 rounded">
+      <div className="pointer-events-none absolute left-3 bottom-3 text-[10px] px-2 py-1 rounded
+        bg-white/80 text-gray-600 shadow-sm dark:bg-black/40 dark:text-gray-300 dark:shadow-none">
         {t('knowledgeGraph.graph.hint', 'Drag to orbit · scroll to zoom · click a hub to focus')}
       </div>
 
       {corpus && !focusId && (
-        <div className="pointer-events-none absolute right-3 bottom-3 text-[10px] text-gray-500 bg-black/40 px-2 py-1 rounded">
+        <div className="pointer-events-none absolute right-3 bottom-3 text-[10px] px-2 py-1 rounded
+          bg-white/80 text-gray-600 shadow-sm dark:bg-black/40 dark:text-gray-300 dark:shadow-none tabular-nums">
           {corpus.total_entities} entities · {corpus.clusters.length} clusters
           {corpus.truncated && ' · truncated'}
         </div>
       )}
       {focusData && (
-        <div className="pointer-events-none absolute right-3 bottom-3 text-[10px] text-gray-500 bg-black/40 px-2 py-1 rounded">
+        <div className="pointer-events-none absolute right-3 bottom-3 text-[10px] px-2 py-1 rounded
+          bg-white/80 text-gray-600 shadow-sm dark:bg-black/40 dark:text-gray-300 dark:shadow-none">
           {focusData.focus.display_name} · {focusData.hop1.length} hop1 · {focusData.hop2.length} hop2
         </div>
       )}
@@ -624,6 +631,8 @@ interface SceneTheme {
   emissive: number;
   hubEmissive: number;
   haloOpacity: number;
+  /** Orb rim colour; null = use the cluster's own accent (dark mode). */
+  haloColor: number | null;
   spokeOpacity: number;
 }
 
@@ -692,9 +701,10 @@ function buildCorpusScene(
     );
     group.add(core);
     // Thin wireframe halo — a hint of extent without a fogging solid body.
+    // In light mode it's a neutral rim so pale/cream orbs read on the light bg.
     group.add(new THREE.Mesh(
       new THREE.SphereGeometry(coreR * 1.4, 24, 16),
-      new THREE.MeshBasicMaterial({ color: accent, wireframe: true, transparent: true, opacity: theme.haloOpacity }),
+      new THREE.MeshBasicMaterial({ color: theme.haloColor ?? accent, wireframe: true, transparent: true, opacity: theme.haloOpacity }),
     ));
 
     // Click anywhere on the orb → focus its namesake. Loose-ends has no
@@ -901,7 +911,8 @@ function SearchOverlay({ onPick }: { onPick: (entityId: string) => void }) {
   return (
     <div className="absolute top-3 left-3 z-10">
       {open ? (
-        <div className="w-72 bg-black/70 backdrop-blur-sm rounded-lg shadow-lg p-2">
+        <div className="w-72 backdrop-blur-sm rounded-lg shadow-lg p-2 border
+          bg-white/90 border-gray-200 dark:bg-black/70 dark:border-transparent">
           <input
             ref={inputRef}
             type="text"
@@ -909,8 +920,9 @@ function SearchOverlay({ onPick }: { onPick: (entityId: string) => void }) {
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={onKeyDown}
             placeholder={t('knowledgeGraph.graph.searchPlaceholder', 'Find entity…')}
-            className="w-full bg-transparent text-white text-sm outline-none px-2 py-1
-              border-b border-white/20 focus:border-white/50"
+            className="w-full bg-transparent text-sm outline-none px-2 py-1 border-b
+              text-gray-900 border-gray-300 focus:border-gray-500
+              dark:text-white dark:border-white/20 dark:focus:border-white/50"
             autoComplete="off"
             spellCheck={false}
           />
@@ -923,10 +935,10 @@ function SearchOverlay({ onPick }: { onPick: (entityId: string) => void }) {
                     onClick={() => { onPick(hit.entity_id); setOpen(false); setQ(''); }}
                     onMouseEnter={() => setActiveIndex(i)}
                     className={`w-full text-left rounded px-2 py-1.5 text-xs transition-colors
-                      ${i === activeIndex ? 'bg-white/15' : 'hover:bg-white/10'}`}
+                      ${i === activeIndex ? 'bg-gray-200/70 dark:bg-white/15' : 'hover:bg-gray-100 dark:hover:bg-white/10'}`}
                   >
-                    <p className="text-white truncate">{hit.display_name}</p>
-                    <p className="text-[10px] text-gray-400 mt-0.5">
+                    <p className="text-gray-900 dark:text-white truncate">{hit.display_name}</p>
+                    <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">
                       {hit.entity_type}
                       {hit.mention_count > 0 && ` · ${hit.mention_count} mentions`}
                     </p>
@@ -936,7 +948,7 @@ function SearchOverlay({ onPick }: { onPick: (entityId: string) => void }) {
             </ul>
           )}
           {debouncedQ && hits.length === 0 && (
-            <p className="text-[11px] text-gray-400 italic px-2 py-1.5">
+            <p className="text-[11px] text-gray-500 dark:text-gray-400 italic px-2 py-1.5">
               {t('knowledgeGraph.graph.searchNoResults', 'Nothing found')}
             </p>
           )}
@@ -945,8 +957,9 @@ function SearchOverlay({ onPick }: { onPick: (entityId: string) => void }) {
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="bg-black/50 hover:bg-black/70 text-white/80 hover:text-white
-            px-3 py-1.5 rounded text-xs flex items-center gap-1.5"
+          className="px-3 py-1.5 rounded text-xs flex items-center gap-1.5 border shadow-sm
+            bg-white/85 text-gray-700 border-gray-300 hover:bg-white
+            dark:bg-black/50 dark:text-white/80 dark:border-transparent dark:hover:bg-black/70 dark:hover:text-white dark:shadow-none"
           title={t('knowledgeGraph.graph.searchTitle', 'Search an entity')}
         >
           <span>🔍</span>
