@@ -131,10 +131,15 @@ export default function KioskConstellation({ kiosk }: Props) {
             <stop offset="64%" stopColor={coreColor} stopOpacity={0.04} />
             <stop offset="100%" stopColor={coreColor} stopOpacity={0} />
           </radialGradient>
-          <radialGradient id="k-core" cx="42%" cy="38%" r="70%">
-            <stop offset="0%" stopColor="#ffffff" stopOpacity={0.95} />
-            <stop offset="30%" stopColor={coreColor} stopOpacity={0.95} />
-            <stop offset="100%" stopColor={coreColor} stopOpacity={0.65} />
+          {/* Translucent hologram sphere: the centre lets the warm halo glow
+              through, the body luminesces, and a bright thin rim reads as the
+              globe's edge — a light-globe, not a solid disc. */}
+          <radialGradient id="k-core" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor={coreColor} stopOpacity={0.10} />
+            <stop offset="55%" stopColor={coreColor} stopOpacity={0.16} />
+            <stop offset="83%" stopColor={coreColor} stopOpacity={0.42} />
+            <stop offset="94%" stopColor="#ffffff" stopOpacity={0.72} />
+            <stop offset="100%" stopColor={coreColor} stopOpacity={0} />
           </radialGradient>
           <radialGradient id="k-bloom" cx="50%" cy="50%" r="50%">
             <stop offset="0%" stopColor={coreColor} stopOpacity={0.5} />
@@ -179,6 +184,8 @@ export default function KioskConstellation({ kiosk }: Props) {
           .k-spike2 { transform-box: fill-box; transform-origin: center; animation: kSpin 30s linear infinite reverse; }
           .k-sweep  { transform-box: fill-box; transform-origin: center; animation: kSpin 60s linear infinite; }
           .k-halo   { transform-box: fill-box; transform-origin: center; animation: kHalo 11s ease-in-out infinite; }
+          .k-globe  { transform-box: fill-box; transform-origin: center; animation: kSpin 44s linear infinite; }
+          .k-globe2 { transform-box: fill-box; transform-origin: center; animation: kSpin 64s linear infinite reverse; }
           .k-twinkle { animation: kTwinkle 5s ease-in-out infinite; }
           .k-neb-a { transform-box: fill-box; transform-origin: center; animation: kNebA 34s ease-in-out infinite alternate; }
           .k-neb-b { transform-box: fill-box; transform-origin: center; animation: kNebB 46s ease-in-out infinite alternate; }
@@ -195,7 +202,8 @@ export default function KioskConstellation({ kiosk }: Props) {
           @keyframes kHalo { 0%,100% { opacity: .82; transform: scale(1); } 50% { opacity: 1; transform: scale(1.035); } }
           @media (prefers-reduced-motion: reduce) {
             .k-breathe, .k-bloom, .k-occ, .k-active-edge, .k-spike, .k-spike2,
-            .k-sweep, .k-twinkle, .k-neb-a, .k-neb-b, .k-neb-c, .k-halo { animation: none; }
+            .k-sweep, .k-twinkle, .k-neb-a, .k-neb-b, .k-neb-c, .k-halo,
+            .k-globe, .k-globe2 { animation: none; }
           }
         `}</style>
 
@@ -347,24 +355,49 @@ export default function KioskConstellation({ kiosk }: Props) {
           </g>
         )}
 
-        {/* CORE bloom + orb */}
-        <circle cx={CX} cy={CY} r={R_CORE * 2.6} fill="url(#k-bloom)" className={reduced ? undefined : 'k-bloom'} />
-        <g className={reduced ? undefined : 'k-breathe'}>
-          <circle cx={CX} cy={CY} r={R_CORE} fill="url(#k-core)" filter="url(#k-glow)" />
-          <text x={CX} y={CY - 8} textAnchor="middle" fontSize={46} fill="#fff" className="font-display" style={{ letterSpacing: '0.01em' }}>Renfield</text>
-          <text x={CX} y={CY + 26} textAnchor="middle" fontSize={17} fontWeight={700} fill="#08131b" letterSpacing="0.22em">
-            {coreCaption(core, t).toUpperCase()}
-          </text>
+        {/* CORE — a translucent light-globe (JARVIS), NOT a solid disc. Outer
+            bloom → luminous translucent body → rotating meridian filaments →
+            bright rim → a small bright heart. No text stamped on it; the state
+            word sits as an elegant caption below. */}
+        <circle cx={CX} cy={CY} r={R_CORE * 2.8} fill="url(#k-bloom)" className={reduced ? undefined : 'k-bloom'} />
+        {/* outer group positions the globe; inner group owns the breathe scale
+            (a CSS-animated transform would otherwise clobber an inline one). */}
+        <g transform={`translate(${CX} ${CY})`}>
+          <g className={reduced ? undefined : 'k-breathe'}>
+            {/* luminous translucent body */}
+            <circle cx={0} cy={0} r={R_CORE} fill="url(#k-core)" />
+            {/* rotating meridian filaments — the wireframe-globe structure */}
+            <g className={reduced ? undefined : 'k-globe'} fill="none" stroke={coreColor} filter="url(#k-glow)">
+              <ellipse cx={0} cy={0} rx={R_CORE} ry={R_CORE * 0.34} strokeOpacity={0.45} strokeWidth={1.4} />
+              <ellipse cx={0} cy={0} rx={R_CORE * 0.34} ry={R_CORE} strokeOpacity={0.45} strokeWidth={1.4} />
+              <ellipse cx={0} cy={0} rx={R_CORE * 0.94} ry={R_CORE * 0.66} strokeOpacity={0.28} strokeWidth={1.2} transform="rotate(32)" />
+              <ellipse cx={0} cy={0} rx={R_CORE * 0.66} ry={R_CORE * 0.94} strokeOpacity={0.28} strokeWidth={1.2} transform="rotate(-32)" />
+            </g>
+            <g className={reduced ? undefined : 'k-globe2'} fill="none" stroke="#ffffff" filter="url(#k-glow)">
+              <ellipse cx={0} cy={0} rx={R_CORE * 0.86} ry={R_CORE * 0.5} strokeOpacity={0.18} strokeWidth={1} transform="rotate(-14)" />
+            </g>
+            {/* bright rim = the globe's edge */}
+            <circle cx={0} cy={0} r={R_CORE} fill="none" stroke={coreColor} strokeOpacity={0.9} strokeWidth={2} filter="url(#k-glow)" />
+            {/* bright heart */}
+            <circle cx={0} cy={0} r={9} fill="#fff" opacity={0.92} filter="url(#k-glow)" />
+          </g>
         </g>
-        {(activeRoom || activeRoleLabel) && (
-          <text x={CX} y={CY + R_CORE + 40} textAnchor="middle" fontSize={17} fill={coreColor} letterSpacing="0.06em">
-            {core === 'idle' && activeRoleLabel
+        {/* state caption below the globe (+ room/role context line) */}
+        <text x={CX} y={CY + R_CORE + 52} textAnchor="middle" fontSize={24} fontWeight={600}
+          fill={coreColor} letterSpacing="0.32em" className="font-display">
+          {coreCaption(core, t).toUpperCase()}
+        </text>
+        {(() => {
+          const sub = core !== 'idle' && activeRoom
+            ? activeRoom
+            : core === 'idle' && activeRoleLabel
               ? activeRoleLabel
-              : activeRoom
-                ? t('kiosk.inRoom', { defaultValue: '{{state}} · {{room}}', state: coreCaption(core, t), room: activeRoom })
-                : ''}
-          </text>
-        )}
+              : null;
+          return sub ? (
+            <text x={CX} y={CY + R_CORE + 82} textAnchor="middle" fontSize={16}
+              fill="#c7d2de" opacity={0.75} letterSpacing="0.08em">{sub}</text>
+          ) : null;
+        })()}
       </svg>
 
       {/* ---- HTML overlays (crisp typography over the SVG) ---- */}
