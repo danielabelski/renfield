@@ -25,7 +25,7 @@ for reindex, ``user_permissions``).
 from __future__ import annotations
 
 from loguru import logger
-from sqlalchemy import and_, exists, func, or_, select, update
+from sqlalchemy import exists, func, or_, select, update
 
 from models.database import (
     DOC_STATUS_COMPLETED,
@@ -57,25 +57,34 @@ def _as_bool(value) -> bool:
 def _unindexable_exists():
     """Correlated EXISTS marking a chunkless doc as **genuinely unindexable**.
 
-    True when a COMPLETED processing attempt ran the full pipeline and still
-    yielded no usable chunks — either the quality gate dropped everything
-    (``chunks_dropped_low_quality > 0``, i.e. OCR produced only low-quality text)
-    OR a re-derivation (any non-``initial_ingest`` trigger) still produced 0
-    chunks. Such a doc re-produces 0 chunks on every pass, so re-indexing it is
-    wasted OCR — it needs a better source scan, not a retry. A chunkless doc that
-    does NOT match this (no completed re-derivation, no gate drops) is a transient
-    0-chunk doc worth re-indexing. Correlates on the enclosing ``Document.id``.
+    True when a COMPLETED processing attempt ran the full pipeline and **produced
+    0 usable chunks** (``chunks_produced`` 0/NULL) with positive evidence that a
+    retry won't help — either the quality gate dropped everything
+    (``chunks_dropped_low_quality > 0``: OCR ran but yielded only low-quality
+    text) OR it was a re-derivation (any non-``initial_ingest`` trigger, i.e. the
+    doc was already re-indexed and still came up empty). Such a doc re-produces 0
+    chunks on every pass, so re-indexing it is wasted OCR — it needs a better
+    source scan, not a retry.
+
+    The ``chunks_produced = 0`` guard is load-bearing: a doc that once produced
+    real chunks (produced > 0) and later lost them out-of-band (manual delete,
+    cascade, index maintenance) is genuinely REPAIRABLE — reindexing re-derives
+    the same good chunks — even if that historical run also dropped a few
+    low-quality ones. Without the guard, branch 1 would misclassify it as
+    unindexable and refuse to repair it.
+
+    A chunkless doc that does NOT match this is a transient 0-chunk doc worth
+    re-indexing (fail-safe: reindex unless we have evidence it's hopeless).
+    Correlates on the enclosing ``Document.id``.
     """
     dph = DocumentProcessingHistory
     return exists().where(
         dph.document_id == Document.id,
         dph.status == DOC_STATUS_COMPLETED,
+        func.coalesce(dph.chunks_produced, 0) == 0,
         or_(
             func.coalesce(dph.chunks_dropped_low_quality, 0) > 0,
-            and_(
-                dph.trigger != ProcessingTrigger.INITIAL_INGEST.value,
-                func.coalesce(dph.chunks_produced, 0) == 0,
-            ),
+            dph.trigger != ProcessingTrigger.INITIAL_INGEST.value,
         ),
     )
 
@@ -243,8 +252,8 @@ async def ingest_status(params: dict, user_id: int | None = None) -> dict:
                 )
             elif unindexable:
                 detail = (
-                    f"alle vermutlich unlesbare Scans — nicht durch Neu-Indexieren "
-                    f"zu beheben (neuer Scan nötig)"
+                    "alle vermutlich unlesbare Scans — nicht durch Neu-Indexieren "
+                    "zu beheben (neuer Scan nötig)"
                 )
             else:
                 detail = "mit 'Dokumente ohne Chunks neu indexieren' reparierbar"
@@ -321,33 +330,48 @@ async def reindex_documents(
         async with AsyncSessionLocal() as db:
             # completed docs with no chunk rows (excludes pending/processing by
             # construction, so no in-flight double-enqueue — mirrors the route's
-            # dedup guard). Each row carries its unindexable flag; ordered
-            # repairable-first (unindexable ASC) so the cap can't starve the
-            # repairable docs behind a wall of unindexable ones, then oldest-first.
+            # dedup guard).
             chunk_sub = (
                 select(DocumentChunk.document_id)
                 .group_by(DocumentChunk.document_id)
                 .subquery()
             )
-            unindexable_col = _unindexable_exists().label("unindexable")
-            rows = (
+            chunkless_where = (
+                Document.status == DOC_STATUS_COMPLETED,
+                chunk_sub.c.document_id.is_(None),
+            )
+            # Accurate skip count (the FULL unindexable population, not just the
+            # capped window). 0 when force, since none are skipped.
+            unindexable_count = (
                 await db.execute(
-                    select(Document.id, unindexable_col)
+                    select(func.count())
                     .select_from(Document)
                     .outerjoin(chunk_sub, chunk_sub.c.document_id == Document.id)
-                    .where(
-                        Document.status == DOC_STATUS_COMPLETED,
-                        chunk_sub.c.document_id.is_(None),
-                    )
-                    .order_by(unindexable_col.asc(), Document.id)
-                    .limit(cap)
+                    .where(*chunkless_where, _unindexable_exists())
                 )
-            ).all()
+            ).scalar() or 0
 
-        # Partition the fetched rows. By default only repairable docs are
-        # reindexed; unindexable ones are skipped (a retry re-produces 0 chunks).
-        doc_ids = [r[0] for r in rows if force or not r[1]]
-        skipped_unindexable = sum(1 for r in rows if r[1] and not force)
+            # Select the ids to reindex. By default filter OUT unindexable docs so
+            # the cap applies to REPAIRABLE docs only (no cap-starvation), and
+            # len==cap honestly means "more repairable work follows". force=true
+            # includes the unindexable ones.
+            id_query = (
+                select(Document.id)
+                .select_from(Document)
+                .outerjoin(chunk_sub, chunk_sub.c.document_id == Document.id)
+                .where(*chunkless_where)
+            )
+            if not force:
+                id_query = id_query.where(~_unindexable_exists())
+            doc_ids = list(
+                (
+                    await db.execute(id_query.order_by(Document.id).limit(cap))
+                )
+                .scalars()
+                .all()
+            )
+
+        skipped_unindexable = 0 if force else unindexable_count
 
         if not doc_ids:
             if skipped_unindexable:
@@ -423,7 +447,9 @@ async def reindex_documents(
             )
             await db.commit()
 
-        more = " (weitere folgen beim nächsten Aufruf)" if len(rows) == cap else ""
+        # doc_ids only contains docs that WILL be enqueued (repairable, or all
+        # when force), so len==cap honestly means more enqueueable docs follow.
+        more = " (weitere folgen beim nächsten Aufruf)" if len(doc_ids) == cap else ""
         skip_note = (
             f" {skipped_unindexable} vermutlich unlesbare(s) Dokument(e) übersprungen "
             f"(force=true, um sie einzuschließen)."

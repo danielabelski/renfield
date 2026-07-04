@@ -27,6 +27,12 @@ def _all_result(rows):
     return r
 
 
+def _scalars_result(ids):
+    r = MagicMock()
+    r.scalars.return_value.all.return_value = ids
+    return r
+
+
 def _scalar_result(val):
     r = MagicMock()
     r.scalar.return_value = val
@@ -96,7 +102,7 @@ def test_as_bool():
 @pytest.mark.asyncio
 async def test_reindex_enqueues_user_reindex_for_chunkless(monkeypatch):
     # select (id, unindexable) -> both repairable; then the UPDATE result (ignored)
-    cm, session = _session([_all_result([(5, False), (9, False)]), MagicMock()])
+    cm, session = _session([_scalar_result(0), _scalars_result([5, 9]), MagicMock()])
     monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
     monkeypatch.setattr(kb.settings, "auth_enabled", False)
     q = _patch_queue(monkeypatch)
@@ -114,7 +120,7 @@ async def test_reindex_enqueues_user_reindex_for_chunkless(monkeypatch):
 @pytest.mark.asyncio
 async def test_reindex_skips_unindexable_by_default(monkeypatch):
     # one repairable (5) + two unindexable (9, 12) → only 5 reindexed
-    cm, _ = _session([_all_result([(5, False), (9, True), (12, True)]), MagicMock()])
+    cm, _ = _session([_scalar_result(2), _scalars_result([5]), MagicMock()])
     monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
     monkeypatch.setattr(kb.settings, "auth_enabled", False)
     q = _patch_queue(monkeypatch)
@@ -128,7 +134,7 @@ async def test_reindex_skips_unindexable_by_default(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_reindex_force_includes_unindexable(monkeypatch):
-    cm, _ = _session([_all_result([(5, False), (9, True)]), MagicMock()])
+    cm, _ = _session([_scalar_result(1), _scalars_result([5, 9]), MagicMock()])
     monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
     monkeypatch.setattr(kb.settings, "auth_enabled", False)
     q = _patch_queue(monkeypatch)
@@ -142,7 +148,7 @@ async def test_reindex_force_includes_unindexable(monkeypatch):
 @pytest.mark.asyncio
 async def test_reindex_all_unindexable_noop(monkeypatch):
     # every chunkless doc is unindexable and force is off → nothing enqueued
-    cm, session = _session([_all_result([(9, True), (12, True)])])
+    cm, session = _session([_scalar_result(2), _scalars_result([])])
     monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
     monkeypatch.setattr(kb.settings, "auth_enabled", False)
     q = _patch_queue(monkeypatch)
@@ -158,7 +164,7 @@ async def test_reindex_all_unindexable_noop(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_reindex_noop_when_none_chunkless(monkeypatch):
-    cm, session = _session([_all_result([])])
+    cm, session = _session([_scalar_result(0), _scalars_result([])])
     monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
     monkeypatch.setattr(kb.settings, "auth_enabled", False)
     q = _patch_queue(monkeypatch)
@@ -182,10 +188,10 @@ async def test_reindex_denied_for_low_priv_user(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_reindex_allowed_with_rag_manage(monkeypatch):
-    cm, _ = _session([_all_result([(11, False)]), MagicMock()])
+    cm, _ = _session([_scalar_result(0), _scalars_result([11]), MagicMock()])
     monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
     monkeypatch.setattr(kb.settings, "auth_enabled", True)
-    q = _patch_queue(monkeypatch)
+    _patch_queue(monkeypatch)
     out = await kb.reindex_documents({}, user_id=3, user_permissions=["rag.manage"])
     assert out["success"] and out["data"]["reindexed"] == 1
 
@@ -193,7 +199,7 @@ async def test_reindex_allowed_with_rag_manage(monkeypatch):
 @pytest.mark.asyncio
 async def test_reindex_allowed_when_permissions_none(monkeypatch):
     # auth on but user_permissions None (auth-off context / unidentified voice) → allowed
-    cm, _ = _session([_all_result([(1, False)]), MagicMock()])
+    cm, _ = _session([_scalar_result(0), _scalars_result([1]), MagicMock()])
     monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
     monkeypatch.setattr(kb.settings, "auth_enabled", True)
     _patch_queue(monkeypatch)
@@ -204,7 +210,7 @@ async def test_reindex_allowed_when_permissions_none(monkeypatch):
 @pytest.mark.asyncio
 async def test_reindex_limit_clamped_and_reported(monkeypatch):
     # exactly cap rows → message flags "weitere folgen"
-    cm, _ = _session([_all_result([(1, False), (2, False)]), MagicMock()])
+    cm, _ = _session([_scalar_result(0), _scalars_result([1, 2]), MagicMock()])
     monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
     monkeypatch.setattr(kb.settings, "auth_enabled", False)
     _patch_queue(monkeypatch)
@@ -217,7 +223,7 @@ async def test_reindex_limit_clamped_and_reported(monkeypatch):
 async def test_reindex_fails_when_all_enqueues_fail(monkeypatch):
     # Redis/queue outage: docs found but every enqueue raises → report FAILURE,
     # not a misleading success with reindexed=0.
-    cm, session = _session([_all_result([(5, False), (9, False)])])
+    cm, session = _session([_scalar_result(0), _scalars_result([5, 9])])
     monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
     monkeypatch.setattr(kb.settings, "auth_enabled", False)
     q = MagicMock()
@@ -234,7 +240,7 @@ async def test_reindex_fails_when_all_enqueues_fail(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_reindex_bad_limit_falls_back(monkeypatch):
-    cm, _ = _session([_all_result([])])
+    cm, _ = _session([_scalar_result(0), _scalars_result([])])
     monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
     monkeypatch.setattr(kb.settings, "auth_enabled", False)
     _patch_queue(monkeypatch)
