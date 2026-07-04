@@ -1,65 +1,114 @@
 /**
- * KioskPage — the fullscreen wall-display command center. Smoke coverage:
- * it composes the same sources as the admin board and derives the voice-core
- * state from the satellites' own state (idle vs listening).
+ * KioskPage — the fullscreen wall-display command center. Now fed by the PUSH
+ * socket (useKioskSocket) instead of react-query polls: the fixtures moved from
+ * MSW HTTP handlers to a `snapshot` message pushed over a mock WebSocket. The
+ * derivation math (voice-core priority, telemetry counts) is unchanged, so this
+ * is the same behavioural coverage — only the data source differs.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { http, HttpResponse } from 'msw';
-import { screen, waitFor } from '@testing-library/react';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { screen, waitFor, act } from '@testing-library/react';
 import { renderWithProviders } from '../test-utils';
-import { server } from '../mocks/server';
 import KioskPage from '../../../../src/frontend/src/pages/KioskPage';
-import { TEST_CONFIG } from '../config';
 
-const BASE = TEST_CONFIG.API_BASE_URL;
+type WsListener<E = unknown> = ((event: E) => void) | null;
+
+class MockWebSocket {
+  static instances: MockWebSocket[] = [];
+  static OPEN = 1;
+  url: string;
+  readyState = 0;
+  onopen: WsListener<Event> = null;
+  onclose: WsListener<CloseEvent> = null;
+  onmessage: WsListener<MessageEvent> = null;
+  onerror: WsListener<Event> = null;
+  constructor(url: string) {
+    this.url = url;
+    MockWebSocket.instances.push(this);
+  }
+  fireOpen(): void {
+    this.readyState = 1;
+    this.onopen?.(new Event('open'));
+  }
+  fireMessage(data: unknown): void {
+    this.onmessage?.({ data: JSON.stringify(data) } as MessageEvent);
+  }
+  send(): void {}
+  close(): void {
+    this.readyState = 3;
+  }
+}
+
+const NOW_SEC = Date.now() / 1000;
 
 const roles = [
   { name: 'presence', description: { de: 'Presence', en: 'Presence' }, mcp_servers: [], internal_tools: null, has_agent_loop: true },
   { name: 'general', description: { de: 'General', en: 'General' }, mcp_servers: null, internal_tools: null, has_agent_loop: true },
 ];
 const mcp = {
-  enabled: true, total_tools: 20,
+  enabled: true,
+  total_tools: 20,
   servers: [
     { name: 'homeassistant', connected: true, transport: 'stdio', tool_count: 10 },
     { name: 'radio', connected: false, transport: 'stdio', tool_count: 0 },
   ],
 };
 
-function mockAll(satState: string) {
-  server.use(
-    http.get(`${BASE}/api/command-center/roles`, () => HttpResponse.json(roles)),
-    http.get(`${BASE}/api/command-center/activity`, () => HttpResponse.json([])),
-    http.get(`${BASE}/api/mcp/status`, () => HttpResponse.json(mcp)),
-    http.get(`${BASE}/api/tool-health`, () => HttpResponse.json([])),
-    http.get(`${BASE}/api/satellites`, () => HttpResponse.json({
-      satellites: [
-        { satellite_id: 'sat-wohnzimmer', room: 'Wohnzimmer', state: satState, uptime_seconds: 100, heartbeat_ago_seconds: 4 },
-        { satellite_id: 'sat-esszimmer', room: 'Esszimmer', state: 'idle', uptime_seconds: 100, heartbeat_ago_seconds: 8 },
-      ],
-      total_count: 2, online_count: 2, active_sessions: 0, latest_version: '1.4.1',
-    })),
-    http.get(`${BASE}/api/presence/rooms`, () => HttpResponse.json([
-      { room_id: 1, room_name: 'Wohnzimmer', occupants: [{ user_id: 1, last_seen: 0, confidence: 0.9 }] },
-    ])),
-    http.get(`${BASE}/api/federation/peers`, () => HttpResponse.json({ peers: [] })),
-    // Ambient tiles default to "nothing to show" so they stay hidden unless a
-    // test opts in with its own handler.
-    http.get(`${BASE}/api/command-center/weather`, () => HttpResponse.json(null)),
-    http.get(`${BASE}/api/command-center/now-playing`, () => HttpResponse.json([])),
-  );
+interface SnapOverrides {
+  satellites?: unknown[];
+  weather?: unknown;
+  now_playing?: unknown[];
 }
 
-afterEach(() => server.resetHandlers());
+function snapshot(satState: string, over: SnapOverrides = {}) {
+  return {
+    type: 'snapshot',
+    at: '2026-07-04T21:00:00Z',
+    satellites: over.satellites ?? [
+      { satellite_id: 'sat-wohnzimmer', room: 'Wohnzimmer', room_id: 1, state: satState, last_heartbeat: NOW_SEC },
+      { satellite_id: 'sat-esszimmer', room: 'Esszimmer', room_id: 2, state: 'idle', last_heartbeat: NOW_SEC },
+    ],
+    presence: {
+      rooms: [{ room_id: 1, room_name: 'Wohnzimmer', occupants: 1 }],
+      people_present: 1,
+      occupied_rooms: 1,
+    },
+    mcp,
+    tool_health: [],
+    roles,
+    activity: [],
+    peers: [],
+    weather: over.weather ?? null,
+    now_playing: over.now_playing ?? [],
+  };
+}
+
+function pushSnapshot(snap: unknown) {
+  const ws = MockWebSocket.instances[MockWebSocket.instances.length - 1];
+  act(() => {
+    ws.fireOpen();
+    ws.fireMessage(snap);
+  });
+}
+
+beforeEach(() => {
+  MockWebSocket.instances = [];
+  vi.stubGlobal('WebSocket', MockWebSocket);
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.clearAllMocks();
+});
 
 describe('KioskPage', () => {
-  // Tests run in the German locale (test-utils sets it). The core no longer
-  // renders a state WORD (its LED colour conveys the state); the live state is
-  // exposed as `data-core-state` on the core group for assertions.
+  // The core no longer renders a state WORD (its LED colour conveys the state);
+  // the live state is exposed as `data-core-state` on the core group.
   const coreState = () =>
     document.querySelector('[data-core-state]')?.getAttribute('data-core-state');
+
   it('renders the fullscreen kiosk with wordmark, telemetry and rings', async () => {
-    mockAll('idle');
     renderWithProviders(<KioskPage />);
+    pushSnapshot(snapshot('idle'));
     await waitFor(() => {
       expect(screen.getAllByText('RENFIELD').length).toBeGreaterThan(0);
     });
@@ -72,78 +121,79 @@ describe('KioskPage', () => {
   });
 
   it('drives the core into a voice state from a listening satellite', async () => {
-    mockAll('listening');
     renderWithProviders(<KioskPage />);
+    pushSnapshot(snapshot('listening'));
     await waitFor(() => {
       expect(coreState()).toBe('listening');
     });
-    // active room is surfaced content-free (room name only)
     expect(screen.getAllByText(/Wohnzimmer/).length).toBeGreaterThan(0);
   });
 
   it('shows the ready core when every satellite is idle', async () => {
-    mockAll('idle');
     renderWithProviders(<KioskPage />);
+    pushSnapshot(snapshot('idle'));
     await waitFor(() => {
       expect(coreState()).toBe('idle');
     });
   });
 
   it('counts the real satellite list and ignores a stale satellite in the core', async () => {
-    mockAll('idle');
-    // 3 satellites: two share a room (would collapse to 1 room), one is stale
-    // (heartbeat > 90s) AND still reporting 'listening' — it must not count as
-    // online nor drive the voice core.
-    server.use(http.get(`${BASE}/api/satellites`, () => HttpResponse.json({
-      satellites: [
-        { satellite_id: 'a', room: 'Wohnzimmer', state: 'idle', uptime_seconds: 100, heartbeat_ago_seconds: 3 },
-        { satellite_id: 'b', room: 'Wohnzimmer', state: 'idle', uptime_seconds: 100, heartbeat_ago_seconds: 5 },
-        { satellite_id: 'c', room: 'Esszimmer', state: 'listening', uptime_seconds: 0, heartbeat_ago_seconds: 4000 },
-      ],
-      total_count: 3, online_count: 2, active_sessions: 0, latest_version: '1.4.1',
-    })));
     renderWithProviders(<KioskPage />);
-    // real count from the satellite list, not the deduped room union
+    // 3 satellites: two share a room, one is stale (heartbeat > 90s) AND still
+    // reporting 'listening' — it must not count as online nor drive the core.
+    pushSnapshot(snapshot('idle', {
+      satellites: [
+        { satellite_id: 'a', room: 'Wohnzimmer', room_id: 1, state: 'idle', last_heartbeat: NOW_SEC },
+        { satellite_id: 'b', room: 'Wohnzimmer', room_id: 1, state: 'idle', last_heartbeat: NOW_SEC },
+        { satellite_id: 'c', room: 'Esszimmer', room_id: 2, state: 'listening', last_heartbeat: NOW_SEC - 4000 },
+      ],
+    }));
     await waitFor(() => expect(screen.getByText('2/3 online')).toBeInTheDocument());
-    // the stale 'listening' satellite does NOT drive the core
     expect(coreState()).toBe('idle');
   });
 
   it('shows the weather tile when a reading is available', async () => {
-    mockAll('idle');
-    server.use(http.get(`${BASE}/api/command-center/weather`, () => HttpResponse.json({
-      location: 'Musterstadt', temp: 21.4, unit: '°C', code: 0,
-      condition: 'Klarer Himmel', high: 24, low: 13,
-    })));
     renderWithProviders(<KioskPage />);
-    // rounded temp + condition + location render on the tile
+    pushSnapshot(snapshot('idle', {
+      weather: { location: 'Musterstadt', temp: 21.4, unit: '°C', code: 0, condition: 'Klarer Himmel', high: 24, low: 13 },
+    }));
     await waitFor(() => expect(screen.getByText('21°C')).toBeInTheDocument());
     expect(screen.getByText(/Klarer Himmel/)).toBeInTheDocument();
     expect(screen.getByText(/Musterstadt/)).toBeInTheDocument();
   });
 
   it('shows the now-playing tile for a live media session', async () => {
-    mockAll('idle');
-    server.use(http.get(`${BASE}/api/command-center/now-playing`, () => HttpResponse.json([
-      { room: 'Wohnzimmer', kind: 'radio', title: 'Radio Beispiel', subtitle: null, track: null, total: null },
-    ])));
     renderWithProviders(<KioskPage />);
+    pushSnapshot(snapshot('idle', {
+      now_playing: [{ room: 'Wohnzimmer', kind: 'radio', title: 'Radio Beispiel', subtitle: null, track: null, total: null }],
+    }));
     await waitFor(() => expect(screen.getByText('Radio Beispiel')).toBeInTheDocument());
-    // the room label appears in the now-playing pill (plus possibly the ring)
     expect(screen.getAllByText(/Wohnzimmer/).length).toBeGreaterThan(0);
   });
 
   it('surfaces a live-satellite error as busy, not a false ready', async () => {
-    mockAll('idle');
-    server.use(http.get(`${BASE}/api/satellites`, () => HttpResponse.json({
-      satellites: [
-        { satellite_id: 'a', room: 'Wohnzimmer', state: 'error', uptime_seconds: 100, heartbeat_ago_seconds: 3 },
-      ],
-      total_count: 1, online_count: 1, active_sessions: 0, latest_version: '1.4.1',
-    })));
     renderWithProviders(<KioskPage />);
+    pushSnapshot(snapshot('idle', {
+      satellites: [{ satellite_id: 'a', room: 'Wohnzimmer', room_id: 1, state: 'error', last_heartbeat: NOW_SEC }],
+    }));
     await waitFor(() => {
       expect(coreState()).toBe('busy');
     });
+  });
+
+  it('pulses the MCP node named by a live turn_activity delta', async () => {
+    renderWithProviders(<KioskPage />);
+    pushSnapshot(snapshot('idle'));
+    await waitFor(() => expect(screen.getByText('2/2 online')).toBeInTheDocument());
+    // no pulse yet
+    expect(document.querySelector('[data-tool-id="homeassistant"][data-tool-active="1"]')).toBeNull();
+    // a turn touches Home Assistant → its node lights up
+    const ws = MockWebSocket.instances[MockWebSocket.instances.length - 1];
+    act(() => {
+      ws.fireMessage({ type: 'turn_activity', role: 'smart_home', subsystems: ['homeassistant'], ok: true, at: new Date().toISOString() });
+    });
+    await waitFor(() =>
+      expect(document.querySelector('[data-tool-id="homeassistant"][data-tool-active="1"]')).not.toBeNull(),
+    );
   });
 });

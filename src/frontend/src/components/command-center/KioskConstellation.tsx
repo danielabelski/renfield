@@ -110,13 +110,29 @@ interface Props {
   kiosk: KioskState;
 }
 
+/** How long a subsystem node stays lit after a turn_activity names it. The
+ *  fade is driven by a UI-only render tick (NOT a network poll). */
+const PULSE_WINDOW_MS = 6_000;
+
 export default function KioskConstellation({ kiosk }: Props) {
   const { t } = useTranslation();
-  const { model, core, activeRoom, activeRoleLabel, telemetry, weather, nowPlaying } = kiosk;
+  const { model, core, activeRoom, activeRoleLabel, telemetry, weather, nowPlaying, subsystemPulses } = kiosk;
   const { roles, tools, rooms, peers = [] } = model;
 
   const reduced = usePrefersReducedMotion();
   const clock = useClock();
+  // Fast render tick so an active-subsystem pulse visibly fades on its own,
+  // with no data fetch. Content-free — it just advances wall time.
+  const pulseNow = usePulseTick(1_000);
+  /** 0 (idle) → 1 (just fired): the live pulse intensity for a subsystem id. */
+  const pulseFor = (id: string): number => {
+    const at = subsystemPulses[id];
+    if (!at) return 0;
+    const age = pulseNow - at;
+    if (age <= 0) return 1;
+    if (age >= PULSE_WINDOW_MS) return 0;
+    return 1 - age / PULSE_WINDOW_MS;
+  };
 
   const at = (i: number, n: number, offset = 0) => (n > 0 ? (360 / n) * i + offset : 0);
   const toolOffset = tools.length > 0 ? 180 / tools.length : 0;
@@ -218,6 +234,8 @@ export default function KioskConstellation({ kiosk }: Props) {
           .k-neb-a { transform-box: fill-box; transform-origin: center; animation: kNebA 34s ease-in-out infinite alternate; }
           .k-neb-b { transform-box: fill-box; transform-origin: center; animation: kNebB 46s ease-in-out infinite alternate; }
           .k-neb-c { transform-box: fill-box; transform-origin: center; animation: kNebC 40s ease-in-out infinite alternate; }
+          .k-tool-pulse { transform-box: fill-box; transform-origin: center; animation: kToolPulse 1.4s ease-out infinite; }
+          @keyframes kToolPulse { 0% { transform: scale(0.85); opacity: .9; } 100% { transform: scale(1.35); opacity: .25; } }
           @keyframes kBreathe { 0%,100% { transform: scale(1); } 50% { transform: scale(1.03); } }
           @keyframes kBloom { 0%,100% { opacity: .55; transform: scale(1); } 50% { opacity: .85; transform: scale(1.08); } }
           @keyframes kPulse { 0%,100% { opacity: .5; } 50% { opacity: 1; } }
@@ -231,7 +249,7 @@ export default function KioskConstellation({ kiosk }: Props) {
           @media (prefers-reduced-motion: reduce) {
             .k-breathe, .k-bloom, .k-occ, .k-active-edge, .k-spike, .k-spike2,
             .k-sweep, .k-twinkle, .k-neb-a, .k-neb-b, .k-neb-c, .k-halo,
-            .k-globe, .k-globe2 { animation: none; }
+            .k-globe, .k-globe2, .k-tool-pulse { animation: none; }
           }
         `}</style>
 
@@ -319,12 +337,28 @@ export default function KioskConstellation({ kiosk }: Props) {
           const [lx, ly] = polar(R_TOOLS + 22, deg);
           const col = healthColor(tool.health);
           const on = tool.health === 'healthy' || tool.health === 'degraded';
+          // Active-subsystem pulse: a turn_activity naming this MCP server lights
+          // its node. The signal rides TWO channels (WCAG 1.4.1 — not colour
+          // alone): the turquoise ACTIVE accent AND an expanding concentric ring
+          // (a shape/opacity channel). Under reduced motion the ring is present
+          // but static (its bloom animation is disabled in the CSS block below).
+          const pulse = pulseFor(tool.id);
+          const active = pulse > 0;
+          const ringR = reduced ? 20 : 14 + (1 - pulse) * 16;
           return (
-            <g key={`tool-${tool.id}`}>
+            <g key={`tool-${tool.id}`} data-tool-id={tool.id} data-tool-active={active ? '1' : undefined}>
+              {active && (
+                <circle cx={x} cy={y} r={ringR} fill="none" stroke={C.active}
+                  strokeWidth={2} strokeOpacity={0.28 + 0.55 * pulse}
+                  className={reduced ? undefined : 'k-tool-pulse'} />
+              )}
               <rect x={x - 8} y={y - 8} width={16} height={16} rx={3} transform={`rotate(45 ${x} ${y})`}
-                fill={on ? col : 'none'} stroke={col} strokeWidth={2.5} strokeDasharray={tool.health === 'down' ? '3 3' : undefined}
-                filter={on ? 'url(#k-glow)' : undefined} />
-              <text x={lx} y={ly + 5} textAnchor={anchorFor(lx)} fontSize={16} fill={C.dim}>{tool.label}</text>
+                fill={active ? C.active : on ? col : 'none'}
+                stroke={active ? C.active : col} strokeWidth={2.5}
+                strokeDasharray={tool.health === 'down' ? '3 3' : undefined}
+                filter={on || active ? 'url(#k-glow)' : undefined} />
+              <text x={lx} y={ly + 5} textAnchor={anchorFor(lx)} fontSize={16}
+                fill={active ? '#eafffb' : C.dim} fontWeight={active ? 600 : 400}>{tool.label}</text>
             </g>
           );
         })}
@@ -560,6 +594,18 @@ function usePrefersReducedMotion(): boolean {
     return () => mq.removeListener(on);
   }, []);
   return reduced;
+}
+
+/** A bare epoch-ms render tick (default 1s). UI-only — it advances wall time so
+ *  time-based visuals (the active-subsystem pulse fade) recompute; it makes NO
+ *  network call. */
+function usePulseTick(ms: number): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), ms);
+    return () => clearInterval(id);
+  }, [ms]);
+  return now;
 }
 
 function useClock(): { time: string; date: string } {
