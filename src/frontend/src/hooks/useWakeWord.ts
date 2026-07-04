@@ -97,6 +97,8 @@ export function useWakeWord({
   const engineRef = useRef<WakeWordEngine | null>(null);
   const unsubscribersRef = useRef<Array<() => void>>([]);
   const builtKeywordsRef = useRef<string[]>([]); // the set the live engine was built with
+  const builtThresholdRef = useRef<number>(settings.threshold); // its detection threshold
+  const engineStartedRef = useRef(false); // whether the live engine is capturing (started)
   const callbacksRef = useRef({ onWakeWordDetected, onSpeechStart, onSpeechEnd, onError, onReady });
 
   // Actual-state mirrors (kept in sync synchronously with the setState calls).
@@ -158,6 +160,7 @@ export function useWakeWord({
     const engine = engineRef.current;
     engineRef.current = null;
     builtKeywordsRef.current = [];
+    engineStartedRef.current = false;
     setIsReady(false);
     if (engine) {
       try {
@@ -255,6 +258,10 @@ export function useWakeWord({
     const loaded = await loadWakeWordEngine();
     if (!loaded) {
       setIsAvailable(false);
+      // If we were listening (a rebuild path), clear it so the UI isn't left
+      // green-but-dead and recovery can fire.
+      isListeningRef.current = false;
+      setIsListening(false);
       const err =
         getWakeWordLoadError() ||
         new Error(
@@ -267,10 +274,12 @@ export function useWakeWord({
     setIsAvailable(true);
     if (myGen !== genRef.current || !mountedRef.current || !desiredEnabledRef.current) return;
 
-    // Rebuild if the live engine's loaded set drifted from the desired set.
+    // Rebuild if the live engine drifted from the desired keyword set OR threshold
+    // (both are only read at construction).
     if (
       engineRef.current &&
-      !sameKeywordSet(builtKeywordsRef.current.join(','), keywordsRef.current.join(','))
+      (!sameKeywordSet(builtKeywordsRef.current.join(','), keywordsRef.current.join(',')) ||
+        builtThresholdRef.current !== thresholdRef.current)
     ) {
       await teardownEngine();
       if (myGen !== genRef.current || !mountedRef.current || !desiredEnabledRef.current) return;
@@ -283,6 +292,10 @@ export function useWakeWord({
         engine = await initEngine();
         await engine.load();
       } catch (err) {
+        // Build failed — if we were listening (rebuild path), clear it so the UI
+        // isn't stranded green with no engine.
+        isListeningRef.current = false;
+        setIsListening(false);
         reportEnableError(err);
         return;
       }
@@ -298,25 +311,30 @@ export function useWakeWord({
       subscribe(engine);
       engineRef.current = engine;
       builtKeywordsRef.current = [...keywordsRef.current];
+      builtThresholdRef.current = thresholdRef.current;
     }
 
-    // Start capturing if we should be listening.
+    // Start capturing if we should be listening. Guard on engineStartedRef so a
+    // second arm queued behind the first can't double-start the same engine.
     if (desiredListeningRef.current) {
-      try {
-        await engineRef.current.start({ gain: WAKEWORD_CONFIG.defaults.gain });
-      } catch (err) {
-        await teardownEngine();
-        isListeningRef.current = false;
-        setIsListening(false);
-        reportEnableError(err);
-        return;
-      }
-      if (myGen !== genRef.current || !mountedRef.current) {
-        // disable / pause / unmount / keyword-change landed during start — undo.
-        await teardownEngine();
-        isListeningRef.current = false;
-        setIsListening(false);
-        return;
+      if (!engineStartedRef.current) {
+        try {
+          await engineRef.current.start({ gain: WAKEWORD_CONFIG.defaults.gain });
+        } catch (err) {
+          await teardownEngine();
+          isListeningRef.current = false;
+          setIsListening(false);
+          reportEnableError(err);
+          return;
+        }
+        if (myGen !== genRef.current || !mountedRef.current || !desiredListeningRef.current) {
+          // disable / pause / unmount / keyword-change landed during start — undo.
+          await teardownEngine();
+          isListeningRef.current = false;
+          setIsListening(false);
+          return;
+        }
+        engineStartedRef.current = true;
       }
       isEnabledRef.current = true;
       isListeningRef.current = true;
@@ -376,19 +394,26 @@ export function useWakeWord({
   // engine immediately so recording never overlaps a live wake-word mic.
   const pause = useCallback(async () => {
     debug.log('⏸️ pause() called - isListening:', isListeningRef.current, 'hasEngine:', !!engineRef.current);
-    if (!isListeningRef.current || !engineRef.current) {
-      debug.log('⚠️ pause() skipped: not listening or no engine');
+    if (!isListeningRef.current) {
+      debug.log('⚠️ pause() skipped: not listening');
       return;
     }
+    // Record the pause intent + abort any in-flight arm FIRST — even if the
+    // engine is transiently null mid-rebuild — so a rebuild-in-progress can't
+    // re-start the mic on top of the recording that's about to begin.
     desiredListeningRef.current = false;
-    genRef.current++; // abort any in-flight arm that would re-start
+    genRef.current++;
     isListeningRef.current = false;
     setIsListening(false);
-    try {
-      await engineRef.current.stop();
-      debug.log('✅ Wake word paused (isEnabled stays true)');
-    } catch (err) {
-      console.error('Failed to pause wake word:', err);
+    engineStartedRef.current = false;
+    const engine = engineRef.current;
+    if (engine) {
+      try {
+        await engine.stop();
+        debug.log('✅ Wake word paused (isEnabled stays true)');
+      } catch (err) {
+        console.error('Failed to pause wake word:', err);
+      }
     }
   }, []);
 
@@ -438,12 +463,23 @@ export function useWakeWord({
     [setKeyword],
   );
 
-  // Update threshold. Takes effect on the next engine build (kept in a ref).
-  const setThreshold = useCallback((threshold: number) => {
-    thresholdRef.current = threshold;
-    setSettings((prev) => ({ ...prev, threshold }));
-    saveWakeWordSettings({ threshold });
-  }, []);
+  // Update threshold. The engine only reads detectionThreshold at construction,
+  // so when we're listening this rebuilds to apply the new sensitivity. Rapid
+  // slider drags bump the generation each tick, so intermediate rebuilds abort
+  // and only the last value is applied.
+  const setThreshold = useCallback(
+    (threshold: number) => {
+      if (threshold === thresholdRef.current) return;
+      thresholdRef.current = threshold;
+      setSettings((prev) => ({ ...prev, threshold }));
+      saveWakeWordSettings({ threshold });
+      genRef.current++;
+      if (desiredListeningRef.current) {
+        void arm();
+      }
+    },
+    [arm],
+  );
 
   // Cleanup on unmount — pre-empt any in-flight arm and stop the engine so the
   // mic/AudioContext never leak after navigation.
