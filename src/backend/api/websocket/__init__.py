@@ -4,6 +4,7 @@ WebSocket handlers for Renfield AI Assistant.
 This module contains the WebSocket endpoint handlers for:
 - /ws - Chat WebSocket
 - /ws/knowledge-graph - Live KG graph updates
+- /ws/kiosk - Live kiosk wall-display push hub (ADMIN-gated)
 - /ws/wakeword - Wake word detection WebSocket (still in main.py)
 
 `/ws/device` and `/ws/satellite` both moved to `ha_glue.api.websocket.*`
@@ -13,6 +14,7 @@ Platform-only deploys don't see these endpoints.
 
 from .chat_handler import router as chat_router
 from .kg_live_handler import router as kg_live_router
+from .kiosk_handler import router as kiosk_router
 from .shared import (
     ConversationSessionState,
     RAGSessionState,
@@ -28,5 +30,6 @@ __all__ = [
     "get_whisper_service",
     "is_followup_question",
     "kg_live_router",
+    "kiosk_router",
     "send_ws_error",
 ]

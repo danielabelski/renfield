@@ -77,24 +77,20 @@ async def list_agent_roles(
 _ACTIVITY_SCAN_WINDOW = 400
 
 
-@router.get("/activity", response_model=list[RoleActivityEntry])
-@limiter.limit(settings.api_rate_limit_admin)
-async def recent_role_activity(
-    request: Request,
-    limit: int = Query(default=30, ge=1, le=100),
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_permission(Permission.ADMIN)),
-):
-    """Newest-first role activations. Content-free by construction: only the
-    role name, timestamp, and the turn's action_success leave this endpoint.
+async def recent_role_activity_entries(
+    db: AsyncSession, limit: int = 30
+) -> list[RoleActivityEntry]:
+    """Newest-first role activations, content-free by construction: only the
+    role name, timestamp, and the turn's action_success. Shared by the REST
+    ``/activity`` poll and the kiosk WS snapshot (``kiosk_handler``).
 
     The agent_role extraction happens in Python over a bounded recent window
     (JSON, not JSONB, column — portable across the test sqlite shim and prod
     Postgres without dialect-specific JSON operators).
     """
     # Order by the PK, not the unindexed timestamp column: id order is insert
-    # order (≈ chronological), and the PK index turns the 3s poll into a
-    # bounded backward index scan instead of a full-table sort.
+    # order (≈ chronological), and the PK index turns the scan into a bounded
+    # backward index scan instead of a full-table sort.
     result = await db.execute(
         select(Message.timestamp, Message.message_metadata)
         .where(Message.role == "assistant")
@@ -121,6 +117,19 @@ async def recent_role_activity(
     return entries
 
 
+@router.get("/activity", response_model=list[RoleActivityEntry])
+@limiter.limit(settings.api_rate_limit_admin)
+async def recent_role_activity(
+    request: Request,
+    limit: int = Query(default=30, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_permission(Permission.ADMIN)),
+):
+    """Newest-first role activations. Content-free by construction: only the
+    role name, timestamp, and the turn's action_success leave this endpoint."""
+    return await recent_role_activity_entries(db, limit)
+
+
 # ---------------------------------------------------------------------------
 # Ambient kiosk tiles — weather + now-playing. Both read-only, ADMIN-gated, and
 # degrade to an empty payload (never an error) when the feature is off or the
@@ -144,15 +153,13 @@ _WEATHER_TTL_SECONDS = 600
 _weather_cache: dict[str, object] = {"at": 0.0, "value": None}
 
 
-@router.get("/weather", response_model=KioskWeather | None)
-@limiter.limit(settings.api_rate_limit_admin)
-async def kiosk_weather(
-    request: Request,
-    _: User = Depends(require_permission(Permission.ADMIN)),
-):
-    """Current conditions for the configured home location, for the kiosk tile.
-    ``null`` (not an error) when weather is disabled, no location is configured,
-    or the MCP can't answer — the tile hides itself."""
+async def compute_kiosk_weather(mcp_manager) -> "KioskWeather | None":
+    """Current conditions for the configured home location (process-cached).
+
+    Shared by the REST ``/weather`` poll and the kiosk WS snapshot
+    (``kiosk_handler``). ``None`` (never an error) when weather is disabled, no
+    location is configured, or the MCP can't answer — the tile hides itself.
+    """
     location = (settings.kiosk_weather_location or "").strip()
     if not settings.weather_enabled or not location:
         return None
@@ -161,7 +168,6 @@ async def kiosk_weather(
     if _weather_cache["value"] is not None and now - float(_weather_cache["at"]) < _WEATHER_TTL_SECONDS:
         return _weather_cache["value"]
 
-    mcp_manager = getattr(request.app.state, "mcp_manager", None)
     if mcp_manager is None:
         return _weather_cache["value"]  # last good reading, or None
 
@@ -197,6 +203,16 @@ async def kiosk_weather(
     _weather_cache["at"] = now
     _weather_cache["value"] = weather
     return weather
+
+
+@router.get("/weather", response_model=KioskWeather | None)
+@limiter.limit(settings.api_rate_limit_admin)
+async def kiosk_weather(
+    request: Request,
+    _: User = Depends(require_permission(Permission.ADMIN)),
+):
+    """Current conditions for the configured home location, for the kiosk tile."""
+    return await compute_kiosk_weather(getattr(request.app.state, "mcp_manager", None))
 
 
 class KioskNowPlaying(BaseModel):
