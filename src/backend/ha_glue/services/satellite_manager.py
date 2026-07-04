@@ -292,7 +292,7 @@ class SatelliteManager:
 
             self.sessions[session_id] = session
             sat.current_session_id = session_id
-            sat.state = SatelliteState.LISTENING
+            await self._set_satellite_state(sat, SatelliteState.LISTENING)
 
             logger.info(f"🎙️ Session started: {session_id}")
             logger.info(f"   Room: {sat.room}, Wake word: {keyword} ({confidence:.2f})")
@@ -374,6 +374,31 @@ class SatelliteManager:
         # Concatenate all chunks
         return b"".join(session.audio_chunks)
 
+    async def _set_satellite_state(
+        self, sat: "SatelliteInfo", state: SatelliteState
+    ):
+        """Single funnel for every satellite state transition.
+
+        Mutates ``sat.state`` AND pushes a content-free ``satellite_state`` delta
+        to the kiosk hub, so any future transition gets the push "for free". The
+        broadcast is fire-and-forget: a hub failure must never break voice.
+        """
+        sat.state = state
+        try:
+            from api.websocket.kiosk_handler import broadcast_kiosk_event
+
+            await broadcast_kiosk_event(
+                {
+                    "type": "satellite_state",
+                    "satellite_id": sat.satellite_id,
+                    "room": sat.room,
+                    "room_id": sat.room_id,
+                    "state": state.value,
+                }
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"kiosk satellite_state broadcast failed: {e}")
+
     async def set_session_state(
         self,
         session_id: str,
@@ -389,7 +414,7 @@ class SatelliteManager:
         # Update satellite state too
         if session.satellite_id in self.satellites:
             sat = self.satellites[session.satellite_id]
-            sat.state = state
+            await self._set_satellite_state(sat, state)
 
             # Notify satellite of state change
             try:
@@ -511,7 +536,7 @@ class SatelliteManager:
         if session.satellite_id in self.satellites:
             sat = self.satellites[session.satellite_id]
             sat.current_session_id = None
-            sat.state = SatelliteState.IDLE
+            await self._set_satellite_state(sat, SatelliteState.IDLE)
 
             # Notify satellite to return to idle
             try:

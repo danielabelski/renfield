@@ -209,6 +209,53 @@ def _extract_agent_sources(tool_results: list) -> list[dict]:
     return sources
 
 
+# Maps the platform-core / ha_glue ``internal.*`` tools (which have no MCP
+# server, hence no natural ring node) onto a kiosk subsystem id. Unknown
+# internal tools are intentionally skipped (no synthetic node). Keep in sync
+# with the kiosk's rendered subsystem nodes.
+INTERNAL_SUBSYSTEM_LABELS: dict[str, str] = {
+    "internal.knowledge_search": "knowledge",
+    "internal.presence_map": "presence",
+    "internal.bluetooth_scan": "presence",
+    "internal.device_action": "homeassistant",
+    "internal.device_controls": "homeassistant",
+}
+
+# A single turn rarely touches many subsystems; cap the pushed/persisted list so
+# an orchestrated fan-out can't bloat the event or the row.
+_MAX_SUBSYSTEMS_PER_TURN = 5
+
+
+def _extract_subsystems_used(tool_results: list) -> list[str]:
+    """Derive the content-free subsystem ids a turn touched, for the kiosk pulse.
+
+    ``mcp.<server>.<tool>`` → ``<server>``; ``internal.<tool>`` → the static
+    ``INTERNAL_SUBSYSTEM_LABELS`` allowlist (unknown internal tools skipped).
+    Deduped, order-preserved, capped at ``_MAX_SUBSYSTEMS_PER_TURN``. Empty when
+    the turn populated no ``agent_tool_results`` (direct-LLM / shortcut paths).
+    """
+    subsystems: list[str] = []
+    seen: set[str] = set()
+    for entry in tool_results:
+        tool_name = entry[0] if isinstance(entry, (tuple, list)) and entry else None
+        if not isinstance(tool_name, str) or not tool_name:
+            continue
+        if tool_name.startswith("mcp."):
+            parts = tool_name.split(".")
+            sub = parts[1] if len(parts) >= 3 and parts[1] else None
+        elif tool_name.startswith("internal."):
+            sub = INTERNAL_SUBSYSTEM_LABELS.get(tool_name)
+        else:
+            sub = None
+        if not sub or sub in seen:
+            continue
+        seen.add(sub)
+        subsystems.append(sub)
+        if len(subsystems) >= _MAX_SUBSYSTEMS_PER_TURN:
+            break
+    return subsystems
+
+
 def _collect_tool_artifacts(tool_results: list) -> list:
     """Gen-UI: gather typed artifacts a tool emitted in its result ``data``.
 
@@ -2218,6 +2265,33 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
             agent_sources = _extract_agent_sources(agent_tool_results)
             if agent_sources:
                 assistant_metadata["sources"] = agent_sources
+
+            # Kiosk "active subsystem" pulse: which subsystems this turn touched.
+            # Persisted alongside agent_role (durable record + reconnect hydrate)
+            # AND broadcast to the kiosk hub as a content-free turn_activity delta
+            # (role + subsystems + ok). Omitted entirely when there's nothing to
+            # show (no role and no subsystems → a no-op push).
+            subsystems_used = _extract_subsystems_used(agent_tool_results)
+            if subsystems_used:
+                assistant_metadata["subsystems_used"] = subsystems_used
+            turn_role = role.name if role else None
+            if turn_role or subsystems_used:
+                try:
+                    from datetime import UTC, datetime
+
+                    from api.websocket.kiosk_handler import broadcast_kiosk_event
+
+                    await broadcast_kiosk_event(
+                        {
+                            "type": "turn_activity",
+                            "role": turn_role,
+                            "subsystems": subsystems_used,
+                            "ok": action_result.get("success") if action_result else None,
+                            "at": datetime.now(UTC).isoformat(),
+                        }
+                    )
+                except Exception as e:  # noqa: BLE001 — never break the turn on a push
+                    logger.debug(f"kiosk turn_activity broadcast failed: {e}")
 
             # Typed artifacts (Lane A) produced this turn by the sub-intent /
             # orchestration card path. Persisted as message_metadata["artifacts"]
