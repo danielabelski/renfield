@@ -48,12 +48,14 @@ def _clear_clients():
     kiosk._kiosk_clients.clear()
     kiosk._event_queue = None
     kiosk._consumer_task = None
+    kiosk._consumer_loop = None
     yield
     if kiosk._consumer_task is not None:
         kiosk._consumer_task.cancel()
     kiosk._kiosk_clients.clear()
     kiosk._event_queue = None
     kiosk._consumer_task = None
+    kiosk._consumer_loop = None
 
 
 # --------------------------------------------------------------------------
@@ -188,6 +190,52 @@ async def test_broadcast_prunes_stalled_socket(monkeypatch):
     assert stalled not in kiosk._kiosk_clients  # pruned on timeout
     assert good in kiosk._kiosk_clients
     assert len(good.sent) == 1
+
+
+@pytest.mark.backend
+@pytest.mark.asyncio
+async def test_hydrate_before_register(monkeypatch):
+    """The socket must receive its snapshot BEFORE joining _kiosk_clients — else
+    the consumer could send a delta on the same socket concurrently with the
+    snapshot send, or the client would apply a delta before hydrating."""
+    from unittest.mock import AsyncMock
+
+    from fastapi import WebSocketDisconnect
+
+    monkeypatch.setattr(
+        kiosk, "authenticate_websocket",
+        AsyncMock(return_value={"authenticated": True, "auth_skipped": True}),
+    )
+    monkeypatch.setattr(
+        kiosk, "build_kiosk_snapshot", AsyncMock(return_value={"type": "snapshot"})
+    )
+
+    class _RecordingWS:
+        def __init__(self):
+            self.app = _FakeApp()
+            self.sent: list[dict] = []
+            self.registered_at_send: bool | None = None
+
+        async def accept(self):
+            pass
+
+        async def send_json(self, msg):
+            # Capture whether this socket was broadcast-eligible when hydrated.
+            self.registered_at_send = self in kiosk._kiosk_clients
+            self.sent.append(msg)
+
+        async def receive_text(self):
+            raise WebSocketDisconnect()
+
+        async def close(self, **kwargs):
+            pass
+
+    ws = _RecordingWS()
+    await kiosk.kiosk_live(ws, token=None)
+
+    assert ws.sent == [{"type": "snapshot"}]
+    assert ws.registered_at_send is False  # snapshot sent while UNREGISTERED
+    assert ws not in kiosk._kiosk_clients  # disconnect cleaned up
 
 
 # --------------------------------------------------------------------------

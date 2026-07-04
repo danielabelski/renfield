@@ -55,12 +55,22 @@ _SEND_TIMEOUT_SECONDS = 5.0
 # a fresh one) and revived if the consumer ever dies.
 _event_queue: "asyncio.Queue[dict] | None" = None
 _consumer_task: "asyncio.Task | None" = None
+_consumer_loop = None  # the loop the queue+consumer are bound to
 
 
 def _ensure_consumer() -> "asyncio.Queue[dict]":
-    global _event_queue, _consumer_task
-    if _event_queue is None:
+    """Return the broadcast queue, (re)creating the queue + consumer bound to the
+    CURRENTLY-running loop. Rebinding on a loop change matters because an
+    ``asyncio.Queue``/``Task`` is tied to the loop it was made in: if the app (or
+    a pytest-asyncio per-test) loop is ever replaced, a stale consumer left
+    pending on the dead loop reads ``.done() == False`` and would otherwise
+    silently starve the new loop's broadcasts."""
+    global _event_queue, _consumer_task, _consumer_loop
+    loop = asyncio.get_running_loop()
+    if _event_queue is None or _consumer_loop is not loop:
         _event_queue = asyncio.Queue()
+        _consumer_loop = loop
+        _consumer_task = None
     if _consumer_task is None or _consumer_task.done():
         _consumer_task = asyncio.create_task(_broadcast_consumer())
     return _event_queue
@@ -344,14 +354,28 @@ async def kiosk_live(
             return
 
     await websocket.accept()
-    _kiosk_clients.add(websocket)
+
+    # Hydrate BEFORE registering. If we joined _kiosk_clients first, the
+    # single-consumer could fan a delta out to this socket (a send_json) while
+    # this coroutine is still awaiting/sending its own snapshot on the SAME
+    # socket — a concurrent send (unsafe on a Starlette WebSocket), and the
+    # client could also apply a delta before it has hydrated. Sending the
+    # snapshot while unregistered closes both. Cost: a delta landing in the tiny
+    # build+send window is missed by this socket — fine for an ambient display
+    # (the next delta for that entity corrects it; a reconnect re-snapshots).
+    try:
+        snapshot = await build_kiosk_snapshot(websocket.app)
+        await websocket.send_json(snapshot)
+    except WebSocketDisconnect:
+        return
+    except Exception as e:
+        logger.debug(f"Kiosk hydrate failed: {e}")
+        return
+
+    _kiosk_clients.add(websocket)  # now broadcast-eligible
     logger.info(f"🖥️ Kiosk display connected ({len(_kiosk_clients)} total)")
 
     try:
-        # Hydrate: one full snapshot, then subscribe to deltas.
-        snapshot = await build_kiosk_snapshot(websocket.app)
-        await websocket.send_json(snapshot)
-
         # Push-only channel: idle on receive (ping/pong handled by framework).
         while True:
             await websocket.receive_text()
