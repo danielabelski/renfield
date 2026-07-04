@@ -62,7 +62,15 @@ KUBECTL=(kubectl --context "$KCTX" -n "$NS")
 # --- helpers ----------------------------------------------------------------
 log() { printf '\n\033[1;36m=== %s ===\033[0m\n' "$*"; }
 run() { if [[ $DRY_RUN == 1 ]]; then printf '  [dry-run] %s\n' "$*"; else eval "$@"; fi; }
-on_build() { run "ssh $BUILD_HOST '$*'"; }
+# Run a command on the build host. The command is passed to ssh as ONE argument,
+# so the REMOTE shell does all the quoting — a payload containing single quotes
+# (e.g. the prune's `--format '{{.Repository}}:{{.Tag}}'`) no longer breaks the
+# way the old `run "ssh $HOST '$*'"` nested-single-quoting did under `eval`
+# + `set -e` (which exited the script non-zero AFTER a successful deploy).
+on_build() {
+  if [[ $DRY_RUN == 1 ]]; then printf '  [dry-run] ssh %s: %s\n' "$BUILD_HOST" "$*"
+  else ssh "$BUILD_HOST" "$*"; fi
+}
 
 # --- preflight --------------------------------------------------------------
 log "preflight"
@@ -156,6 +164,7 @@ on_build "rm -rf $STAGING; \
     docker images \"$REGISTRY/\$repo\" --format '{{.Repository}}:{{.Tag}}' | tail -n +4 | xargs -r -n1 docker rmi 2>/dev/null || true; \
   done; \
   docker image prune -f >/dev/null 2>&1; docker builder prune -f --keep-storage 10GB >/dev/null 2>&1; \
-  df -h / | tail -1"
+  df -h / | tail -1" \
+  || echo "WARNING: build-box cleanup failed (non-fatal — deploy already succeeded); check disk on $BUILD_HOST" >&2
 
 log "DONE"
