@@ -17,12 +17,12 @@ import asyncio
 
 import pytest
 
-import api.websocket.kiosk_handler as kiosk
 from api.websocket.chat_handler import (
     INTERNAL_SUBSYSTEM_LABELS,
     _MAX_SUBSYSTEMS_PER_TURN,
     _extract_subsystems_used,
 )
+import api.websocket.kiosk_handler as kiosk
 from api.websocket.kiosk_handler import broadcast_kiosk_event, build_kiosk_snapshot
 
 

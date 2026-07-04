@@ -99,7 +99,7 @@ async def _broadcast_consumer() -> None:
                     *(_send_one(ws, event) for ws in clients),
                     return_exceptions=True,
                 )
-                for ws, result in zip(clients, results):
+                for ws, result in zip(clients, results, strict=True):
                     if isinstance(result, Exception):
                         _kiosk_clients.discard(ws)
         except Exception as e:  # never let one event kill the consumer
