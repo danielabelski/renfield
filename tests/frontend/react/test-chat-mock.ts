@@ -24,6 +24,7 @@ const wakeWordStub: UseWakeWordResult = {
   pause: async () => {},
   resume: async () => {},
   setKeyword: async () => {},
+  toggleKeyword: async () => {},
   setThreshold: () => {},
   availableKeywords: [
     { id: 'hey_jarvis', label: 'Hey Jarvis', model: 'hey_jarvis_v0.1', description: 'pre-trained' },

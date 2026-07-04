@@ -268,6 +268,16 @@ case 'config_update':
   break;
 ```
 
+The browser detector loads the **full** pushed set — every id in `wake_words`,
+not just the first — so a multi-language household (e.g. `renfield_de` +
+`renfield_en`) wakes on any of them, matching the satellites. `useWakeWord`
+persists the active set (comma-joined in `localStorage`, survives reload),
+filters it to keywords a model ships for, and — because the engine can only load
+models chosen at construction — **rebuilds** the engine (stop → drop → recreate
+with the full set → start) whenever the set changes; it never relies on
+`setActiveKeywords` (which can only toggle among already-loaded models). The
+ChatHeader keyword picker is a multi-checkbox set (at least one stays selected).
+
 ### Web Listening Recovery
 
 The browser wake-word engine (`useWakeWord` + onnxruntime WASM) runs **locally**
@@ -288,9 +298,16 @@ three ways, all of which previously needed a manual page reload:
 (edge-triggered on `wsConnected`), tab becoming **visible** (`visibilitychange`),
 and network coming back **online**. A pure `shouldRearmWakeWord` predicate
 (`pages/ChatPage/context/wakeWordRecovery.ts`) gates the resume: it skips the
-happy path (already listening), an active capture, and a live wake-word turn. An
-in-flight start latch in `useWakeWord` coalesces simultaneous triggers (e.g. a
-laptop wake firing all three at once) so the engine can't double-start.
+happy path (already listening), an active capture, and a live wake-word turn.
+`useWakeWord` reconciles the engine to a desired state: **turn-ON transitions**
+(enable/resume/keyword-rebuild) are serialized through one "arm" promise chain,
+while **turn-OFF transitions** (disable/pause) and the error handler are
+**pre-emptive** — they run immediately and bump a generation counter that an
+in-flight arm re-checks after every await and aborts on. So simultaneous
+triggers (a laptop wake firing all three at once) or a server config push
+landing mid-start can't double-start the engine; a hung `start()` can never
+block mic-off; an engine error can't leave a green-but-dead UI; and an unmount
+mid-build never leaks the mic/AudioContext.
 
 On reconnect, a chat turn that was streaming over the dropped WS is dead: the
 stuck "thinking" spinner is cleared, the half-streamed bubble is finalized, and an

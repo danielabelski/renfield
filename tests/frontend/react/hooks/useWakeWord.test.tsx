@@ -2,37 +2,68 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 
 // Mock the wakeword config
-vi.mock('../../../../src/frontend/src/config/wakeword', () => ({
-  WAKEWORD_CONFIG: {
-    modelBasePath: '/wakeword-models',
-    ortWasmPath: '/ort/',
-    availableKeywords: [
-      { id: 'hey_jarvis', label: 'Hey Jarvis', model: 'hey_jarvis.onnx', description: 'Test' },
-      { id: 'alexa', label: 'Alexa', model: 'alexa.onnx', description: 'Test' },
-    ],
-    defaults: {
+vi.mock('../../../../src/frontend/src/config/wakeword', () => {
+  const availableKeywords = [
+    { id: 'hey_jarvis', label: 'Hey Jarvis', model: 'hey_jarvis.onnx', description: 'Test' },
+    { id: 'alexa', label: 'Alexa', model: 'alexa.onnx', description: 'Test' },
+  ];
+  const known = new Set(availableKeywords.map((k) => k.id));
+  const parseKeywords = (value?: string | null): string[] => {
+    if (!value) return [];
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const raw of value.split(',')) {
+      const id = raw.trim();
+      if (id && known.has(id) && !seen.has(id)) {
+        seen.add(id);
+        out.push(id);
+      }
+    }
+    return out;
+  };
+  const sameKeywordSet = (a?: string | null, b?: string | null): boolean => {
+    const pa = parseKeywords(a);
+    const pb = parseKeywords(b);
+    if (pa.length !== pb.length) return false;
+    const sb = new Set(pb);
+    return pa.every((id) => sb.has(id));
+  };
+  const describeKeywords = (value?: string | null): string =>
+    parseKeywords(value)
+      .map((id) => availableKeywords.find((k) => k.id === id)?.label ?? id)
+      .join(' + ');
+  return {
+    WAKEWORD_CONFIG: {
+      modelBasePath: '/wakeword-models',
+      ortWasmPath: '/ort/',
+      availableKeywords,
+      defaults: {
+        enabled: false,
+        keyword: 'hey_jarvis',
+        threshold: 0.5,
+        cooldownMs: 2000,
+        audioFeedback: true,
+        gain: 1.0,
+      },
+      storageKeys: {
+        enabled: 'renfield_wakeword_enabled',
+        keyword: 'renfield_wakeword_keyword',
+        threshold: 'renfield_wakeword_threshold',
+        audioFeedback: 'renfield_wakeword_audio_feedback',
+      },
+    },
+    parseKeywords,
+    sameKeywordSet,
+    describeKeywords,
+    loadWakeWordSettings: vi.fn(() => ({
       enabled: false,
       keyword: 'hey_jarvis',
       threshold: 0.5,
-      cooldownMs: 2000,
       audioFeedback: true,
-      gain: 1.0,
-    },
-    storageKeys: {
-      enabled: 'renfield_wakeword_enabled',
-      keyword: 'renfield_wakeword_keyword',
-      threshold: 'renfield_wakeword_threshold',
-      audioFeedback: 'renfield_wakeword_audio_feedback',
-    },
-  },
-  loadWakeWordSettings: vi.fn(() => ({
-    enabled: false,
-    keyword: 'hey_jarvis',
-    threshold: 0.5,
-    audioFeedback: true,
-  })),
-  saveWakeWordSettings: vi.fn(),
-}));
+    })),
+    saveWakeWordSettings: vi.fn(),
+  };
+});
 
 // Mock debug utility
 vi.mock('../../../../src/frontend/src/utils/debug', () => ({
