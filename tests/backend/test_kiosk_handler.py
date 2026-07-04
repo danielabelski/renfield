@@ -13,6 +13,8 @@ Run on the .159 build box (CI is non-functional): see
 """
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 import api.websocket.kiosk_handler as kiosk
@@ -22,9 +24,6 @@ from api.websocket.chat_handler import (
     _extract_subsystems_used,
 )
 from api.websocket.kiosk_handler import broadcast_kiosk_event, build_kiosk_snapshot
-
-
-import asyncio
 
 
 class _FakeWS:

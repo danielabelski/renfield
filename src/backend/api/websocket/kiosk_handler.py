@@ -77,7 +77,7 @@ async def _fan_out_kiosk_event(event: dict) -> None:
     for ws in list(_kiosk_clients):
         try:
             await asyncio.wait_for(ws.send_json(event), timeout=_SEND_TIMEOUT_SECONDS)
-        except Exception:  # noqa: BLE001 — a dead/stalled socket must not abort the fan-out
+        except Exception:  # a dead/stalled socket must not abort the fan-out
             broken.append(ws)
 
     for ws in broken:
@@ -126,7 +126,7 @@ async def build_kiosk_snapshot(app) -> dict:
         from ha_glue.services.satellite_manager import get_satellite_manager
 
         snapshot["satellites"] = get_satellite_manager().get_all_satellites()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.debug(f"kiosk snapshot: satellites unavailable: {e}")
 
     # --- Presence (rooms → occupant counts; no user ids) -----------------
@@ -149,7 +149,7 @@ async def build_kiosk_snapshot(app) -> dict:
             "people_present": sum(r["occupants"] for r in room_list),
             "occupied_rooms": len(room_list),
         }
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.debug(f"kiosk snapshot: presence unavailable: {e}")
 
     # --- MCP connection status + tool counts -----------------------------
@@ -157,7 +157,7 @@ async def build_kiosk_snapshot(app) -> dict:
     if mcp_manager is not None:
         try:
             snapshot["mcp"] = mcp_manager.get_status()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.debug(f"kiosk snapshot: mcp status unavailable: {e}")
 
     # --- Tool-health classification (aggregated, user-id-free) -----------
@@ -186,7 +186,7 @@ async def build_kiosk_snapshot(app) -> dict:
                 }
             )
         snapshot["tool_health"] = tool_health
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.debug(f"kiosk snapshot: tool health unavailable: {e}")
 
     # --- Agent roles (availability-filtered, as the router sees them) ----
@@ -203,7 +203,7 @@ async def build_kiosk_snapshot(app) -> dict:
                 }
                 for role in agent_router.roles.values()
             ]
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.debug(f"kiosk snapshot: roles unavailable: {e}")
 
     # --- Recent role activations (content-free pulse history) ------------
@@ -216,7 +216,7 @@ async def build_kiosk_snapshot(app) -> dict:
             {"role": e.role, "at": e.at.isoformat() if e.at else None, "ok": e.ok}
             for e in entries
         ]
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.debug(f"kiosk snapshot: activity unavailable: {e}")
 
     # --- Federation peers (reachability, no message content) -------------
@@ -254,7 +254,7 @@ async def build_kiosk_snapshot(app) -> dict:
                 }
             )
         snapshot["peers"] = peers
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.debug(f"kiosk snapshot: peers unavailable: {e}")
 
     # --- Weather tile (process-cached; None hides the tile) --------------
@@ -264,7 +264,7 @@ async def build_kiosk_snapshot(app) -> dict:
         weather = await compute_kiosk_weather(mcp_manager)
         if weather is not None:
             snapshot["weather"] = weather.model_dump()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.debug(f"kiosk snapshot: weather unavailable: {e}")
 
     # --- Now-playing tile (one per room, PLAYING only, no user ids) ------
@@ -275,7 +275,7 @@ async def build_kiosk_snapshot(app) -> dict:
             from ha_glue.services.media_follow_service import get_media_follow_service
 
             snapshot["now_playing"] = get_media_follow_service().active_sessions()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.debug(f"kiosk snapshot: now-playing unavailable: {e}")
 
     return snapshot
@@ -310,7 +310,7 @@ async def kiosk_live(
                 async with AsyncSessionLocal() as db:
                     user = await get_user_by_id(db, user_id)
                 is_admin = bool(user and user.has_permission(Permission.ADMIN))
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.warning(f"kiosk WS admin check failed: {e}")
                 is_admin = False
         if not is_admin:
@@ -333,7 +333,7 @@ async def kiosk_live(
             await websocket.receive_text()
     except WebSocketDisconnect:
         pass
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.debug(f"Kiosk display connection error: {e}")
     finally:
         _kiosk_clients.discard(websocket)
