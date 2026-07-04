@@ -49,6 +49,7 @@ export interface UseWakeWordResult {
   pause: () => Promise<void>;
   resume: () => Promise<void>;
   setKeyword: (keyword: string) => Promise<void>;
+  toggleKeyword: (id: string) => Promise<void>;
   setThreshold: (threshold: number) => void;
   availableKeywords: KeywordConfig[];
 }
@@ -56,20 +57,22 @@ export interface UseWakeWordResult {
 /**
  * React hook for wake word detection using OpenWakeWord WASM.
  *
- * Supports a **multi-keyword** active set: `settings.keyword` may be a single id
- * or a comma-separated set (the same form the server settings page uses). The
- * engine loads one model per id, so a German+English household detects every
- * pushed wake word — satellites already do this; the browser now matches them.
+ * **Multi-keyword:** `settings.keyword` is a comma-separated active SET (the same
+ * form the server settings page uses). The engine loads one model per id, so a
+ * German+English household detects every pushed wake word — satellites already
+ * do this; the browser now matches them. The engine's `start()` opens a fresh
+ * mic + AudioContext and `stop()` closes them, so changing the set means
+ * recreating the engine (it can only load models chosen at construction — we
+ * never rely on `setActiveKeywords`).
  *
- * The engine's `start()` opens a fresh mic + AudioContext and `stop()` closes
- * them, so every pause/resume already rebuilds the audio graph — adding/removing
- * a keyword just means recreating the engine (initEngine loads the full set).
- *
- * **All engine lifecycle transitions (enable/disable/pause/resume/keyword-change/
- * error-recovery) run through `runExclusive`, a promise chain that serializes
- * them.** Without it, a server config push (WS `config_update`) that lands mid
- * enable()/resume() could tear the half-built engine out from under the in-flight
- * start — the exact race a multi-language household hits on page load.
+ * **Concurrency model.** Turn-ON transitions (enable/resume/keyword-rebuild) are
+ * serialized through a single "arm" promise chain and reconcile the engine to
+ * the desired state (`desiredEnabledRef`/`desiredListeningRef`/`keywordsRef`).
+ * Turn-OFF transitions (disable/pause) and the error handler are PRE-EMPTIVE:
+ * they run immediately and bump `genRef`, which an in-flight arm re-checks after
+ * every await and aborts on — so a hung `start()` can never block mic-off, an
+ * engine error can never leave a green-but-dead UI, and an unmount mid-build
+ * never leaks the mic.
  */
 export function useWakeWord({
   onWakeWordDetected,
@@ -90,58 +93,50 @@ export function useWakeWord({
     !wasWakeWordLoadAttempted() || getWakeWordEngineClass() !== null,
   );
 
-  // Refs
+  // Engine + subscriptions
   const engineRef = useRef<WakeWordEngine | null>(null);
   const unsubscribersRef = useRef<Array<() => void>>([]);
+  const builtKeywordsRef = useRef<string[]>([]); // the set the live engine was built with
   const callbacksRef = useRef({ onWakeWordDetected, onSpeechStart, onSpeechEnd, onError, onReady });
-  // Live mirrors of the enabled/listening state, updated SYNCHRONOUSLY by the
-  // transitions below so a serialized op reads the true current state (not the
-  // render closure it was created in) when it finally runs.
+
+  // Actual-state mirrors (kept in sync synchronously with the setState calls).
   const isEnabledRef = useRef(false);
   const isListeningRef = useRef(false);
-  // The active keyword id set + threshold, mirrored into refs so the engine
-  // build path (initEngine) reads the CURRENT values synchronously.
+  // Desired state — what the user/serve wants. The arm loop reconciles to these.
+  const desiredEnabledRef = useRef(false);
+  const desiredListeningRef = useRef(false);
+  // Desired keyword set + threshold, read at engine-build time.
   const keywordsRef = useRef<string[]>(parseKeywords(settings.keyword));
   const thresholdRef = useRef<number>(settings.threshold);
 
-  // Serializes every engine lifecycle transition. Each queued op runs only
-  // after the previous one settles (success OR failure), so no two transitions
-  // ever touch engineRef concurrently. Errors don't poison the chain.
-  const opChainRef = useRef<Promise<unknown>>(Promise.resolve());
-  const runExclusive = useCallback((op: () => Promise<void>): Promise<void> => {
-    const run = opChainRef.current.then(op, op);
-    opChainRef.current = run.catch(() => undefined);
-    return run;
-  }, []);
+  // Generation counter — bumped by every pre-emptive turn-OFF (disable/pause),
+  // by an engine error, by a keyword change, and by unmount. An in-flight arm
+  // captures the generation and aborts if it changed across an await.
+  const genRef = useRef(0);
+  const mountedRef = useRef(true);
+  // Serializes turn-ON (arm) transitions so two builds never race engineRef.
+  const armChainRef = useRef<Promise<unknown>>(Promise.resolve());
 
   // Keep callbacks ref updated
   useEffect(() => {
     callbacksRef.current = { onWakeWordDetected, onSpeechStart, onSpeechEnd, onError, onReady };
   }, [onWakeWordDetected, onSpeechStart, onSpeechEnd, onError, onReady]);
 
-  // Keep the engine-build refs in sync with settings (belt-and-suspenders: the
-  // mutators update these synchronously; this catches any external settings set)
-  useEffect(() => {
-    keywordsRef.current = parseKeywords(settings.keyword);
-    thresholdRef.current = settings.threshold;
-  }, [settings.keyword, settings.threshold]);
-
-  // Build a fresh engine from the CURRENT keyword set + threshold (read from
-  // refs, so this never captures a stale set).
+  // Build a fresh engine from the CURRENT keyword set + threshold (from refs).
   const initEngine = useCallback(async (): Promise<WakeWordEngine> => {
     const EngineClass = getWakeWordEngineClass();
     if (!EngineClass) {
       throw new Error('Wake word detection not available. Please rebuild the application.');
     }
 
-    // Build model file map from config (includes custom keywords like hey_renfield)
+    // Model file map (includes custom keywords like hey_renfield).
     const modelFiles: Record<string, string> = {};
     for (const kw of WAKEWORD_CONFIG.availableKeywords) {
       modelFiles[kw.id] = kw.model;
     }
 
-    // Load EVERY active keyword's model (multi-language household). Fall back to
-    // the default single keyword if the set somehow resolved to nothing.
+    // Load EVERY active keyword's model. Fall back to the default single keyword
+    // if the set somehow resolved to nothing.
     const keywords = keywordsRef.current.length
       ? [...keywordsRef.current]
       : [WAKEWORD_CONFIG.defaults.keyword];
@@ -156,13 +151,13 @@ export function useWakeWord({
   }, []);
 
   // Fully tear down the engine: unsubscribe, stop (closes mic + AudioContext),
-  // drop the ref. Low-level primitive — only called from inside runExclusive
-  // (or unmount cleanup).
+  // drop the ref. Low-level; callers own the state/gen bookkeeping.
   const teardownEngine = useCallback(async () => {
     unsubscribersRef.current.forEach((unsub) => unsub?.());
     unsubscribersRef.current = [];
     const engine = engineRef.current;
     engineRef.current = null;
+    builtKeywordsRef.current = [];
     setIsReady(false);
     if (engine) {
       try {
@@ -173,56 +168,10 @@ export function useWakeWord({
     }
   }, []);
 
-  // Build + load + subscribe an engine if none exists. Low-level primitive.
-  const buildEngine = useCallback(async () => {
-    if (engineRef.current) return;
-    const engine = await initEngine();
-    await engine.load();
-
-    // Wire the engine's events to hook state/callbacks.
-    const unsubReady = engine.on('ready', () => {
-      setIsReady(true);
-      callbacksRef.current.onReady?.();
-    });
-    const unsubDetect = engine.on('detect', ({ keyword, score, at }) => {
-      const detection: WakeWordDetection = { keyword, score, timestamp: at || Date.now() };
-      setLastDetection(detection);
-      callbacksRef.current.onWakeWordDetected?.(keyword, score);
-    });
-    const unsubSpeechStart = engine.on('speech-start', () => {
-      callbacksRef.current.onSpeechStart?.();
-    });
-    const unsubSpeechEnd = engine.on('speech-end', () => {
-      callbacksRef.current.onSpeechEnd?.();
-    });
-    const unsubError = engine.on('error', (err: Error) => {
-      setError(err);
-      // The engine errored — it is no longer detecting. Reflect that in
-      // isListening (it previously stayed stale-true, lying to the UI) so the
-      // status dot goes yellow AND the recovery triggers in ChatContext
-      // (WS-reconnect / tab-visible / network-online) can resume it. isEnabled
-      // stays true so the user's intent is preserved and the resume path stays
-      // open. DROP the dead engine (serialized) so recovery resume() rebuilds a
-      // fresh one rather than start()-ing the broken instance.
-      isListeningRef.current = false;
-      setIsListening(false);
-      callbacksRef.current.onError?.(err);
-      void runExclusive(() => teardownEngine());
-    });
-
-    unsubscribersRef.current = [
-      unsubReady,
-      unsubDetect,
-      unsubSpeechStart,
-      unsubSpeechEnd,
-      unsubError,
-    ];
-    engineRef.current = engine;
-  }, [initEngine, runExclusive, teardownEngine]);
-
-  // Map raw engine/browser errors to friendly, actionable messages.
+  // Map raw engine/browser errors to friendly, actionable messages. Used by
+  // every build/start failure path (enable, resume, keyword-rebuild).
   const reportEnableError = useCallback((err: unknown) => {
-    console.error('Failed to enable wake word:', err);
+    console.error('Failed to start wake word:', err);
     const raw = err instanceof Error ? err : new Error(String(err));
 
     let out = raw;
@@ -252,67 +201,167 @@ export function useWakeWord({
     callbacksRef.current.onError?.(out);
   }, []);
 
-  // Enable wake word listening.
-  const enable = useCallback(() => {
-    // Flip the loading indicator synchronously (before the op is queued) so the
-    // spinner appears on the click, not a microtask later.
-    setIsLoading(true);
-    setError(null);
-    return runExclusive(async () => {
+  // Wire a fresh engine's events to hook state/callbacks.
+  const subscribe = useCallback(
+    (engine: WakeWordEngine) => {
+      const unsubReady = engine.on('ready', () => {
+        setIsReady(true);
+        callbacksRef.current.onReady?.();
+      });
+      const unsubDetect = engine.on('detect', ({ keyword, score, at }) => {
+        const detection: WakeWordDetection = { keyword, score, timestamp: at || Date.now() };
+        setLastDetection(detection);
+        callbacksRef.current.onWakeWordDetected?.(keyword, score);
+      });
+      const unsubSpeechStart = engine.on('speech-start', () => {
+        callbacksRef.current.onSpeechStart?.();
+      });
+      const unsubSpeechEnd = engine.on('speech-end', () => {
+        callbacksRef.current.onSpeechEnd?.();
+      });
+      const unsubError = engine.on('error', (err: Error) => {
+        setError(err);
+        callbacksRef.current.onError?.(err);
+        // The engine died — reflect it honestly (status dot goes yellow) and
+        // DROP it so a recovery resume() rebuilds a fresh one. Bump the
+        // generation so any in-flight arm can't re-mark this dead engine as
+        // listening (the green-but-dead race). isEnabled stays true so the
+        // user's intent is preserved and recovery can fire.
+        isListeningRef.current = false;
+        setIsListening(false);
+        genRef.current++;
+        void teardownEngine();
+      });
+
+      unsubscribersRef.current = [
+        unsubReady,
+        unsubDetect,
+        unsubSpeechStart,
+        unsubSpeechEnd,
+        unsubError,
+      ];
+    },
+    [teardownEngine],
+  );
+
+  // Reconcile the engine to the desired state. Serialized via `arm()`. Re-checks
+  // the generation / mounted / desired flags after every await and bails (tearing
+  // down any half-built engine) if a pre-emptive op superseded it.
+  const armInner = useCallback(async () => {
+    if (!mountedRef.current || !desiredEnabledRef.current) return;
+    const myGen = genRef.current;
+
+    // Ensure the WASM module is available.
+    const loaded = await loadWakeWordEngine();
+    if (!loaded) {
+      setIsAvailable(false);
+      const err =
+        getWakeWordLoadError() ||
+        new Error(
+          'Wake word detection not available. Please run: npm install && docker compose up -d --build',
+        );
+      setError(err);
+      callbacksRef.current.onError?.(err);
+      return;
+    }
+    setIsAvailable(true);
+    if (myGen !== genRef.current || !mountedRef.current || !desiredEnabledRef.current) return;
+
+    // Rebuild if the live engine's loaded set drifted from the desired set.
+    if (
+      engineRef.current &&
+      !sameKeywordSet(builtKeywordsRef.current.join(','), keywordsRef.current.join(','))
+    ) {
+      await teardownEngine();
+      if (myGen !== genRef.current || !mountedRef.current || !desiredEnabledRef.current) return;
+    }
+
+    // Build (load + subscribe) if there's no engine.
+    if (!engineRef.current) {
+      let engine: WakeWordEngine;
       try {
-        if (isEnabledRef.current && isListeningRef.current) return;
-
-        // Lazy load the wake word engine module
-        const loaded = await loadWakeWordEngine();
-        if (!loaded) {
-          setIsAvailable(false);
-          const err =
-            getWakeWordLoadError() ||
-            new Error(
-              'Wake word detection not available. Please run: npm install && docker compose up -d --build',
-            );
-          setError(err);
-          callbacksRef.current.onError?.(err);
-          return;
-        }
-        setIsAvailable(true);
-
-        await buildEngine();
-        await engineRef.current!.start({ gain: WAKEWORD_CONFIG.defaults.gain });
-
-        isEnabledRef.current = true;
-        isListeningRef.current = true;
-        setIsEnabled(true);
-        setIsListening(true);
-        saveWakeWordSettings({ enabled: true });
+        engine = await initEngine();
+        await engine.load();
       } catch (err) {
-        // Drop any half-built engine so a retry rebuilds cleanly.
+        reportEnableError(err);
+        return;
+      }
+      if (myGen !== genRef.current || !mountedRef.current || !desiredEnabledRef.current) {
+        // Superseded during the build — discard the engine we just made.
+        try {
+          await engine.stop();
+        } catch {
+          /* discarded */
+        }
+        return;
+      }
+      subscribe(engine);
+      engineRef.current = engine;
+      builtKeywordsRef.current = [...keywordsRef.current];
+    }
+
+    // Start capturing if we should be listening.
+    if (desiredListeningRef.current) {
+      try {
+        await engineRef.current.start({ gain: WAKEWORD_CONFIG.defaults.gain });
+      } catch (err) {
         await teardownEngine();
         isListeningRef.current = false;
         setIsListening(false);
         reportEnableError(err);
-      } finally {
-        setIsLoading(false);
+        return;
       }
-    });
-  }, [runExclusive, buildEngine, teardownEngine, reportEnableError]);
-
-  // Disable wake word listening. Works from ANY state (listening, paused, or
-  // post-error) — the guard is "is there anything to turn off?", not isListening,
-  // so the toggle can always turn the mic off (and clear the persisted flag).
-  const disable = useCallback(
-    () =>
-      runExclusive(async () => {
-        if (!isEnabledRef.current && !engineRef.current) return;
+      if (myGen !== genRef.current || !mountedRef.current) {
+        // disable / pause / unmount / keyword-change landed during start — undo.
         await teardownEngine();
-        isEnabledRef.current = false;
         isListeningRef.current = false;
-        setIsEnabled(false);
         setIsListening(false);
-        saveWakeWordSettings({ enabled: false });
-      }),
-    [runExclusive, teardownEngine],
-  );
+        return;
+      }
+      isEnabledRef.current = true;
+      isListeningRef.current = true;
+      setIsEnabled(true);
+      setIsListening(true);
+      saveWakeWordSettings({ enabled: true });
+    }
+  }, [initEngine, subscribe, teardownEngine, reportEnableError]);
+
+  // Queue an arm (turn-ON reconcile) after any in-flight one. Errors in one op
+  // don't poison the chain.
+  const arm = useCallback((): Promise<void> => {
+    const next = armChainRef.current.then(armInner, armInner);
+    armChainRef.current = next.catch(() => undefined);
+    return next;
+  }, [armInner]);
+
+  // Enable wake word listening.
+  const enable = useCallback((): Promise<void> => {
+    if (isEnabledRef.current && isListeningRef.current) return Promise.resolve();
+    // Only flip the spinner once we know there's real work (avoids a flicker when
+    // called redundantly while already listening).
+    setIsLoading(true);
+    setError(null);
+    desiredEnabledRef.current = true;
+    desiredListeningRef.current = true;
+    return arm().finally(() => setIsLoading(false));
+  }, [arm]);
+
+  // Disable wake word listening. PRE-EMPTIVE: runs immediately (not queued behind
+  // a possibly-hung arm) and stops the engine directly, so the mic can ALWAYS be
+  // turned off. Works from any state (listening, paused, post-error).
+  const disable = useCallback(async () => {
+    if (!desiredEnabledRef.current && !engineRef.current) return;
+    desiredEnabledRef.current = false;
+    desiredListeningRef.current = false;
+    genRef.current++; // abort any in-flight arm
+    isEnabledRef.current = false;
+    isListeningRef.current = false;
+    setIsEnabled(false);
+    setIsListening(false);
+    setIsLoading(false);
+    saveWakeWordSettings({ enabled: false });
+    await teardownEngine();
+  }, [teardownEngine]);
 
   // Toggle wake word
   const toggle = useCallback(async () => {
@@ -323,119 +372,91 @@ export function useWakeWord({
     }
   }, [isEnabled, enable, disable]);
 
-  // Pause listening temporarily (e.g., while recording). Serialized, so it runs
-  // AFTER any in-flight rebuild — it never sees a transient null engine.
-  const pause = useCallback(
-    () =>
-      runExclusive(async () => {
-        if (!isListeningRef.current || !engineRef.current) {
-          debug.log('⚠️ pause() skipped: not listening or no engine');
-          return;
-        }
-        try {
-          await engineRef.current.stop();
-          isListeningRef.current = false;
-          setIsListening(false);
-          debug.log('✅ Wake word paused (isEnabled stays true)');
-        } catch (err) {
-          console.error('Failed to pause wake word:', err);
-        }
-      }),
-    [runExclusive],
-  );
+  // Pause listening temporarily (e.g., while recording). PRE-EMPTIVE: stops the
+  // engine immediately so recording never overlaps a live wake-word mic.
+  const pause = useCallback(async () => {
+    debug.log('⏸️ pause() called - isListening:', isListeningRef.current, 'hasEngine:', !!engineRef.current);
+    if (!isListeningRef.current || !engineRef.current) {
+      debug.log('⚠️ pause() skipped: not listening or no engine');
+      return;
+    }
+    desiredListeningRef.current = false;
+    genRef.current++; // abort any in-flight arm that would re-start
+    isListeningRef.current = false;
+    setIsListening(false);
+    try {
+      await engineRef.current.stop();
+      debug.log('✅ Wake word paused (isEnabled stays true)');
+    } catch (err) {
+      console.error('Failed to pause wake word:', err);
+    }
+  }, []);
 
-  // Resume listening after pause. buildEngine() rebuilds if the engine was
-  // dropped (keyword change while paused, or an error), then start()s — start
-  // always opens a fresh mic + AudioContext, so a rebuild here is no different
-  // from a normal resume.
-  const resume = useCallback(
-    () =>
-      runExclusive(async () => {
-        if (isListeningRef.current) return;
-        if (!isEnabledRef.current) return;
+  // Resume listening after pause. arm() rebuilds if the engine was dropped
+  // (keyword change while paused, or an error), else just re-starts.
+  const resume = useCallback((): Promise<void> => {
+    if (isListeningRef.current) return Promise.resolve();
+    if (!desiredEnabledRef.current) return Promise.resolve();
+    desiredListeningRef.current = true;
+    return arm();
+  }, [arm]);
 
-        try {
-          await buildEngine();
-          await engineRef.current!.start({ gain: WAKEWORD_CONFIG.defaults.gain });
-          isListeningRef.current = true;
-          setIsListening(true);
-          debug.log('✅ Wake word engine resumed');
-        } catch (err) {
-          console.error('Failed to resume wake word:', err);
-          setError(err instanceof Error ? err : new Error(String(err)));
-        }
-      }),
-    [runExclusive, buildEngine],
-  );
-
-  // Rebuild the engine to match the current keyword set. Serialized. Because the
-  // engine can only load models chosen at construction, changing the set means a
-  // full stop → drop → recreate. Preserves the listening/paused state.
-  const applyKeywordChange = useCallback(
-    () =>
-      runExclusive(async () => {
-        // Not running: just drop any stale engine — enable() will build fresh
-        // with the new set.
-        if (!isEnabledRef.current) {
-          await teardownEngine();
-          return;
-        }
-        const wasListening = isListeningRef.current;
-        await teardownEngine();
-        if (wasListening) {
-          try {
-            await buildEngine();
-            await engineRef.current!.start({ gain: WAKEWORD_CONFIG.defaults.gain });
-            isListeningRef.current = true;
-            setIsListening(true);
-          } catch (err) {
-            console.error('Failed to rebuild wake word engine:', err);
-            setError(err instanceof Error ? err : new Error(String(err)));
-            isListeningRef.current = false;
-            setIsListening(false);
-          }
-        }
-        // If paused: leave the engine dropped; resume() rebuilds with the new set.
-      }),
-    [runExclusive, teardownEngine, buildEngine],
-  );
-
-  // Update the active keyword set. Accepts a single id or a comma-separated set.
-  // Persists it (survives reload) and, if the set actually changed, rebuilds the
+  // Update the active keyword set (single id or comma-separated). Persists it
+  // (survives reload) and, if the set changed while listening, rebuilds the
   // engine so every keyword is loaded.
   const setKeyword = useCallback(
     async (keyword: string) => {
       const ids = parseKeywords(keyword);
-      // Ignore a selection that resolves to nothing we ship a model for — keep
-      // the current set rather than blanking detection.
+      // Ignore a selection that resolves to nothing we ship a model for.
       if (ids.length === 0) return;
       const normalized = ids.join(',');
       if (sameKeywordSet(normalized, keywordsRef.current.join(','))) return;
 
-      keywordsRef.current = ids; // synchronous — the rebuild below reads this
+      keywordsRef.current = ids; // read by the next engine build
       setSettings((prev) => ({ ...prev, keyword: normalized }));
       saveWakeWordSettings({ keyword: normalized });
+      genRef.current++; // supersede any in-flight arm building the old set
 
-      await applyKeywordChange();
+      // Reconcile now if we should be listening; otherwise the next resume()/
+      // enable() picks up the new set (arm's drift check rebuilds).
+      if (desiredListeningRef.current) {
+        await arm();
+      }
     },
-    [applyKeywordChange],
+    [arm],
   );
 
-  // Update threshold. Takes effect on the next engine build (kept in a ref so a
-  // rebuild picks it up); we don't force a rebuild for a sensitivity nudge.
+  // Toggle one keyword in/out of the active set. Reads the CURRENT set from the
+  // ref (not a render closure) so rapid successive toggles don't lose updates.
+  const toggleKeyword = useCallback(
+    async (id: string) => {
+      const current = keywordsRef.current;
+      const next = current.includes(id) ? current.filter((k) => k !== id) : [...current, id];
+      if (next.length === 0) return; // keep at least one active
+      await setKeyword(next.join(','));
+    },
+    [setKeyword],
+  );
+
+  // Update threshold. Takes effect on the next engine build (kept in a ref).
   const setThreshold = useCallback((threshold: number) => {
     thresholdRef.current = threshold;
     setSettings((prev) => ({ ...prev, threshold }));
     saveWakeWordSettings({ threshold });
   }, []);
 
-  // Cleanup on unmount
+  // Cleanup on unmount — pre-empt any in-flight arm and stop the engine so the
+  // mic/AudioContext never leak after navigation.
   useEffect(() => {
     return () => {
+      mountedRef.current = false;
+      genRef.current++;
       unsubscribersRef.current.forEach((unsub) => unsub?.());
-      if (engineRef.current) {
-        engineRef.current.stop().catch(() => {});
-        engineRef.current = null;
+      unsubscribersRef.current = [];
+      const engine = engineRef.current;
+      engineRef.current = null;
+      if (engine) {
+        engine.stop().catch(() => {});
       }
     };
   }, []);
@@ -498,6 +519,7 @@ export function useWakeWord({
     pause,
     resume,
     setKeyword,
+    toggleKeyword,
     setThreshold,
 
     // Config access

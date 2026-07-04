@@ -29,9 +29,13 @@ const h = vi.hoisted(() => {
     listeners: Listeners;
   }> = [];
 
+  // When set, the NEXT engine's load() blocks on this promise (to test
+  // pre-emption of an in-flight arm). Cleared per test.
+  const gate: { loadGate: Promise<void> | null } = { loadGate: null };
+
   class MockEngine {
     listeners: Listeners = {};
-    load = vi.fn().mockResolvedValue(undefined);
+    load = vi.fn(() => gate.loadGate ?? Promise.resolve());
     start = vi.fn().mockResolvedValue(undefined);
     stop = vi.fn().mockResolvedValue(undefined);
     setActiveKeywords = vi.fn();
@@ -53,7 +57,7 @@ const h = vi.hoisted(() => {
     }
   }
 
-  return { created, MockEngine };
+  return { created, MockEngine, gate };
 });
 
 // Mock the engine loader so the engine is "available" and construction is captured.
@@ -154,6 +158,7 @@ describe('useWakeWord — multi-keyword (loaded engine)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     h.created.length = 0;
+    h.gate.loadGate = null;
     localStorage.clear();
   });
 
@@ -373,6 +378,105 @@ describe('useWakeWord — multi-keyword (loaded engine)', () => {
     const latest = h.created[h.created.length - 1];
     expect(sortedKeywords(latest)).toEqual(['alexa', 'hey_jarvis']);
     expect(latest.start).toHaveBeenCalled();
+    expect(result.current.isListening).toBe(true);
+  });
+
+  it('disable() pre-empts an in-flight enable() (a hung load never blocks mic-off)', async () => {
+    const useWakeWord = await importHook();
+    const { result } = renderHook(() => useWakeWord());
+
+    // The next engine's load() hangs until we release it.
+    let releaseLoad!: () => void;
+    h.gate.loadGate = new Promise<void>((r) => {
+      releaseLoad = r;
+    });
+
+    let enabling: Promise<void>;
+    await act(async () => {
+      enabling = result.current.enable();
+      await Promise.resolve(); // let the arm reach the hung load()
+    });
+
+    // Turn it off while enable is stuck loading — disable must NOT be queued
+    // behind the hung arm.
+    await act(async () => {
+      await result.current.disable();
+    });
+    expect(result.current.isEnabled).toBe(false);
+    expect(result.current.isListening).toBe(false);
+
+    // Release the hung load: the superseded arm must discard its engine and
+    // never open the mic (never call start()).
+    await act(async () => {
+      h.gate.loadGate = null;
+      releaseLoad();
+      await enabling;
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(h.created.every((e) => e.start.mock.calls.length === 0)).toBe(true);
+    expect(result.current.isListening).toBe(false);
+    expect(result.current.isEnabled).toBe(false);
+  });
+
+  it('unmounting during an in-flight enable() stops the discarded engine (no mic leak)', async () => {
+    const useWakeWord = await importHook();
+    const { result, unmount } = renderHook(() => useWakeWord());
+
+    let releaseLoad!: () => void;
+    h.gate.loadGate = new Promise<void>((r) => {
+      releaseLoad = r;
+    });
+
+    let enabling: Promise<void>;
+    await act(async () => {
+      enabling = result.current.enable();
+      await Promise.resolve();
+    });
+
+    // Navigate away mid-build.
+    unmount();
+
+    await act(async () => {
+      h.gate.loadGate = null;
+      releaseLoad();
+      await enabling;
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    // The engine built after unmount must have been stopped, never started.
+    const built = h.created[0];
+    expect(built.start).not.toHaveBeenCalled();
+    expect(built.stop).toHaveBeenCalled();
+  });
+
+  it('an error during an in-flight arm never leaves a green-but-dead UI', async () => {
+    const useWakeWord = await importHook();
+    const { result } = renderHook(() => useWakeWord());
+
+    await act(async () => {
+      await result.current.enable();
+    });
+    const engine = h.created[0];
+
+    // Error fires AFTER start resolved (the worklet reports a runtime glitch).
+    await act(async () => {
+      engine.listeners.error?.(new Error('runtime glitch'));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    // The UI must be honest: not listening, and the engine dropped so recovery
+    // resume() can rebuild (never isListening=true with a null engine).
+    expect(result.current.isListening).toBe(false);
+    expect(engine.stop).toHaveBeenCalled();
+
+    await act(async () => {
+      await result.current.resume();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(h.created.length).toBe(2);
     expect(result.current.isListening).toBe(true);
   });
 });

@@ -462,6 +462,7 @@ RAG_CONTEXT_WINDOW=1              # Benachbarte Chunks (0=deaktiviert)
 - Admin-UI für zentrale Konfiguration
 - Automatische Synchronisation per WebSocket an alle Geräte
 - Konfigurierbare Keywords (Alexa, Hey Mycroft, Hey Jarvis, etc.)
+- **Mehrsprachiger Haushalt**: Sowohl Satelliten als auch der Browser-Detektor laden **alle** gepushten Wake-Words gleichzeitig (kommagetrennter Satz, z.B. `renfield_de` + `renfield_en`) — nicht nur das erste.
 
 Siehe [WAKEWORD_CONFIGURATION.md](WAKEWORD_CONFIGURATION.md) für Details.
 

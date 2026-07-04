@@ -19,7 +19,7 @@ export default function ChatHeader() {
     error: wakeWordError,
     settings: wakeWordSettings,
     toggle: toggleWakeWord,
-    setKeyword: setWakeWordKeyword,
+    toggleKeyword: toggleWakeWordKeyword,
     setThreshold: setWakeWordThreshold,
     availableKeywords,
     lastDetection,
@@ -151,14 +151,9 @@ export default function ChatHeader() {
                       <input
                         type="checkbox"
                         checked={checked}
-                        onChange={() => {
-                          const next = checked
-                            ? activeKeywords.filter(id => id !== kw.id)
-                            : [...activeKeywords, kw.id];
-                          // Keep at least one wake word active.
-                          if (next.length === 0) return;
-                          setWakeWordKeyword?.(next.join(','));
-                        }}
+                        // toggleKeyword reads the current set from a ref, so
+                        // rapid successive toggles can't clobber each other.
+                        onChange={() => toggleWakeWordKeyword?.(kw.id)}
                         className="accent-primary-600"
                       />
                       <span>{kw.label}</span>
