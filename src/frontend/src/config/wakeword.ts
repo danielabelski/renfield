@@ -147,6 +147,55 @@ export function getKeywordConfig(keywordId: string): KeywordConfig | null {
 }
 
 /**
+ * Parse a keyword selection into a clean, ordered, de-duplicated list of
+ * keyword ids we actually ship a model for. The browser engine loads one model
+ * per id, so an unknown id (e.g. a server pushing a wake word this build has no
+ * `.onnx` for) is dropped rather than crashing the load.
+ *
+ * The value may be a single id (`"renfield_de"`) or a comma-separated set
+ * (`"renfield_de,renfield_en"`) — the same on-the-wire form the server settings
+ * page uses — so a multi-language household loads every keyword together.
+ */
+export function parseKeywords(value: string | null | undefined): string[] {
+  if (!value) return [];
+  const known = new Set(WAKEWORD_CONFIG.availableKeywords.map((k) => k.id));
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of value.split(',')) {
+    const id = raw.trim();
+    if (id && known.has(id) && !seen.has(id)) {
+      seen.add(id);
+      out.push(id);
+    }
+  }
+  return out;
+}
+
+/**
+ * Whether two keyword selections resolve to the same set (order/whitespace/
+ * duplicate/unknown-id insensitive). Used to avoid rebuilding the running
+ * engine when a server config push doesn't actually change the active set.
+ */
+export function sameKeywordSet(a: string | null | undefined, b: string | null | undefined): boolean {
+  const pa = parseKeywords(a);
+  const pb = parseKeywords(b);
+  if (pa.length !== pb.length) return false;
+  const sb = new Set(pb);
+  return pa.every((id) => sb.has(id));
+}
+
+/**
+ * Human-readable label for a keyword selection — joins each active keyword's
+ * label so the UI can honestly show a multi-keyword set (e.g. "Renfield
+ * (Deutsch) + Renfield (English)") instead of only the first.
+ */
+export function describeKeywords(value: string | null | undefined): string {
+  return parseKeywords(value)
+    .map((id) => getKeywordConfig(id)?.label ?? id)
+    .join(' + ');
+}
+
+/**
  * Load saved wake word settings from localStorage
  */
 export function loadWakeWordSettings(): WakeWordSettings {

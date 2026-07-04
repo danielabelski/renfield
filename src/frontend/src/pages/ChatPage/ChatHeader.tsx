@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Loader, Ear, EarOff, Settings } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useChatContext } from './context/ChatContext';
+import { describeKeywords, parseKeywords } from '../../config/wakeword';
 
 export default function ChatHeader() {
   const { t } = useTranslation();
@@ -24,6 +25,13 @@ export default function ChatHeader() {
     lastDetection,
     status: wakeWordStatus,
   } = wakeWord;
+
+  // Honest label for the ACTIVE set — a multi-language household loads several
+  // keywords, so show them all (e.g. "Renfield (Deutsch) + Renfield (English)")
+  // instead of only the first. Falls back to a friendly name (never a raw id
+  // string) if the set resolves to nothing we ship a model for.
+  const activeKeywords = parseKeywords(wakeWordSettings.keyword);
+  const activeKeywordLabel = describeKeywords(wakeWordSettings.keyword) || 'Renfield';
 
   return (
     <div className="card mb-4 mx-4 mt-4 md:mx-0 md:mt-0">
@@ -48,7 +56,7 @@ export default function ChatHeader() {
               title={wakeWordError
                 ? `${t('wakeword.notAvailable')}: ${wakeWordError.message}`
                 : wakeWordEnabled
-                  ? t('wakeword.listening', { keyword: availableKeywords.find(k => k.id === wakeWordSettings.keyword)?.label || 'Hey Jarvis' })
+                  ? t('wakeword.listening', { keyword: activeKeywordLabel })
                   : t('wakeword.enable')
               }
             >
@@ -105,7 +113,7 @@ export default function ChatHeader() {
             <div className={`w-2 h-2 rounded-full ${wakeWordListening ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`} />
             <span className="text-sm text-green-700 dark:text-green-300">
               {wakeWordListening
-                ? t('wakeword.listening', { keyword: availableKeywords.find(k => k.id === wakeWordSettings.keyword)?.label || 'Hey Jarvis' })
+                ? t('wakeword.listening', { keyword: activeKeywordLabel })
                 : wakeWordStatus === 'activated'
                   ? t('wakeword.detected')
                   : t('wakeword.paused')
@@ -126,18 +134,38 @@ export default function ChatHeader() {
           <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-3">{t('wakeword.settings')}</h3>
 
           <div className="space-y-3">
-            {/* Keyword Selection */}
+            {/* Keyword Selection — multi-select: a multi-language household can
+                load several wake words at once, so this is a checkbox set, not a
+                single-value dropdown (which silently collapsed the set). At least
+                one keyword must stay selected. */}
             <div>
               <label className="text-xs text-gray-500 dark:text-gray-400 mb-1 block">{t('wakeword.keyword')}</label>
-              <select
-                value={wakeWordSettings.keyword || ''}
-                onChange={(e) => setWakeWordKeyword?.(e.target.value)}
-                className="w-full bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white text-sm rounded-lg px-3 py-2 border border-gray-300 dark:border-gray-600 focus:border-primary-500 focus:outline-hidden"
-              >
-                {availableKeywords.map(kw => (
-                  <option key={kw.id} value={kw.id}>{kw.label}</option>
-                ))}
-              </select>
+              <div className="space-y-1">
+                {availableKeywords.map(kw => {
+                  const checked = activeKeywords.includes(kw.id);
+                  return (
+                    <label
+                      key={kw.id}
+                      className="flex items-center gap-2 text-sm text-gray-900 dark:text-white cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => {
+                          const next = checked
+                            ? activeKeywords.filter(id => id !== kw.id)
+                            : [...activeKeywords, kw.id];
+                          // Keep at least one wake word active.
+                          if (next.length === 0) return;
+                          setWakeWordKeyword?.(next.join(','));
+                        }}
+                        className="accent-primary-600"
+                      />
+                      <span>{kw.label}</span>
+                    </label>
+                  );
+                })}
+              </div>
             </div>
 
             {/* Threshold Slider */}
