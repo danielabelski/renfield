@@ -35,17 +35,25 @@ class _FakeWS:
 
 
 async def _drain_fanout():
-    """broadcast_kiosk_event now schedules the fan-out on a background task (so a
-    slow socket can't block the caller); await those tasks before asserting."""
-    while kiosk._fanout_tasks:
-        await asyncio.gather(*list(kiosk._fanout_tasks), return_exceptions=True)
+    """broadcast_kiosk_event enqueues; a single consumer drains the queue. Wait
+    for every queued event to be fully processed before asserting."""
+    if kiosk._event_queue is not None:
+        await kiosk._event_queue.join()
 
 
 @pytest.fixture(autouse=True)
 def _clear_clients():
+    # Reset the lazily-created queue+consumer so each test's event loop gets a
+    # fresh pipeline (an asyncio.Queue/Task is bound to the loop it was made in).
     kiosk._kiosk_clients.clear()
+    kiosk._event_queue = None
+    kiosk._consumer_task = None
     yield
+    if kiosk._consumer_task is not None:
+        kiosk._consumer_task.cancel()
     kiosk._kiosk_clients.clear()
+    kiosk._event_queue = None
+    kiosk._consumer_task = None
 
 
 # --------------------------------------------------------------------------
@@ -159,6 +167,27 @@ async def test_broadcast_prunes_broken_socket_not_raises():
     assert bad not in kiosk._kiosk_clients  # pruned
     assert good in kiosk._kiosk_clients
     assert len(good.sent) == 1  # good socket still delivered
+
+
+@pytest.mark.backend
+@pytest.mark.asyncio
+async def test_broadcast_prunes_stalled_socket(monkeypatch):
+    """A socket whose send_json HANGS (backpressure — never raises) is pruned via
+    the wait_for timeout, and a healthy peer is still delivered. This is the core
+    of the non-blocking fix; without the timeout the consumer would hang here."""
+    monkeypatch.setattr(kiosk, "_SEND_TIMEOUT_SECONDS", 0.05)
+
+    class _StallWS(_FakeWS):
+        async def send_json(self, msg):
+            await asyncio.sleep(10)  # never completes within the timeout
+
+    good, stalled = _FakeWS(), _StallWS()
+    kiosk._kiosk_clients.update({good, stalled})
+    await broadcast_kiosk_event({"type": "satellite_state"})
+    await _drain_fanout()
+    assert stalled not in kiosk._kiosk_clients  # pruned on timeout
+    assert good in kiosk._kiosk_clients
+    assert len(good.sent) == 1
 
 
 # --------------------------------------------------------------------------

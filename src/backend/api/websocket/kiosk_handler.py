@@ -41,47 +41,71 @@ _kiosk_clients: set[WebSocket] = set()
 
 # Per-client send deadline. A backpressured wall display (tab asleep, WiFi
 # dropped → its send buffer fills) is pruned after this instead of hanging the
-# fan-out task forever.
+# broadcast pipeline forever.
 _SEND_TIMEOUT_SECONDS = 5.0
 
-# Strong refs to in-flight fan-out tasks. `asyncio.create_task` returns a task
-# the loop only weakly references, so without this the GC can cancel a pending
-# broadcast mid-send (the exact fire-and-forget-task strand bug fixed in the
-# satellite boot-reconnect work). Discard on completion.
-_fanout_tasks: set = set()
+# Serialized broadcast pipeline: callers ENQUEUE (non-blocking) and a single
+# consumer task drains it FIFO. Deliberately a queue+single-consumer, NOT a
+# task-per-event — per-event tasks would (a) deliver deltas out of ORDER and
+# (b) call send_json CONCURRENTLY on the same Starlette WebSocket (unsafe → a
+# spurious error would prune a healthy display). The consumer handles one event
+# at a time, so each socket is sent to sequentially; within one event the
+# fan-out across DIFFERENT sockets is concurrent (safe). Created lazily in the
+# running loop (so the queue binds to the app's loop, and each test's loop gets
+# a fresh one) and revived if the consumer ever dies.
+_event_queue: "asyncio.Queue[dict] | None" = None
+_consumer_task: "asyncio.Task | None" = None
+
+
+def _ensure_consumer() -> "asyncio.Queue[dict]":
+    global _event_queue, _consumer_task
+    if _event_queue is None:
+        _event_queue = asyncio.Queue()
+    if _consumer_task is None or _consumer_task.done():
+        _consumer_task = asyncio.create_task(_broadcast_consumer())
+    return _event_queue
 
 
 async def broadcast_kiosk_event(event: dict) -> None:
-    """Broadcast one content-free kiosk delta to every connected wall display.
+    """Enqueue one content-free kiosk delta for delivery to every wall display.
 
-    TRULY fire-and-forget: schedules the fan-out on a background task and returns
-    immediately, so a slow/backpressured kiosk socket can NEVER block the caller.
-    This matters because callers hold latency-critical context — the
-    ``SatelliteManager`` lock (a blocked send there would freeze voice
-    house-wide) and the chat turn before its ``done`` frame. No-op when no client
-    is connected (the common case — publish-point cost stays ~zero when nobody is
-    watching the kiosk).
+    NON-BLOCKING: the caller — which may hold the ``SatelliteManager`` lock (a
+    blocked send there would freeze voice house-wide) or be mid chat-turn before
+    the ``done`` frame — enqueues and returns; the background consumer does the
+    ordered fan-out. No-op when no client is connected (the common case —
+    publish-point cost stays ~zero when nobody is watching the kiosk).
     """
     if not _kiosk_clients:
         return
-    task = asyncio.create_task(_fan_out_kiosk_event(event))
-    _fanout_tasks.add(task)
-    task.add_done_callback(_fanout_tasks.discard)
+    _ensure_consumer().put_nowait(event)
 
 
-async def _fan_out_kiosk_event(event: dict) -> None:
-    """Send ``event`` to each client, pruning dead/stalled sockets. Iterates a
-    SNAPSHOT of the client set so a concurrent connect/disconnect during a send
-    can't raise ``Set changed size during iteration``."""
-    broken: list[WebSocket] = []
-    for ws in list(_kiosk_clients):
+async def _send_one(ws: WebSocket, event: dict) -> None:
+    await asyncio.wait_for(ws.send_json(event), timeout=_SEND_TIMEOUT_SECONDS)
+
+
+async def _broadcast_consumer() -> None:
+    """Drain the queue FIFO; fan each event out to all current clients
+    concurrently (across distinct sockets), pruning any whose send fails or
+    times out. One event at a time → no concurrent send on a single socket and
+    strict delivery order. A bad event or a dead socket never kills the loop."""
+    assert _event_queue is not None
+    while True:
+        event = await _event_queue.get()
         try:
-            await asyncio.wait_for(ws.send_json(event), timeout=_SEND_TIMEOUT_SECONDS)
-        except Exception:  # a dead/stalled socket must not abort the fan-out
-            broken.append(ws)
-
-    for ws in broken:
-        _kiosk_clients.discard(ws)
+            clients = list(_kiosk_clients)
+            if clients:
+                results = await asyncio.gather(
+                    *(_send_one(ws, event) for ws in clients),
+                    return_exceptions=True,
+                )
+                for ws, result in zip(clients, results):
+                    if isinstance(result, Exception):
+                        _kiosk_clients.discard(ws)
+        except Exception as e:  # never let one event kill the consumer
+            logger.debug(f"kiosk broadcast consumer error: {e}")
+        finally:
+            _event_queue.task_done()
 
 
 # ---------------------------------------------------------------------------
