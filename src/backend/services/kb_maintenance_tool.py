@@ -25,22 +25,59 @@ for reindex, ``user_permissions``).
 from __future__ import annotations
 
 from loguru import logger
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, exists, func, or_, select, update
 
 from models.database import (
     DOC_STATUS_COMPLETED,
     DOC_STATUS_PENDING,
     Document,
     DocumentChunk,
+    DocumentProcessingHistory,
 )
 from models.permissions import Permission, has_permission
 from services.database import AsyncSessionLocal
+from services.document_processing_history import ProcessingTrigger
 from utils.config import settings
 
 REINDEX_DEFAULT_CAP = 200
 REINDEX_MAX_CAP = 500
 LIST_DEFAULT_LIMIT = 50
 LIST_MAX_LIMIT = 200
+
+
+def _as_bool(value) -> bool:
+    """Coerce a tool param to bool (the agent may pass a string/number)."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "ja", "force", "on")
+    return bool(value)
+
+
+def _unindexable_exists():
+    """Correlated EXISTS marking a chunkless doc as **genuinely unindexable**.
+
+    True when a COMPLETED processing attempt ran the full pipeline and still
+    yielded no usable chunks — either the quality gate dropped everything
+    (``chunks_dropped_low_quality > 0``, i.e. OCR produced only low-quality text)
+    OR a re-derivation (any non-``initial_ingest`` trigger) still produced 0
+    chunks. Such a doc re-produces 0 chunks on every pass, so re-indexing it is
+    wasted OCR — it needs a better source scan, not a retry. A chunkless doc that
+    does NOT match this (no completed re-derivation, no gate drops) is a transient
+    0-chunk doc worth re-indexing. Correlates on the enclosing ``Document.id``.
+    """
+    dph = DocumentProcessingHistory
+    return exists().where(
+        dph.document_id == Document.id,
+        dph.status == DOC_STATUS_COMPLETED,
+        or_(
+            func.coalesce(dph.chunks_dropped_low_quality, 0) > 0,
+            and_(
+                dph.trigger != ProcessingTrigger.INITIAL_INGEST.value,
+                func.coalesce(dph.chunks_produced, 0) == 0,
+            ),
+        ),
+    )
 
 # Registered with the agent tool registry by
 # `services/agent_tools.py::_register_internal_tools()`.
@@ -53,9 +90,10 @@ KB_MAINTENANCE_TOOLS: dict = {
             "verarbeitet?', 'gibt es einen Rückstau?', 'sind alle Dokumente in "
             "Paperless abgelegt?'. Returns how many documents are pending / "
             "processing / completed / failed, how many completed documents have "
-            "NO chunks (empty index), the worker queue depth and whether the "
-            "worker is alive, and the Paperless filing state (filed / pending / "
-            "failed / not-filed)."
+            "NO chunks (empty index) — split into REPAIRABLE (worth reindexing) "
+            "vs genuinely UNINDEXABLE (unreadable scans the quality gate keeps "
+            "rejecting) — the worker queue depth and whether the worker is alive, "
+            "and the Paperless filing state (filed / pending / failed / not-filed)."
         ),
         "parameters": {},
     },
@@ -66,13 +104,22 @@ KB_MAINTENANCE_TOOLS: dict = {
             "background reindex (purge + rebuild) for each and reports how many "
             "were queued. Use when the user asks to 'reindex documents without "
             "chunks', 'Dokumente ohne Chunks neu indexieren', or 'repariere die "
-            "leeren Dokumente'. Does nothing to documents that already have chunks "
+            "leeren Dokumente'. By DEFAULT skips documents already known to be "
+            "genuinely unindexable (an unreadable scan the quality gate keeps "
+            "rejecting — a retry just re-produces 0 chunks); pass force=true to "
+            "reindex those too. Does nothing to documents that already have chunks "
             "or are currently being processed."
         ),
         "parameters": {
             "limit": (
                 "Max documents to reindex in one call (optional; default "
                 f"{REINDEX_DEFAULT_CAP}, max {REINDEX_MAX_CAP})"
+            ),
+            "force": (
+                "Also reindex documents classified as genuinely unindexable "
+                "(unreadable scans). Optional; default false — only repairable "
+                "docs are reindexed. Set true for 'auch die unlesbaren' / "
+                "'trotzdem alle neu indexieren'."
             ),
         },
     },
@@ -83,7 +130,8 @@ KB_MAINTENANCE_TOOLS: dict = {
             "when the user wants to SEE WHICH documents are affected or their "
             "titles: 'welche Dokumente haben keine Chunks?', 'liste die leeren "
             "Dokumente auf', 'nenne mir die Titel der Dokumente ohne Chunks', "
-            "'which documents have no chunks'. Returns id + display name for each, "
+            "'which documents have no chunks'. Each entry is labelled REPAIRABLE "
+            "or UNINDEXABLE (unreadable scan). Returns id + display name for each, "
             "newest first. (For just the COUNT use ingest_status; to fix them use "
             "reindex_documents.)"
         ),
@@ -134,6 +182,19 @@ async def ingest_status(params: dict, user_id: int | None = None) -> dict:
                     )
                 )
             ).scalar()
+            # of those chunkless docs, how many are genuinely unindexable
+            unindexable = (
+                await db.execute(
+                    select(func.count())
+                    .select_from(Document)
+                    .outerjoin(chunk_sub, chunk_sub.c.document_id == Document.id)
+                    .where(
+                        Document.status == DOC_STATUS_COMPLETED,
+                        chunk_sub.c.document_id.is_(None),
+                        _unindexable_exists(),
+                    )
+                )
+            ).scalar()
             pl_counts = {
                 (r[0] or "unfiled"): r[1]
                 for r in (
@@ -166,15 +227,29 @@ async def ingest_status(params: dict, user_id: int | None = None) -> dict:
         failed = status_counts.get("failed", 0)
         pl_pending = pl_counts.get("pending", 0)
         pl_failed = pl_counts.get("failed", 0)
+        chunkless = int(chunkless or 0)
+        unindexable = int(unindexable or 0)
+        reindexable = max(0, chunkless - unindexable)
 
         parts = [
             f"KB-Verarbeitung: {completed} fertig, {pending} in Warteschlange, "
             f"{processing} in Arbeit, {failed} fehlgeschlagen."
         ]
         if chunkless:
+            if unindexable and reindexable:
+                detail = (
+                    f"{reindexable} reparierbar (neu indexieren) und "
+                    f"{unindexable} vermutlich unlesbar (nicht durch Neu-Indexieren zu beheben)"
+                )
+            elif unindexable:
+                detail = (
+                    f"alle vermutlich unlesbare Scans — nicht durch Neu-Indexieren "
+                    f"zu beheben (neuer Scan nötig)"
+                )
+            else:
+                detail = "mit 'Dokumente ohne Chunks neu indexieren' reparierbar"
             parts.append(
-                f"{chunkless} fertige Dokument(e) haben KEINE Chunks "
-                f"(leerer Index — mit 'Dokumente ohne Chunks neu indexieren' reparierbar)."
+                f"{chunkless} fertige Dokument(e) haben KEINE Chunks ({detail})."
             )
         pl_bits = ", ".join(
             f"{v} {_PL_LABELS.get(k, k)}" for k, v in sorted(pl_counts.items())
@@ -192,7 +267,9 @@ async def ingest_status(params: dict, user_id: int | None = None) -> dict:
             "action_taken": True,
             "data": {
                 "documents_by_status": status_counts,
-                "completed_without_chunks": int(chunkless or 0),
+                "completed_without_chunks": chunkless,
+                "chunkless_reindexable": reindexable,
+                "chunkless_unindexable": unindexable,
                 "paperless_state": pl_counts,
                 "paperless_pending": pl_pending,
                 "paperless_failed": pl_failed,
@@ -238,41 +315,60 @@ async def reindex_documents(
             cap = max(1, min(REINDEX_MAX_CAP, int(params["limit"])))
         except (ValueError, TypeError):
             pass
+    force = _as_bool(params.get("force"))
 
     try:
         async with AsyncSessionLocal() as db:
             # completed docs with no chunk rows (excludes pending/processing by
             # construction, so no in-flight double-enqueue — mirrors the route's
-            # dedup guard). Capped, oldest first.
+            # dedup guard). Each row carries its unindexable flag; ordered
+            # repairable-first (unindexable ASC) so the cap can't starve the
+            # repairable docs behind a wall of unindexable ones, then oldest-first.
             chunk_sub = (
                 select(DocumentChunk.document_id)
                 .group_by(DocumentChunk.document_id)
                 .subquery()
             )
-            doc_ids = list(
-                (
-                    await db.execute(
-                        select(Document.id)
-                        .select_from(Document)
-                        .outerjoin(chunk_sub, chunk_sub.c.document_id == Document.id)
-                        .where(
-                            Document.status == DOC_STATUS_COMPLETED,
-                            chunk_sub.c.document_id.is_(None),
-                        )
-                        .order_by(Document.id)
-                        .limit(cap)
+            unindexable_col = _unindexable_exists().label("unindexable")
+            rows = (
+                await db.execute(
+                    select(Document.id, unindexable_col)
+                    .select_from(Document)
+                    .outerjoin(chunk_sub, chunk_sub.c.document_id == Document.id)
+                    .where(
+                        Document.status == DOC_STATUS_COMPLETED,
+                        chunk_sub.c.document_id.is_(None),
                     )
+                    .order_by(unindexable_col.asc(), Document.id)
+                    .limit(cap)
                 )
-                .scalars()
-                .all()
-            )
+            ).all()
+
+        # Partition the fetched rows. By default only repairable docs are
+        # reindexed; unindexable ones are skipped (a retry re-produces 0 chunks).
+        doc_ids = [r[0] for r in rows if force or not r[1]]
+        skipped_unindexable = sum(1 for r in rows if r[1] and not force)
+
         if not doc_ids:
+            if skipped_unindexable:
+                return {
+                    "success": True,
+                    "message": (
+                        f"{skipped_unindexable} Dokument(e) ohne Chunks gefunden, aber "
+                        "alle sind vermutlich unlesbare Scans — Neu-Indexieren hilft "
+                        "nicht (ein neuer Scan ist nötig). Mit force=true trotzdem "
+                        "erneut versuchen."
+                    ),
+                    "action_taken": True,
+                    "empty_result": True,
+                    "data": {"reindexed": 0, "skipped_unindexable": skipped_unindexable},
+                }
             return {
                 "success": True,
                 "message": "Keine fertigen Dokumente ohne Chunks gefunden — nichts zu tun.",
                 "action_taken": True,
                 "empty_result": True,
-                "data": {"reindexed": 0},
+                "data": {"reindexed": 0, "skipped_unindexable": 0},
             }
 
         # Enqueue FIRST, then flip only the successfully-enqueued docs to
@@ -327,15 +423,25 @@ async def reindex_documents(
             )
             await db.commit()
 
-        more = " (weitere folgen beim nächsten Aufruf)" if len(doc_ids) == cap else ""
+        more = " (weitere folgen beim nächsten Aufruf)" if len(rows) == cap else ""
+        skip_note = (
+            f" {skipped_unindexable} vermutlich unlesbare(s) Dokument(e) übersprungen "
+            f"(force=true, um sie einzuschließen)."
+            if skipped_unindexable
+            else ""
+        )
         return {
             "success": True,
             "message": (
                 f"{len(enqueued_ids)} Dokument(e) ohne Chunks zum Neu-Indexieren "
-                f"eingereiht{more}. Die Verarbeitung läuft im Hintergrund."
+                f"eingereiht{more}. Die Verarbeitung läuft im Hintergrund.{skip_note}"
             ),
             "action_taken": True,
-            "data": {"reindexed": len(enqueued_ids), "document_ids": enqueued_ids},
+            "data": {
+                "reindexed": len(enqueued_ids),
+                "document_ids": enqueued_ids,
+                "skipped_unindexable": skipped_unindexable,
+            },
         }
     except Exception as e:
         logger.error(f"Error in reindex_documents: {e}")
@@ -365,8 +471,18 @@ async def list_chunkless_documents(params: dict, user_id: int | None = None) -> 
             .group_by(DocumentChunk.document_id)
             .subquery()
         )
+        unindexable_col = _unindexable_exists().label("unindexable")
         base = (
-            select(Document.id, display_name)
+            select(Document.id, display_name, unindexable_col)
+            .select_from(Document)
+            .outerjoin(chunk_sub, chunk_sub.c.document_id == Document.id)
+            .where(
+                Document.status == DOC_STATUS_COMPLETED,
+                chunk_sub.c.document_id.is_(None),
+            )
+        )
+        count_base = (
+            select(Document.id)
             .select_from(Document)
             .outerjoin(chunk_sub, chunk_sub.c.document_id == Document.id)
             .where(
@@ -377,7 +493,14 @@ async def list_chunkless_documents(params: dict, user_id: int | None = None) -> 
         async with AsyncSessionLocal() as db:
             total = (
                 await db.execute(
-                    select(func.count()).select_from(base.subquery())
+                    select(func.count()).select_from(count_base.subquery())
+                )
+            ).scalar() or 0
+            total_unindexable = (
+                await db.execute(
+                    select(func.count()).select_from(
+                        count_base.where(_unindexable_exists()).subquery()
+                    )
                 )
             ).scalar() or 0
             rows = (
@@ -393,23 +516,43 @@ async def list_chunkless_documents(params: dict, user_id: int | None = None) -> 
                 "data": {"count": 0, "total": 0, "documents": []},
             }
 
-        documents = [{"id": r[0], "name": r[1]} for r in rows]
-        lines = "\n".join(f"- {d['name']} (#{d['id']})" for d in documents)
+        documents = [
+            {"id": r[0], "name": r[1], "unindexable": bool(r[2])} for r in rows
+        ]
+        repairable = [d for d in documents if not d["unindexable"]]
+        unindexable = [d for d in documents if d["unindexable"]]
+        total_repairable = max(0, total - total_unindexable)
+
+        sections = []
+        if repairable:
+            sections.append(
+                "Reparierbar (neu indexieren):\n"
+                + "\n".join(f"- {d['name']} (#{d['id']})" for d in repairable)
+            )
+        if unindexable:
+            sections.append(
+                "Vermutlich unlesbar (neuer Scan nötig, Neu-Indexieren hilft nicht):\n"
+                + "\n".join(f"- {d['name']} (#{d['id']})" for d in unindexable)
+            )
         truncated = total > len(documents)
         suffix = (
             f" (zeige {len(documents)} von {total}; höheres 'limit' für mehr)"
             if truncated
             else ""
         )
+        header = (
+            f"{total} Dokument(e) ohne Chunks — {total_repairable} reparierbar, "
+            f"{total_unindexable} vermutlich unlesbar{suffix}:"
+        )
         return {
             "success": True,
-            "message": (
-                f"{total} Dokument(e) ohne Chunks{suffix}:\n{lines}"
-            ),
+            "message": header + "\n" + "\n\n".join(sections),
             "action_taken": True,
             "data": {
                 "count": len(documents),
                 "total": total,
+                "total_repairable": total_repairable,
+                "total_unindexable": total_unindexable,
                 "truncated": truncated,
                 "documents": documents,
             },
