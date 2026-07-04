@@ -285,6 +285,27 @@
         state: present
       notify: reboot after driver install
 
+    # A 2-Mic HAT V2 swapped onto a board that previously ran a V1/other I2S HAT
+    # (e.g. this box: XVF3800-USB → V2, but the stale V1 `seeed-2mic-gpclk-simple`
+    # overlay was still in config.txt loading wm8960) leaves a conflicting second
+    # codec on the same I2S bus, so the TLV320 card may not enumerate. Strip the
+    # stale I2S overlays so only respeaker-2mic-v2_0 binds — mirrors the
+    # xvf3800-usb stale-overlay cleanup. Reboot applies it in the same cycle.
+    - name: Remove stale conflicting I2S HAT overlays from config.txt (2-mic-v2)
+      tags: [driver]
+      when: hat_type == "2mic-v2"
+      ansible.builtin.lineinfile:
+        path: /boot/firmware/config.txt
+        regexp: "^dtoverlay={{ item }}"
+        state: absent
+      loop:
+        - seeed-2mic-gpclk-simple
+        - seeed-2mic-gpclk-full
+        - seeed-2mic-voicecard
+        - seeed-4mic-voicecard
+        - wm8960-soundcard
+      notify: reboot after driver install
+
     # --- Whisplay HAT: WM8960 codec driver ---
 
     - name: Clone Whisplay driver for WM8960 codec
