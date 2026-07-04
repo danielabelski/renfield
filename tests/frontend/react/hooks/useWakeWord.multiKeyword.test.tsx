@@ -32,9 +32,10 @@ const h = vi.hoisted(() => {
   // Test controls consulted by each engine's load():
   //  - loadGate: when set, load() blocks on this promise (pre-emption tests).
   //  - failLoad: when true, load() rejects (rebuild-failure tests).
-  const gate: { loadGate: Promise<void> | null; failLoad: boolean } = {
+  const gate: { loadGate: Promise<void> | null; failLoad: boolean; failStop: boolean } = {
     loadGate: null,
     failLoad: false,
+    failStop: false,
   };
 
   class MockEngine {
@@ -43,7 +44,7 @@ const h = vi.hoisted(() => {
       gate.failLoad ? Promise.reject(new Error('load failed')) : (gate.loadGate ?? Promise.resolve()),
     );
     start = vi.fn().mockResolvedValue(undefined);
-    stop = vi.fn().mockResolvedValue(undefined);
+    stop = vi.fn(() => (gate.failStop ? Promise.reject(new Error('stop failed')) : Promise.resolve()));
     setActiveKeywords = vi.fn();
     on = (event: string, cb: (data?: unknown) => void) => {
       this.listeners[event] = cb;
@@ -166,6 +167,7 @@ describe('useWakeWord — multi-keyword (loaded engine)', () => {
     h.created.length = 0;
     h.gate.loadGate = null;
     h.gate.failLoad = false;
+    h.gate.failStop = false;
     localStorage.clear();
   });
 
@@ -591,5 +593,96 @@ describe('useWakeWord — multi-keyword (loaded engine)', () => {
     expect(h.created.length).toBe(2);
     expect(h.created[1].opts.detectionThreshold).toBe(0.7);
     expect(result.current.isListening).toBe(true);
+  });
+
+  // ---- regression tests for the 4th /review round (pause edge cases) ----
+
+  it('pause() during the initial arming window cancels the arm (mic never opens)', async () => {
+    const useWakeWord = await importHook();
+    const { result } = renderHook(() => useWakeWord());
+
+    // Hold enable's arm at the engine load() — isListening still false, but
+    // desiredListening is true (arming).
+    let releaseLoad!: () => void;
+    h.gate.loadGate = new Promise<void>((r) => {
+      releaseLoad = r;
+    });
+
+    let enabling: Promise<void>;
+    await act(async () => {
+      enabling = result.current.enable();
+      await Promise.resolve();
+    });
+    expect(result.current.isListening).toBe(false);
+
+    // Record starts → pause() during the arming window must cancel the arm.
+    await act(async () => {
+      await result.current.pause();
+    });
+
+    await act(async () => {
+      h.gate.loadGate = null;
+      releaseLoad();
+      await enabling;
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    // The mic must never have opened.
+    const totalStarts = h.created.reduce((n, e) => n + e.start.mock.calls.length, 0);
+    expect(totalStarts).toBe(0);
+    expect(result.current.isListening).toBe(false);
+  });
+
+  it('pause() whose stop() fails drops the engine so resume() rebuilds fresh (no mic leak)', async () => {
+    const useWakeWord = await importHook();
+    const { result } = renderHook(() => useWakeWord());
+
+    await act(async () => {
+      await result.current.enable();
+    });
+    const engine1 = h.created[0];
+
+    // stop() rejects during pause.
+    h.gate.failStop = true;
+    await act(async () => {
+      await result.current.pause();
+    });
+    expect(result.current.isListening).toBe(false);
+
+    // resume() must rebuild a NEW engine, not re-start the still-live one.
+    h.gate.failStop = false;
+    await act(async () => {
+      await result.current.resume();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(h.created.length).toBe(2);
+    expect(engine1.start).toHaveBeenCalledTimes(1); // never re-started
+    expect(h.created[1].start).toHaveBeenCalledTimes(1);
+    expect(result.current.isListening).toBe(true);
+  });
+
+  it('a detect event while paused does not fire the wake-word callback', async () => {
+    const onWakeWordDetected = vi.fn();
+    const useWakeWord = await importHook();
+    const { result } = renderHook(() => useWakeWord({ onWakeWordDetected }));
+
+    await act(async () => {
+      await result.current.enable();
+    });
+    const engine = h.created[0];
+
+    await act(async () => {
+      await result.current.pause();
+    });
+    expect(result.current.isListening).toBe(false);
+
+    // The paused-but-still-subscribed engine emits a buffered detect.
+    await act(async () => {
+      engine.listeners.detect?.({ keyword: 'hey_jarvis', score: 0.9, at: 1 });
+    });
+
+    expect(onWakeWordDetected).not.toHaveBeenCalled();
   });
 });

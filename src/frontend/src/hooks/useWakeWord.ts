@@ -212,6 +212,10 @@ export function useWakeWord({
         callbacksRef.current.onReady?.();
       });
       const unsubDetect = engine.on('detect', ({ keyword, score, at }) => {
+        // Ignore detections while not actively listening — a paused engine keeps
+        // its subscription (resume fast-path) and could emit a buffered detect
+        // mid-recording, spuriously re-triggering the wake word.
+        if (!isListeningRef.current) return;
         const detection: WakeWordDetection = { keyword, score, timestamp: at || Date.now() };
         setLastDetection(detection);
         callbacksRef.current.onWakeWordDetected?.(keyword, score);
@@ -394,13 +398,16 @@ export function useWakeWord({
   // engine immediately so recording never overlaps a live wake-word mic.
   const pause = useCallback(async () => {
     debug.log('⏸️ pause() called - isListening:', isListeningRef.current, 'hasEngine:', !!engineRef.current);
-    if (!isListeningRef.current) {
-      debug.log('⚠️ pause() skipped: not listening');
+    // Nothing to pause only if we're neither listening NOR arming toward it. If
+    // an enable()/resume() arm is in flight (desiredListening=true, isListening
+    // still false), we must still cancel it so it can't open the mic on top of
+    // the recording that's starting.
+    if (!isListeningRef.current && !desiredListeningRef.current) {
+      debug.log('⚠️ pause() skipped: not listening and not arming');
       return;
     }
     // Record the pause intent + abort any in-flight arm FIRST — even if the
-    // engine is transiently null mid-rebuild — so a rebuild-in-progress can't
-    // re-start the mic on top of the recording that's about to begin.
+    // engine is transiently null mid-rebuild — so nothing re-starts the mic.
     desiredListeningRef.current = false;
     genRef.current++;
     isListeningRef.current = false;
@@ -412,10 +419,14 @@ export function useWakeWord({
         await engine.stop();
         debug.log('✅ Wake word paused (isEnabled stays true)');
       } catch (err) {
+        // stop() failed — the engine may still be capturing. Drop it entirely so
+        // a later resume() rebuilds a fresh one instead of double-starting a
+        // still-live engine (mic leak).
         console.error('Failed to pause wake word:', err);
+        await teardownEngine();
       }
     }
-  }, []);
+  }, [teardownEngine]);
 
   // Resume listening after pause. arm() rebuilds if the engine was dropped
   // (keyword change while paused, or an error), else just re-starts.
