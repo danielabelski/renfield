@@ -413,19 +413,15 @@ export function useWakeWord({
     isListeningRef.current = false;
     setIsListening(false);
     engineStartedRef.current = false;
-    const engine = engineRef.current;
-    if (engine) {
-      try {
-        await engine.stop();
-        debug.log('✅ Wake word paused (isEnabled stays true)');
-      } catch (err) {
-        // stop() failed — the engine may still be capturing. Drop it entirely so
-        // a later resume() rebuilds a fresh one instead of double-starting a
-        // still-live engine (mic leak).
-        console.error('Failed to pause wake word:', err);
-        await teardownEngine();
-      }
-    }
+    // Drop the engine entirely rather than keeping it for a resume fast-path. A
+    // retained instance let pause()'s async stop() race a concurrent resume()'s
+    // start() on the SAME engine (stop landing after start → green-but-dead; or a
+    // failed stop → double-start mic leak), and let its still-registered detect
+    // handler fire mid-recording. resume() rebuilds a fresh engine — start()
+    // always reopens the mic + AudioContext anyway, so this costs only a model
+    // reload, and pause()'s stop() now runs on an instance nobody else touches.
+    await teardownEngine();
+    debug.log('✅ Wake word paused (isEnabled stays true)');
   }, [teardownEngine]);
 
   // Resume listening after pause. arm() rebuilds if the engine was dropped

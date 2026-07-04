@@ -32,10 +32,16 @@ const h = vi.hoisted(() => {
   // Test controls consulted by each engine's load():
   //  - loadGate: when set, load() blocks on this promise (pre-emption tests).
   //  - failLoad: when true, load() rejects (rebuild-failure tests).
-  const gate: { loadGate: Promise<void> | null; failLoad: boolean; failStop: boolean } = {
+  const gate: {
+    loadGate: Promise<void> | null;
+    failLoad: boolean;
+    failStop: boolean;
+    stopGate: Promise<void> | null;
+  } = {
     loadGate: null,
     failLoad: false,
     failStop: false,
+    stopGate: null,
   };
 
   class MockEngine {
@@ -44,7 +50,9 @@ const h = vi.hoisted(() => {
       gate.failLoad ? Promise.reject(new Error('load failed')) : (gate.loadGate ?? Promise.resolve()),
     );
     start = vi.fn().mockResolvedValue(undefined);
-    stop = vi.fn(() => (gate.failStop ? Promise.reject(new Error('stop failed')) : Promise.resolve()));
+    stop = vi.fn(() =>
+      gate.failStop ? Promise.reject(new Error('stop failed')) : (gate.stopGate ?? Promise.resolve()),
+    );
     setActiveKeywords = vi.fn();
     on = (event: string, cb: (data?: unknown) => void) => {
       this.listeners[event] = cb;
@@ -168,6 +176,7 @@ describe('useWakeWord — multi-keyword (loaded engine)', () => {
     h.gate.loadGate = null;
     h.gate.failLoad = false;
     h.gate.failStop = false;
+    h.gate.stopGate = null;
     localStorage.clear();
   });
 
@@ -512,9 +521,45 @@ describe('useWakeWord — multi-keyword (loaded engine)', () => {
       await Promise.all([r1, r2]);
     });
 
-    // The engine must be started exactly once more, not twice.
-    expect(engine.start).toHaveBeenCalledTimes(2);
+    // Exactly one additional start() across all engines — never a double-start.
+    const totalStarts = h.created.reduce((n, e) => n + e.start.mock.calls.length, 0);
+    expect(totalStarts).toBe(2); // enable + one resume
     expect(result.current.isListening).toBe(true);
+    // The paused engine was not re-started (pause tore it down; resume rebuilt).
+    expect(engine.start).toHaveBeenCalledTimes(1);
+  });
+
+  it('a resume() racing pause()’s in-flight stop() ends listening on a FRESH engine (no green-but-dead)', async () => {
+    const useWakeWord = await importHook();
+    const { result } = renderHook(() => useWakeWord());
+
+    await act(async () => {
+      await result.current.enable();
+    });
+    const engine1 = h.created[0];
+
+    // pause() tears down engine1 but its stop() hangs; a resume lands during it.
+    let releaseStop!: () => void;
+    h.gate.stopGate = new Promise<void>((r) => {
+      releaseStop = r;
+    });
+
+    await act(async () => {
+      const pausing = result.current.pause(); // nulls engineRef, awaits hung stop
+      await Promise.resolve();
+      const resuming = result.current.resume(); // must build a FRESH engine
+      await resuming;
+      h.gate.stopGate = null;
+      releaseStop();
+      await pausing;
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    // A new engine is listening; the old one's late stop() didn't kill it.
+    expect(h.created.length).toBe(2);
+    expect(h.created[1].start).toHaveBeenCalledTimes(1);
+    expect(result.current.isListening).toBe(true);
+    expect(engine1.start).toHaveBeenCalledTimes(1); // never re-started
   });
 
   it('a failed rebuild while listening clears isListening (never green-but-dead)', async () => {
