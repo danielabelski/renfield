@@ -24,12 +24,22 @@ from api.websocket.chat_handler import (
 from api.websocket.kiosk_handler import broadcast_kiosk_event, build_kiosk_snapshot
 
 
+import asyncio
+
+
 class _FakeWS:
     def __init__(self):
         self.sent: list[dict] = []
 
     async def send_json(self, msg):
         self.sent.append(msg)
+
+
+async def _drain_fanout():
+    """broadcast_kiosk_event now schedules the fan-out on a background task (so a
+    slow socket can't block the caller); await those tasks before asserting."""
+    while kiosk._fanout_tasks:
+        await asyncio.gather(*list(kiosk._fanout_tasks), return_exceptions=True)
 
 
 @pytest.fixture(autouse=True)
@@ -131,6 +141,7 @@ async def test_broadcast_delivers_to_connected_clients():
     kiosk._kiosk_clients.update({a, b})
     event = {"type": "turn_activity", "role": "smart_home", "subsystems": ["homeassistant"]}
     await broadcast_kiosk_event(event)
+    await _drain_fanout()
     assert a.sent == [event]
     assert b.sent == [event]
 
@@ -145,6 +156,7 @@ async def test_broadcast_prunes_broken_socket_not_raises():
     good, bad = _FakeWS(), _BrokenWS()
     kiosk._kiosk_clients.update({good, bad})
     await broadcast_kiosk_event({"type": "satellite_state"})
+    await _drain_fanout()
     assert bad not in kiosk._kiosk_clients  # pruned
     assert good in kiosk._kiosk_clients
     assert len(good.sent) == 1  # good socket still delivered

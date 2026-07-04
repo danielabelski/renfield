@@ -21,6 +21,7 @@ ids, names, counts, health, and state strings only. Never an utterance, never
 an entity name, never a user id. See ``tasks/kiosk-active-subsystem-plan.md`` §5.
 """
 
+import asyncio
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
@@ -38,22 +39,45 @@ router = APIRouter()
 _kiosk_clients: set[WebSocket] = set()
 
 
+# Per-client send deadline. A backpressured wall display (tab asleep, WiFi
+# dropped → its send buffer fills) is pruned after this instead of hanging the
+# fan-out task forever.
+_SEND_TIMEOUT_SECONDS = 5.0
+
+# Strong refs to in-flight fan-out tasks. `asyncio.create_task` returns a task
+# the loop only weakly references, so without this the GC can cancel a pending
+# broadcast mid-send (the exact fire-and-forget-task strand bug fixed in the
+# satellite boot-reconnect work). Discard on completion.
+_fanout_tasks: set = set()
+
+
 async def broadcast_kiosk_event(event: dict) -> None:
     """Broadcast one content-free kiosk delta to every connected wall display.
 
-    Fire-and-forget, same broken-socket cleanup as ``broadcast_kg_update``: a
-    send that raises prunes that socket, never propagates. No-op when no client
-    is connected (the common case — cost of the publish points stays ~zero when
-    nobody is watching the kiosk).
+    TRULY fire-and-forget: schedules the fan-out on a background task and returns
+    immediately, so a slow/backpressured kiosk socket can NEVER block the caller.
+    This matters because callers hold latency-critical context — the
+    ``SatelliteManager`` lock (a blocked send there would freeze voice
+    house-wide) and the chat turn before its ``done`` frame. No-op when no client
+    is connected (the common case — publish-point cost stays ~zero when nobody is
+    watching the kiosk).
     """
     if not _kiosk_clients:
         return
+    task = asyncio.create_task(_fan_out_kiosk_event(event))
+    _fanout_tasks.add(task)
+    task.add_done_callback(_fanout_tasks.discard)
 
+
+async def _fan_out_kiosk_event(event: dict) -> None:
+    """Send ``event`` to each client, pruning dead/stalled sockets. Iterates a
+    SNAPSHOT of the client set so a concurrent connect/disconnect during a send
+    can't raise ``Set changed size during iteration``."""
     broken: list[WebSocket] = []
-    for ws in _kiosk_clients:
+    for ws in list(_kiosk_clients):
         try:
-            await ws.send_json(event)
-        except Exception:  # noqa: BLE001 — a dead socket must not break the caller
+            await asyncio.wait_for(ws.send_json(event), timeout=_SEND_TIMEOUT_SECONDS)
+        except Exception:  # noqa: BLE001 — a dead/stalled socket must not abort the fan-out
             broken.append(ws)
 
     for ws in broken:
