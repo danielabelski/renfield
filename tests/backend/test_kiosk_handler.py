@@ -74,18 +74,38 @@ def test_extract_mcp_tool_maps_to_server():
 @pytest.mark.backend
 @pytest.mark.unit
 def test_extract_internal_tool_uses_allowlist():
-    assert _extract_subsystems_used(
-        [("internal.knowledge_search", {})]
-    ) == ["knowledge"]
-    assert _extract_subsystems_used(
-        [("internal.device_controls", {})]
-    ) == ["homeassistant"]
+    assert _extract_subsystems_used([("internal.knowledge_search", {})]) == ["knowledge"]
+    assert _extract_subsystems_used([("internal.list_my_memories", {})]) == ["knowledge"]
+    assert _extract_subsystems_used([("internal.device_controls", {})]) == ["homeassistant"]
+    assert _extract_subsystems_used([("internal.announce_in_room", {})]) == ["homeassistant"]
+    assert _extract_subsystems_used([("internal.presence_history", {})]) == ["presence"]
+    assert _extract_subsystems_used([("internal.play_radio", {})]) == ["media"]
+    assert _extract_subsystems_used([("internal.weather_widget", {})]) == ["weather"]
 
 
 @pytest.mark.backend
 @pytest.mark.unit
 def test_extract_unknown_internal_tool_skipped():
     assert _extract_subsystems_used([("internal.something_new", {})]) == []
+    # Pure Gen-UI formatting tools touch no subsystem → no pulse.
+    assert _extract_subsystems_used([("internal.render_table", {})]) == []
+    assert _extract_subsystems_used([("internal.render_list", {})]) == []
+
+
+@pytest.mark.backend
+@pytest.mark.unit
+def test_internal_only_subsystem_ids_match_frontend_synthetic_nodes():
+    """Coupling guard: every subsystem id an internal tool can pulse is EITHER a
+    real MCP server (homeassistant / weather) OR one of the three internal-only
+    ids the kiosk renders synthetic nodes for. If someone adds a mapping to a new
+    internal-only id, they must add a matching node to the frontend
+    INTERNAL_SUBSYSTEM_NODES (components/kiosk/useKioskModel.ts) or its pulse
+    lights nothing."""
+    real_mcp_servers = {"homeassistant", "weather"}
+    frontend_synthetic_nodes = {"knowledge", "presence", "media"}
+    values = set(INTERNAL_SUBSYSTEM_LABELS.values())
+    assert values == real_mcp_servers | frontend_synthetic_nodes
+    assert (values - real_mcp_servers) == frontend_synthetic_nodes
 
 
 @pytest.mark.backend

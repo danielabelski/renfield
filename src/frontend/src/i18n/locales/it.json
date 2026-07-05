@@ -1868,7 +1868,12 @@
     "noSatellite": "Nessun satellite",
     "toolHint_one": "{{count}} strumento",
     "toolHint_other": "{{count}} strumenti",
-    "exit": "Esci dal kiosk"
+    "exit": "Esci dal kiosk",
+    "subsystem": {
+      "knowledge": "Conoscenza",
+      "presence": "Presenza",
+      "media": "Media"
+    }
   },
   "routing": {
     "title": "Pannello di routing",

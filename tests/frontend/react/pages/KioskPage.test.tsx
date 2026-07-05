@@ -202,4 +202,25 @@ describe('KioskPage', () => {
       expect(document.querySelector('[data-tool-id="homeassistant"][data-tool-active="1"]')).not.toBeNull(),
     );
   });
+
+  it('renders synthetic internal-subsystem nodes and pulses them (knowledge)', async () => {
+    renderWithProviders(<KioskPage />);
+    pushSnapshot(snapshot('idle'));
+    await waitFor(() => expect(screen.getByText('2/2 online')).toBeInTheDocument());
+    // the knowledge/presence/media pseudo-nodes are always present (no MCP server)
+    expect(document.querySelector('[data-tool-id="knowledge"]')).not.toBeNull();
+    expect(document.querySelector('[data-tool-id="presence"]')).not.toBeNull();
+    expect(document.querySelector('[data-tool-id="media"]')).not.toBeNull();
+    // idle until named — and synthetic nodes don't inflate the tool-health count
+    expect(document.querySelector('[data-tool-id="knowledge"][data-tool-active="1"]')).toBeNull();
+    expect(screen.getByText('1/2 gesund')).toBeInTheDocument(); // still 2 MCP tools, not 5
+    // an internal.knowledge_search turn → subsystems:['knowledge'] lights it
+    const ws = MockWebSocket.instances[MockWebSocket.instances.length - 1];
+    act(() => {
+      ws.fireMessage({ type: 'turn_activity', role: 'knowledge', subsystems: ['knowledge'], ok: true, at: new Date().toISOString() });
+    });
+    await waitFor(() =>
+      expect(document.querySelector('[data-tool-id="knowledge"][data-tool-active="1"]')).not.toBeNull(),
+    );
+  });
 });
