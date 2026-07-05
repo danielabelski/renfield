@@ -9,11 +9,11 @@ import numpy as np
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from loguru import logger
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from models.database import Speaker, SpeakerEmbedding, User
+from models.database import Conversation, Speaker, SpeakerEmbedding, User
 from models.permissions import Permission
 from services.auth_service import require_permission
 from services.database import get_db
@@ -296,7 +296,14 @@ async def delete_speaker(
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(require_permission(Permission.SPEAKERS_ALL)),
 ):
-    """Delete a speaker and all their embeddings"""
+    """Delete a speaker.
+
+    The DB-level ON DELETE rules (migration pc20260705) do the cleanup:
+    embeddings CASCADE-delete with the speaker, and any conversation attribution
+    / user link is SET NULL (the conversation + user account are kept, just
+    unlinked). Previously the FKs were NO ACTION, so this 500'd on any speaker
+    that had ever been used. To CONSOLIDATE rather than unlink, use /merge.
+    """
     result = await db.execute(
         select(Speaker).where(Speaker.id == speaker_id)
     )
@@ -306,7 +313,12 @@ async def delete_speaker(
         raise HTTPException(status_code=404, detail="Speaker not found")
 
     speaker_name = speaker.name
-    await db.delete(speaker)
+    # Bulk DELETE (not ORM db.delete) so the DB-level ON DELETE rules do the
+    # cleanup directly — no ORM cascade collection-load (MissingGreenlet-safe).
+    await db.execute(
+        delete(Speaker).where(Speaker.id == speaker_id)
+        .execution_options(synchronize_session=False)
+    )
     await db.commit()
 
     logger.info(f"🗑️ Deleted speaker: {speaker_name}")
@@ -337,75 +349,92 @@ async def merge_speakers(
             detail="Source and target speaker cannot be the same"
         )
 
-    # Get source speaker with embeddings
-    source_result = await db.execute(
-        select(Speaker)
-        .where(Speaker.id == request.source_speaker_id)
-        .options(selectinload(Speaker.embeddings))
-    )
-    source_speaker = source_result.scalar_one_or_none()
+    src_id, tgt_id = request.source_speaker_id, request.target_speaker_id
 
+    # Load both speakers WITH their user link (for the UNIQUE-link decision).
+    source_speaker = (await db.execute(
+        select(Speaker).where(Speaker.id == src_id).options(selectinload(Speaker.user))
+    )).scalar_one_or_none()
     if not source_speaker:
         raise HTTPException(
-            status_code=404,
-            detail=f"Source speaker (ID: {request.source_speaker_id}) not found"
-        )
+            status_code=404, detail=f"Source speaker (ID: {src_id}) not found")
 
-    # Get target speaker with embeddings
-    target_result = await db.execute(
-        select(Speaker)
-        .where(Speaker.id == request.target_speaker_id)
-        .options(selectinload(Speaker.embeddings))
-    )
-    target_speaker = target_result.scalar_one_or_none()
-
+    target_speaker = (await db.execute(
+        select(Speaker).where(Speaker.id == tgt_id).options(selectinload(Speaker.user))
+    )).scalar_one_or_none()
     if not target_speaker:
         raise HTTPException(
-            status_code=404,
-            detail=f"Target speaker (ID: {request.target_speaker_id}) not found"
-        )
+            status_code=404, detail=f"Target speaker (ID: {tgt_id}) not found")
 
-    # Count embeddings before merge
-    source_embedding_count = len(source_speaker.embeddings)
-    _ = len(target_speaker.embeddings)
-
-    # Move all embeddings from source to target
-    for embedding in source_speaker.embeddings:
-        embedding.speaker_id = request.target_speaker_id
-
-    # Delete source speaker (cascade will NOT delete embeddings since we moved them)
     source_name = source_speaker.name
-    await db.delete(source_speaker)
+    target_name = target_speaker.name  # capture before commit (avoid post-commit refresh)
+    source_has_user = source_speaker.user is not None
+    target_has_user = target_speaker.user is not None
 
-    # Commit all changes
+    source_embedding_count = (await db.execute(
+        select(func.count()).select_from(SpeakerEmbedding)
+        .where(SpeakerEmbedding.speaker_id == src_id)
+    )).scalar() or 0
+
+    # Reassign every reference source → target via bulk UPDATEs (not ORM
+    # collection mutation — that leaves the rows in the source's delete-orphan
+    # cascade, which the DB CASCADE would then delete). This PRESERVES the data;
+    # only the plain-delete path lets the FK SET NULL / CASCADE fire.
+    await db.execute(update(SpeakerEmbedding)
+                     .where(SpeakerEmbedding.speaker_id == src_id)
+                     .values(speaker_id=tgt_id)
+                     .execution_options(synchronize_session=False))
+    await db.execute(update(Conversation)
+                     .where(Conversation.speaker_id == src_id)
+                     .values(speaker_id=tgt_id)
+                     .execution_options(synchronize_session=False))
+    # users.speaker_id is UNIQUE: only move the link if the target isn't already
+    # linked (else keep the target's — two users can't share one speaker; the
+    # source's user is unlinked by SET NULL when the source is deleted).
+    if source_has_user and not target_has_user:
+        await db.execute(update(User)
+                         .where(User.speaker_id == src_id)
+                         .values(speaker_id=tgt_id)
+                         .execution_options(synchronize_session=False))
+
+    # Delete the now-dereferenced source via bulk DELETE (no ORM cascade).
+    await db.execute(
+        delete(Speaker).where(Speaker.id == src_id)
+        .execution_options(synchronize_session=False)
+    )
     await db.commit()
 
-    # Refresh target speaker to get updated embedding count
-    await db.refresh(target_speaker)
+    total_embedding_count = (await db.execute(
+        select(func.count()).select_from(SpeakerEmbedding)
+        .where(SpeakerEmbedding.speaker_id == tgt_id)
+    )).scalar() or 0
 
-    # Get final count (need to re-fetch since we committed)
-    final_result = await db.execute(
-        select(Speaker)
-        .where(Speaker.id == request.target_speaker_id)
-        .options(selectinload(Speaker.embeddings))
-    )
-    target_speaker = final_result.scalar_one_or_none()
-    total_embedding_count = len(target_speaker.embeddings) if target_speaker else 0
+    # If BOTH speakers were linked to (different) users, the source's link could
+    # not move (users.speaker_id is UNIQUE) and was severed when the source was
+    # deleted — surface it so the admin knows that user must re-pair their voice.
+    source_user_unlinked = source_has_user and target_has_user
 
     logger.info(
-        f"🔗 Merged speaker '{source_name}' into '{target_speaker.name}': "
+        f"🔗 Merged speaker '{source_name}' into '{target_name}': "
         f"{source_embedding_count} embeddings moved, "
         f"{total_embedding_count} total embeddings"
+        + (" (source user unlinked — was linked to a different account)"
+           if source_user_unlinked else "")
     )
 
+    message = (f"Successfully merged '{source_name}' into '{target_name}'. "
+               f"{source_embedding_count} embeddings transferred.")
+    if source_user_unlinked:
+        message += (" Note: the source speaker was linked to a different user "
+                    "account; that link was removed (a speaker maps to one user).")
+
     return MergeSpeakersResponse(
-        target_speaker_id=request.target_speaker_id,
-        target_speaker_name=target_speaker.name,
+        target_speaker_id=tgt_id,
+        target_speaker_name=target_name,
         merged_embedding_count=source_embedding_count,
         total_embedding_count=total_embedding_count,
         source_speaker_deleted=source_name,
-        message=f"Successfully merged '{source_name}' into '{target_speaker.name}'. "
-                f"{source_embedding_count} embeddings transferred."
+        message=message,
     )
 
 
