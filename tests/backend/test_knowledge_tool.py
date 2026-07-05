@@ -413,6 +413,59 @@ class TestKnowledgeSearchFacts:
         assert "iban: DE12..." in data["context"]
 
     @pytest.mark.unit
+    async def test_fact_from_nonvisible_document_leaks_no_title_or_chip(self):
+        """A tier-overridden fact whose PARENT document the asker can't see (the
+        document is circle-filtered out of the title lookup) must NOT leak the
+        document's title/filename: generic 'Dokument {id}' Quelle, and NO chip."""
+        mock_rag = MagicMock()
+        mock_rag.search = AsyncMock(return_value=[
+            {"chunk": {"content": "chunk of doc 7"},
+             "document": {"id": 7, "filename": "vertrag.pdf", "title": "Vertrag", "circle_tier": 0}},
+        ])
+        facts = [
+            # visible doc 7 (also a chunk hit)
+            {"document_id": 7, "category": "identifier", "kind": "iban",
+             "value": "DE12", "normalized_value": "DE12",
+             "obligation_date": None, "amount_value": None, "amount_currency": None},
+            # public-override fact on PRIVATE doc 99 — asker sees the fact, not the doc
+            {"document_id": 99, "category": "universal", "kind": "issuer",
+             "value": "Finanzamt", "normalized_value": None,
+             "obligation_date": None, "amount_value": None, "amount_currency": None},
+        ]
+        mock_fact_retrieval = MagicMock()
+        mock_fact_retrieval.search = AsyncMock(return_value=facts)
+        # The circle-filtered doc query returns ONLY doc 7 — doc 99 (private) is
+        # excluded, so its title/filename never enters doc_meta.
+        mock_db = _mock_db_with_title_rows([
+            _doc_title_row(7, None, "Vertrag", "vertrag.pdf", 0),
+        ])
+
+        @asynccontextmanager
+        async def mock_session():
+            yield mock_db
+
+        stubs = _stub_db_and_rag_modules()
+        try:
+            with patch("services.database.AsyncSessionLocal", mock_session, create=True), \
+                 patch("services.rag_service.RAGService", return_value=mock_rag, create=True), \
+                 patch("services.knowledge_tool.settings.schicht_a_extraction_enabled", True), \
+                 patch("services.document_fact_retrieval.DocumentFactRetrieval",
+                       return_value=mock_fact_retrieval, create=True):
+                result = await knowledge_search({"query": "issuer", "user_id": "500"})
+        finally:
+            _teardown_stubs(stubs)
+
+        data = result["data"]
+        # The private document's title/filename must NOT appear anywhere.
+        assert "geheim" not in data["context"].lower()
+        assert all("geheim" not in (s.get("title") or "").lower() for s in data["sources"])
+        # The fact itself IS surfaced (it's circle-visible), under a generic Quelle.
+        assert "issuer: Finanzamt" in data["context"]
+        assert "Dokument 99" in data["context"]
+        # Only the visible doc (7) gets a chip; the private doc (99) does not.
+        assert [s["document_id"] for s in data["sources"]] == [7]
+
+    @pytest.mark.unit
     async def test_fact_retrieval_failure_is_swallowed(self):
         """A fact-retrieval exception never fails the chunk-based answer."""
         mock_rag = MagicMock()

@@ -90,30 +90,67 @@ async def _retrieve_facts(
     doc_meta: dict[Any, dict] = {}
     if doc_ids:
         try:
-            from sqlalchemy import select
-
-            from models.database import Document
-
-            rows = (await db.execute(
-                select(
-                    Document.id,
-                    Document.generated_title,
-                    Document.title,
-                    Document.filename,
-                    Document.circle_tier,
-                ).where(Document.id.in_(doc_ids))
-            )).all()
-            for r in rows:
-                doc_meta[r.id] = {
-                    "title": r.generated_title or r.title or r.filename or f"Dokument {r.id}",
-                    "filename": r.filename or "",
-                    "tier": r.circle_tier,
-                }
+            doc_meta = await _visible_document_meta(db, doc_ids, user_id_int)
         except Exception as e:  # noqa: BLE001
             logger.warning(
                 f"knowledge_search: fact source-title lookup failed (ignored): {e}"
             )
     return facts, doc_meta
+
+
+async def _visible_document_meta(
+    db: Any, doc_ids: set, user_id_int: int | None
+) -> dict[Any, dict]:
+    """``document_id → {title, filename, tier}`` for ONLY the documents the asker
+    may see themselves — CIRCLE-FILTERED, not a raw id lookup.
+
+    A per-fact tier override (``tier_overridden``) is the one place "fact visible"
+    and "document visible" diverge: a fact re-tiered to ``public`` on an otherwise
+    private document is returned to an outsider by ``document_facts_circles_filter``
+    (it keys the tier branches on ``df.circle_tier``), but the parent document's
+    ``title``/``filename`` (user-supplied, may name people / case numbers) is NOT
+    the outsider's to see. Filtering the title lookup through the DOCUMENT's own
+    circle policy keeps the leaked-metadata window closed; a non-visible source
+    document simply falls back to a generic ``Dokument {id}`` label with no chip.
+    """
+    from sqlalchemy import text
+
+    from models.database import TIER_PUBLIC
+    from services.circle_sql import circles_filter_clause, circles_filter_params
+
+    if not settings.auth_enabled:
+        doc_clause, doc_params = "TRUE", {}
+    elif user_id_int is None:
+        # Anonymous authed caller → public documents only.
+        doc_clause, doc_params = "d.circle_tier = :doc_pub", {"doc_pub": TIER_PUBLIC}
+    else:
+        doc_clause = circles_filter_clause(
+            table_alias="d",
+            owner_col="owner_id",
+            tier_col="circle_tier",
+            source_table_value="documents",
+            owner_table_alias="kb",
+            source_id_expr="d.id",
+            owner_atom_id_expr="d.atom_id",
+        )
+        doc_params = circles_filter_params(user_id_int, source_table_value="documents")
+
+    sql = text(f"""
+        SELECT d.id AS id, d.generated_title AS generated_title, d.title AS title,
+               d.filename AS filename, d.circle_tier AS circle_tier
+        FROM documents d
+        LEFT JOIN knowledge_bases kb ON d.knowledge_base_id = kb.id
+        WHERE d.id = ANY(:ids) AND ({doc_clause})
+    """)
+    rows = (await db.execute(sql, {"ids": list(doc_ids), **doc_params})).all()
+    return {
+        r.id: {
+            "title": r.generated_title or r.title or r.filename or f"Dokument {r.id}",
+            "filename": r.filename or "",
+            "tier": r.circle_tier,
+        }
+        for r in rows
+    }
 
 
 async def knowledge_search(params: dict) -> dict:
@@ -158,9 +195,13 @@ async def knowledge_search(params: dict) -> dict:
             # crisply ("what's my Steuernummer" retrieves the passage, not the
             # normalized identifier). Same circle reach as the RAG search
             # (DocumentFactRetrieval applies the parent-Document 4-branch filter),
-            # so a returned fact is one the asker may see. Gated on the extractor
-            # flag: with it off no facts exist, so we skip the query entirely and
-            # the tool output is byte-identical to the chunk-only behavior.
+            # so a returned fact is one the asker may see (the parent-document
+            # title lookup below is separately circle-filtered — a fact can be
+            # visible via a tier override while its document is not). Gated on the
+            # extractor flag: with it off no facts exist, so we skip the query
+            # entirely; the context/message strings are then identical to the
+            # chunk-only path (the data dict carries facts_count=0 + facts=[]
+            # regardless — additive, no existing consumer breaks).
             facts: list[dict] = []
             doc_meta: dict[Any, dict] = {}
             if settings.schicht_a_extraction_enabled:
@@ -212,9 +253,15 @@ async def knowledge_search(params: dict) -> dict:
                 "amount_value": f.get("amount_value"),
                 "amount_currency": f.get("amount_currency"),
             })
-            if did is not None and did not in seen_doc_ids:
+            # Chip a fact-source document ONLY when it is in doc_meta, i.e. the
+            # asker may see the document itself. A tier-overridden fact on an
+            # otherwise-private document is visible without the document being
+            # visible — chipping it would leak the private title/filename (and
+            # deep-link to a doc the asker gets 403 on). The fact still appears in
+            # the context under a generic "Dokument {id}" Quelle.
+            if did is not None and did not in seen_doc_ids and did in doc_meta:
                 seen_doc_ids.add(did)
-                meta = doc_meta.get(did) or {}
+                meta = doc_meta[did]
                 sources.append({
                     "document_id": did,
                     "filename": meta.get("filename", ""),
