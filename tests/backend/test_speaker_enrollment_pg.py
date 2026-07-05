@@ -151,6 +151,26 @@ class TestEnrollReject:
             res = await enroll_speaker_controlled(s, name="Anna", samples=_samples(3))
         assert res["ok"] is False and "voice-server" in res["reason"]
 
+    async def test_invalid_user_id_rejected(self, maker):
+        # nonexistent user → reject up front (never a "successful" unlinked enroll)
+        async with maker() as s:
+            res = await enroll_speaker_controlled(
+                s, name="Anna", samples=_samples(3), user_id=999999)
+        assert res["ok"] is False and "not found" in res["reason"]
+
+    async def test_nonfinite_embedding_rejected(self, maker):
+        # NaN embeddings must not slip past the cohesion gate (NaN < x is False)
+        nan = [float("nan")] * _DIM
+        returns = [_stt(nan) for _ in range(3)]
+        with _mock_stt(returns):
+            async with maker() as s:
+                res = await enroll_speaker_controlled(s, name="Anna", samples=_samples(3))
+        assert res["ok"] is False
+        assert res["accepted"] == 0
+        assert any("non-finite" in r for r in res["sample_reasons"])
+        async with maker() as s:
+            assert (await s.execute(select(Speaker))).scalars().all() == []
+
 
 class TestUserLinkMove:
     async def test_link_moves_off_prior_speaker(self, maker):
@@ -171,3 +191,27 @@ class TestUserLinkMove:
         async with maker() as s:
             u = (await s.execute(select(User).where(User.id == uid))).scalar_one()
             assert u.speaker_id == res["speaker_id"] != old_id
+
+    async def test_reenroll_reports_displaced_user(self, maker):
+        # speaker linked to user A; re-enroll it for user B → A displaced + reported
+        async with maker() as s:
+            a = await _mk_user(s)
+            b = await _mk_user(s)
+            sp = Speaker(name="Shared", alias="shared", enrolled=True)
+            s.add(sp)
+            await s.flush()
+            (await s.execute(select(User).where(User.id == a))).scalar_one().speaker_id = sp.id
+            await s.commit()
+            sid = sp.id
+        returns = [_stt(_axis(0)) for _ in range(3)]
+        with _mock_stt(returns):
+            async with maker() as s:
+                res = await enroll_speaker_controlled(
+                    s, name="Bob", samples=_samples(3), user_id=b, speaker_id=sid)
+        assert res["ok"] is True
+        assert res.get("displaced_user_ids") == [a]
+        async with maker() as s:
+            assert (await s.execute(
+                select(User).where(User.id == a))).scalar_one().speaker_id is None
+            assert (await s.execute(
+                select(User).where(User.id == b))).scalar_one().speaker_id == sid

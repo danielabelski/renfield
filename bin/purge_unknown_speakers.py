@@ -27,14 +27,18 @@ sys.path.insert(0, str(_BACKEND))
 
 from sqlalchemy import delete, func, select  # noqa: E402
 
-from models.database import Speaker, SpeakerEmbedding  # noqa: E402
+from models.database import Speaker, SpeakerEmbedding, User  # noqa: E402
 from services.database import AsyncSessionLocal  # noqa: E402
 
 
 async def main(commit: bool, all_unenrolled: bool) -> int:
     async with AsyncSessionLocal() as db:
-        # NEVER delete an enrolled reference profile.
-        conds = [Speaker.enrolled.is_(False)]
+        # NEVER delete an enrolled reference profile, and NEVER delete a speaker a
+        # user is linked to (a renamed-but-not-formally-enrolled speaker could be
+        # a real, curated identity — deleting it would sever that user's voice
+        # link via the FK SET NULL). The name filter is the default guard.
+        linked = select(User.speaker_id).where(User.speaker_id.isnot(None))
+        conds = [Speaker.enrolled.is_(False), Speaker.id.notin_(linked)]
         if not all_unenrolled:
             conds.append(Speaker.name.like("Unbekannter%"))
 

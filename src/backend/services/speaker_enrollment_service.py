@@ -82,7 +82,12 @@ async def _embed_sample(audio_bytes: bytes, filename: str, token: str) -> tuple[
         return None, dur, "no embedding (audio too short / silent?)"
     if dur is not None and dur < settings.speaker_enroll_min_duration_s:
         return None, dur, f"too short ({dur:.2f}s < {settings.speaker_enroll_min_duration_s}s)"
-    return np.asarray(emb, dtype=np.float32), dur, None
+    arr = np.asarray(emb, dtype=np.float32)
+    if not np.all(np.isfinite(arr)):
+        # A NaN/inf embedding would slip past the cohesion gate (NaN < x is False)
+        # and store a poisoned "trusted" profile — reject it here.
+        return None, dur, "non-finite embedding"
+    return arr, dur, None
 
 
 async def enroll_speaker_controlled(
@@ -108,6 +113,14 @@ async def enroll_speaker_controlled(
         return {"ok": False, "reason": "name is required", "accepted": 0}
     if not settings.voice_server_url:
         return {"ok": False, "reason": "voice-server not configured (enrollment needs the ONNX model)", "accepted": 0}
+
+    # Validate the target user upfront (an unvalidated Form int would otherwise
+    # no-op the link UPDATE and report a "successful" but unlinked enrollment).
+    if user_id is not None:
+        if (await db.execute(
+            select(User.id).where(User.id == user_id)
+        )).scalar_one_or_none() is None:
+            return {"ok": False, "reason": f"user {user_id} not found", "accepted": 0}
 
     token = _service_token()
     embeddings: list[np.ndarray] = []
@@ -135,7 +148,7 @@ async def enroll_speaker_controlled(
         }
 
     cohesion = _cohesion(embeddings)
-    if cohesion < settings.speaker_enroll_min_cohesion:
+    if not np.isfinite(cohesion) or cohesion < settings.speaker_enroll_min_cohesion:
         return {
             "ok": False,
             "reason": (
@@ -177,11 +190,17 @@ async def enroll_speaker_controlled(
         ))
 
     # Link the user (a user maps to exactly one speaker — move the link).
+    displaced: list[int] = []
     if user_id is not None:
+        # A re-enroll (speaker_id) may already be linked to a DIFFERENT user;
+        # unlinking them below is silent otherwise — surface it, like /merge does.
+        displaced = list((await db.execute(
+            select(User.id).where(User.speaker_id == speaker.id, User.id != user_id)
+        )).scalars().all())
         await db.execute(
             update(User).where(User.speaker_id == speaker.id)
             .values(speaker_id=None).execution_options(synchronize_session=False)
-        )  # defensive: clear stale links to this speaker
+        )
         await db.execute(
             update(User).where(User.id == user_id)
             .values(speaker_id=speaker.id).execution_options(synchronize_session=False)
@@ -192,11 +211,14 @@ async def enroll_speaker_controlled(
         f"🎙️ Enrolled speaker '{name}' (id={speaker.id}, {accepted} samples, "
         f"cohesion {cohesion:.2f}, user_id={user_id})"
     )
-    return {
+    result = {
         "ok": True, "speaker_id": speaker.id, "name": name,
         "cohesion": round(cohesion, 3), "accepted": accepted, "rejected": rejected,
         "sample_reasons": sample_reasons,
     }
+    if displaced:
+        result["displaced_user_ids"] = displaced  # a prior user↔speaker link was moved
+    return result
 
 
 async def _unique_alias(db: AsyncSession, name: str) -> str:
