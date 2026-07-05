@@ -388,7 +388,10 @@ async def _voice_chat_via_voice_server(
         # uses (see chat_handler.py speaker_info block).
         try:
             async with AsyncSessionLocal() as spk_db:
-                speaker_info = await resolve_speaker_from_embedding(spk_db, embedding)
+                speaker_info = await resolve_speaker_from_embedding(
+                    spk_db, embedding,
+                    audio_duration_s=stt_result.get("audio_duration_s"),
+                )
         except Exception as e:
             logger.warning(f"⚠️ wire-embedding speaker resolve failed: {e}")
 

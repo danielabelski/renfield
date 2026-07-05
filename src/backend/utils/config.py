@@ -172,6 +172,15 @@ class Settings(BaseSettings):
     speaker_recognition_device: str = "cpu"      # Device for inference: "cpu" or "cuda"
     speaker_auto_enroll: bool = True             # Auto-create unknown speakers and save embeddings
     speaker_continuous_learning: bool = True     # Add embeddings to known speakers on each interaction
+    # Phase 0 quality gating (docs/design/speaker-enrollment-redesign.md). Dark by
+    # default → matching/enroll byte-identical when off. On: L2-normalize each
+    # embedding before averaging the reference centroid; skip auto-enroll +
+    # continuous-learning for too-short turns; only reinforce a profile on a
+    # strong match (stops the noisy-turn pollution loop). Duration is best-effort
+    # (only the voice-server HTTP paths pass it today; the WS frame doesn't yet).
+    speaker_quality_gating_enabled: bool = False
+    speaker_recognition_min_duration_s: float = 1.0   # too-short turns don't enroll/reinforce
+    speaker_continuous_learning_min_confidence: float = 0.45  # only reinforce on a strong match
     # Per-user vocabulary corpus capture (Phase B-3 follow-up). Confirmed-
     # speaker transcripts are appended to speaker_vocabulary_corpus and a
     # daily batch job rebuilds the per-user vocab table for STT bias.

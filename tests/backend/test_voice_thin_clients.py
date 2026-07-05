@@ -76,7 +76,7 @@ async def test_whisper_with_speaker_passes_embedding_to_resolver(monkeypatch) ->
 
     _patch_async_client(monkeypatch, handler)
 
-    async def fake_resolver(_db, embedding):
+    async def fake_resolver(_db, embedding, **_kwargs):
         received_embedding.append(embedding)
         return {
             "speaker_id": 42,
@@ -133,7 +133,7 @@ async def test_whisper_with_speaker_skips_resolution_when_db_session_none(monkey
 
     _patch_async_client(monkeypatch, handler)
 
-    async def fake_resolver(_db, _embedding):
+    async def fake_resolver(_db, _embedding, **_kwargs):
         resolver_called.append(True)
         return {
             "speaker_id": 99,
