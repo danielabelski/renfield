@@ -1,20 +1,23 @@
 // useKioskSocket — the PUSH data source for the /kiosk wall display.
 //
-// Opens the ADMIN-gated `/ws/kiosk` hub (backend api/websocket/kiosk_handler.py,
-// merged phase 1a), hydrates from the one `snapshot` message it sends on
-// connect, then folds each delta event into a single reducer-held
-// `KioskLiveModel`. This replaces the kiosk's former react-query POLLING chain
-// (useCommandCenterModel + useSatellites/Weather/NowPlaying queries) with a
-// single event-driven socket — no browser timers hit our own REST API.
+// Opens the ADMIN-gated `/ws/kiosk` hub (backend api/websocket/kiosk_handler.py),
+// hydrates from the one `snapshot` message it sends on connect, then folds each
+// delta event into a single reducer-held `KioskLiveModel`. This replaces the
+// kiosk's former react-query POLLING chain (useCommandCenterModel +
+// useSatellites/Weather/NowPlaying queries) with a single event-driven socket —
+// no browser timers hit our own REST API.
 //
-// PHASE-1 INTERIM (documented, approved incremental plan — tasks/
-// kiosk-active-subsystem-plan.md §7 step 4): the backend currently emits only
-// two live deltas — `satellite_state` and `turn_activity`. So satellite voice
-// state and the active-subsystem pulse are LIVE, but presence / weather /
-// now-playing / tool-health / peers are SNAPSHOT-ONLY: correct on every
-// connect/reconnect, but not live-updated until phase 2 wires their deltas.
-// The reducer already ignores unknown event `type`s gracefully, so those
-// future deltas land without a frontend change.
+// LIVENESS IS BACKEND-AUTHORITATIVE (phase 2). The hub pushes a delta at every
+// real mutation: `satellite_state` (voice state), `satellite_online`/
+// `satellite_offline` (roster liveness — register / unregister / heartbeat
+// timeout), `presence_changed`, `now_playing_changed`, `tool_health_changed`,
+// `weather_updated`, plus `turn_activity` (the active-subsystem pulse). So the
+// model NEVER decays frozen snapshot values against the wall clock: a satellite
+// present in `satellites[]` IS online (the backend removed it via
+// `satellite_offline` the moment it dropped), a peer's reachability is whatever
+// the last snapshot said, and a reconnect re-anchors everything from a fresh
+// snapshot. Unknown event `type`s are still tolerated so a later delta can ship
+// on the backend without breaking an already-deployed kiosk tab.
 import { useEffect, useReducer, useRef, useState } from 'react';
 
 import { debug } from '../../utils/debug';
@@ -34,13 +37,6 @@ export interface KioskSatellite {
   room: string;
   room_id: number | null;
   state: SatelliteState;
-  /** Unix seconds of the last heartbeat (absent on a delta-inserted satellite). */
-  last_heartbeat?: number;
-  /** Seconds since the last heartbeat, captured at hydration. Frozen between
-   *  snapshots — phase 1 has no heartbeat delta, so a still-connected satellite
-   *  keeps its fresh value rather than decaying to a false "offline" (a fresh
-   *  snapshot on reconnect re-anchors it). */
-  heartbeat_ago_seconds: number;
   has_active_session?: boolean;
 }
 
@@ -115,7 +111,6 @@ interface SnapshotMessage {
     room: string;
     room_id?: number | null;
     state: SatelliteState;
-    last_heartbeat?: number;
     has_active_session?: boolean;
   }>;
   presence?: {
@@ -140,6 +135,38 @@ interface SatelliteStateDelta {
   state: SatelliteState;
 }
 
+/** Roster liveness — a satellite registered (online) or dropped (offline). */
+interface SatelliteLivenessDelta {
+  type: 'satellite_online' | 'satellite_offline';
+  satellite_id: string;
+  room?: string | null;
+  room_id?: number | null;
+  online: boolean;
+}
+
+interface PresenceChangedDelta {
+  type: 'presence_changed';
+  rooms?: KioskPresenceRoom[];
+  people_present?: number;
+  occupied_rooms?: number;
+}
+
+interface NowPlayingChangedDelta {
+  type: 'now_playing_changed';
+  sessions?: KioskNowPlaying[];
+}
+
+interface ToolHealthChangedDelta {
+  type: 'tool_health_changed';
+  server: string;
+  connected: boolean;
+}
+
+interface WeatherUpdatedDelta {
+  type: 'weather_updated';
+  weather?: KioskWeather | null;
+}
+
 interface TurnActivityDelta {
   type: 'turn_activity';
   role: string;
@@ -152,6 +179,11 @@ interface TurnActivityDelta {
 type KioskMessage =
   | SnapshotMessage
   | SatelliteStateDelta
+  | SatelliteLivenessDelta
+  | PresenceChangedDelta
+  | NowPlayingChangedDelta
+  | ToolHealthChangedDelta
+  | WeatherUpdatedDelta
   | TurnActivityDelta
   | { type: string; [key: string]: unknown };
 
@@ -185,7 +217,6 @@ function parseAtMs(iso: string | undefined): number {
 }
 
 function hydrate(prev: KioskLiveModel, msg: SnapshotMessage): KioskLiveModel {
-  const nowSec = Date.now() / 1000;
   return {
     hydrated: true,
     at: msg.at ?? null,
@@ -194,9 +225,6 @@ function hydrate(prev: KioskLiveModel, msg: SnapshotMessage): KioskLiveModel {
       room: s.room,
       room_id: s.room_id ?? null,
       state: s.state,
-      last_heartbeat: s.last_heartbeat,
-      heartbeat_ago_seconds:
-        typeof s.last_heartbeat === 'number' ? Math.max(0, nowSec - s.last_heartbeat) : 0,
       has_active_session: s.has_active_session,
     })),
     presence: {
@@ -236,17 +264,107 @@ function reduce(state: KioskLiveModel, msg: KioskMessage): KioskLiveModel {
         };
       });
       if (!found) {
-        // A state transition for a satellite not in the last snapshot (e.g. it
-        // connected after hydrate). Treat it as freshly live.
+        // A state transition for a satellite not in the roster (it connected
+        // after hydrate and its online delta hasn't been folded yet). It is
+        // reporting state → it's live; add it.
         satellites.push({
           satellite_id: delta.satellite_id,
           room: delta.room,
           room_id: delta.room_id ?? null,
           state: delta.state,
-          heartbeat_ago_seconds: 0,
         });
       }
       return { ...state, satellites };
+    }
+
+    case 'satellite_online': {
+      const delta = msg as SatelliteLivenessDelta;
+      const existing = state.satellites.find(
+        (s) => s.satellite_id === delta.satellite_id,
+      );
+      if (existing) {
+        // Already in the roster — just refresh its room binding (state comes
+        // from `satellite_state`; don't clobber it with a liveness event).
+        const satellites = state.satellites.map((sat) =>
+          sat.satellite_id === delta.satellite_id
+            ? { ...sat, room: delta.room ?? sat.room, room_id: delta.room_id ?? sat.room_id }
+            : sat,
+        );
+        return { ...state, satellites };
+      }
+      // Reinstate a resumed satellite. The online delta carries no voice state;
+      // default to idle — the next `satellite_state` delta (or snapshot)
+      // corrects it. Tolerate a null room (DB sync runs after register).
+      return {
+        ...state,
+        satellites: [
+          ...state.satellites,
+          {
+            satellite_id: delta.satellite_id,
+            room: delta.room ?? '',
+            room_id: delta.room_id ?? null,
+            state: 'idle',
+          },
+        ],
+      };
+    }
+
+    case 'satellite_offline': {
+      const delta = msg as SatelliteLivenessDelta;
+      // Drop the crashed/disconnected satellite out of the roster so it stops
+      // pinning the voice core and its room stops rendering as live.
+      return {
+        ...state,
+        satellites: state.satellites.filter(
+          (s) => s.satellite_id !== delta.satellite_id,
+        ),
+      };
+    }
+
+    case 'presence_changed': {
+      const delta = msg as PresenceChangedDelta;
+      return {
+        ...state,
+        presence: {
+          rooms: delta.rooms ?? [],
+          people_present: delta.people_present ?? 0,
+          occupied_rooms: delta.occupied_rooms ?? 0,
+        },
+      };
+    }
+
+    case 'now_playing_changed': {
+      const delta = msg as NowPlayingChangedDelta;
+      return { ...state, nowPlaying: delta.sessions ?? [] };
+    }
+
+    case 'tool_health_changed': {
+      const delta = msg as ToolHealthChangedDelta;
+      let found = false;
+      const servers = state.mcp.servers.map((server) => {
+        if (server.name !== delta.server) return server;
+        found = true;
+        // A reconnect clears any stale error text so the server stops rendering
+        // as degraded once it is healthy again.
+        return {
+          ...server,
+          connected: delta.connected,
+          last_error: delta.connected ? null : server.last_error,
+        };
+      });
+      if (!found) {
+        servers.push({
+          name: delta.server,
+          connected: delta.connected,
+          tool_count: 0,
+        });
+      }
+      return { ...state, mcp: { ...state.mcp, servers } };
+    }
+
+    case 'weather_updated': {
+      const delta = msg as WeatherUpdatedDelta;
+      return { ...state, weather: delta.weather ?? null };
     }
 
     case 'turn_activity': {
@@ -277,14 +395,23 @@ export type KioskConnStatus = 'connecting' | 'open' | 'reconnecting';
 
 const INITIAL_BACKOFF_MS = 1000;
 const MAX_BACKOFF_MS = 30_000;
+/** A drop shorter than this keeps the last-good board (a WS blip mustn't flip
+ *  the whole display to "unreachable"); a sustained outage flips after it. */
+const SUSTAINED_DISCONNECT_MS = 8000;
 
 export interface KioskSocketState {
   live: KioskLiveModel;
   status: KioskConnStatus;
-  /** True until the first snapshot lands (first-paint skeleton). */
+  /** True until the first snapshot lands OR the first connection attempt fails
+   *  (so an auth/backend failure at boot shows "reconnecting", not a stuck
+   *  skeleton forever). */
   bootLoading: boolean;
-  /** True whenever the socket is not currently open (connecting or dropped). */
+  /** True whenever the socket is not currently open (connecting or dropped) —
+   *  a calm, immediate indicator. */
   reconnecting: boolean;
+  /** True only after a SUSTAINED disconnect — the board is now stale and the
+   *  core should read "busy". Held false through a brief blip. */
+  backendUnreachable: boolean;
 }
 
 function kioskWsUrl(): string {
@@ -310,14 +437,27 @@ function kioskWsUrl(): string {
 export function useKioskSocket(): KioskSocketState {
   const [live, dispatch] = useReducer(reduce, EMPTY_MODEL);
   const [status, setStatus] = useState<KioskConnStatus>('connecting');
+  // Resolves the first-paint skeleton on EITHER the first snapshot or the first
+  // failed connect — so a boot that never authenticates doesn't hang forever.
+  const [bootResolved, setBootResolved] = useState(false);
+  // Only true after a disconnect has persisted past SUSTAINED_DISCONNECT_MS.
+  const [sustainedDisconnect, setSustainedDisconnect] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sustainedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const attemptRef = useRef(0);
   const intentionalCloseRef = useRef(false);
 
   useEffect(() => {
     intentionalCloseRef.current = false;
+
+    const clearSustainedTimer = () => {
+      if (sustainedTimerRef.current) {
+        clearTimeout(sustainedTimerRef.current);
+        sustainedTimerRef.current = null;
+      }
+    };
 
     const connect = () => {
       if (reconnectTimerRef.current) {
@@ -330,6 +470,8 @@ export function useKioskSocket(): KioskSocketState {
         ws = new WebSocket(kioskWsUrl());
       } catch (err) {
         debug.log('Kiosk WS construct failed:', err);
+        setBootResolved(true);
+        armSustainedTimer();
         scheduleReconnect();
         return;
       }
@@ -338,6 +480,8 @@ export function useKioskSocket(): KioskSocketState {
       ws.onopen = () => {
         debug.log('Kiosk WS connected');
         attemptRef.current = 0;
+        clearSustainedTimer();
+        setSustainedDisconnect(false);
         setStatus('open');
       };
 
@@ -348,20 +492,38 @@ export function useKioskSocket(): KioskSocketState {
         } catch {
           return; // ignore malformed frames rather than crash the tab
         }
+        // First real frame resolves the boot skeleton (belt-and-braces with the
+        // hydrated flag; a snapshot is always the first frame the hub sends).
+        setBootResolved(true);
         dispatch(msg);
       };
 
       ws.onerror = (err: Event) => {
         debug.log('Kiosk WS error:', err);
-        // Let onclose drive the reconnect (browsers fire error → close).
+        // First failure resolves the boot skeleton so we don't hang on it; let
+        // onclose drive the reconnect (browsers fire error → close).
+        setBootResolved(true);
       };
 
       ws.onclose = () => {
         if (intentionalCloseRef.current) return;
         debug.log('Kiosk WS closed — scheduling reconnect');
+        setBootResolved(true);
         setStatus('reconnecting');
+        armSustainedTimer();
         scheduleReconnect();
       };
+    };
+
+    // Arm the "stale board" flag on a fresh disconnect, but only if one isn't
+    // already pending — so repeated reconnect failures don't keep pushing the
+    // deadline out. A blip that reopens before it fires leaves the board live.
+    const armSustainedTimer = () => {
+      if (sustainedTimerRef.current) return;
+      sustainedTimerRef.current = setTimeout(() => {
+        sustainedTimerRef.current = null;
+        setSustainedDisconnect(true);
+      }, SUSTAINED_DISCONNECT_MS);
     };
 
     const scheduleReconnect = () => {
@@ -381,6 +543,7 @@ export function useKioskSocket(): KioskSocketState {
         clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
       }
+      clearSustainedTimer();
       wsRef.current?.close();
       wsRef.current = null;
     };
@@ -389,7 +552,8 @@ export function useKioskSocket(): KioskSocketState {
   return {
     live,
     status,
-    bootLoading: !live.hydrated,
+    bootLoading: !live.hydrated && !bootResolved,
     reconnecting: status !== 'open',
+    backendUnreachable: sustainedDisconnect,
   };
 }

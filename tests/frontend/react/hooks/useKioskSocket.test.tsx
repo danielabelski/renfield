@@ -53,15 +53,13 @@ function latest(): MockWebSocket {
   return MockWebSocket.instances[MockWebSocket.instances.length - 1];
 }
 
-const NOW_SEC = Date.now() / 1000;
-
 function baseSnapshot() {
   return {
     type: 'snapshot',
     at: '2026-07-04T21:00:00Z',
     satellites: [
-      { satellite_id: 'sat-wz', room: 'Wohnzimmer', room_id: 1, state: 'idle', last_heartbeat: NOW_SEC },
-      { satellite_id: 'sat-ez', room: 'Esszimmer', room_id: 2, state: 'idle', last_heartbeat: NOW_SEC - 4000 },
+      { satellite_id: 'sat-wz', room: 'Wohnzimmer', room_id: 1, state: 'idle' },
+      { satellite_id: 'sat-ez', room: 'Esszimmer', room_id: 2, state: 'idle' },
     ],
     presence: {
       rooms: [{ room_id: 1, room_name: 'Wohnzimmer', occupants: 2 }],
@@ -115,11 +113,9 @@ describe('useKioskSocket', () => {
     expect(result.current.bootLoading).toBe(false);
     const m = result.current.live;
     expect(m.hydrated).toBe(true);
+    // The roster is connected-only: every satellite it carries is online.
     expect(m.satellites).toHaveLength(2);
-    // heartbeat_ago is derived from last_heartbeat: the fresh one is ~0, the
-    // 4000s-old one is large (→ offline downstream).
-    expect(m.satellites[0].heartbeat_ago_seconds).toBeLessThan(90);
-    expect(m.satellites[1].heartbeat_ago_seconds).toBeGreaterThan(90);
+    expect(m.satellites.map((s) => s.satellite_id)).toEqual(['sat-wz', 'sat-ez']);
     expect(m.presence.people_present).toBe(2);
     expect(m.mcp.servers[0].name).toBe('homeassistant');
     expect(m.toolHealth).toHaveLength(1);
@@ -155,8 +151,68 @@ describe('useKioskSocket', () => {
       latest().fireMessage({ type: 'satellite_state', satellite_id: 'sat-new', room: 'Küche', room_id: 9, state: 'speaking' });
     });
     const added = result.current.live.satellites.find((s) => s.satellite_id === 'sat-new');
-    expect(added?.state).toBe('speaking');
-    expect(added?.heartbeat_ago_seconds).toBe(0); // treated as freshly live
+    expect(added?.state).toBe('speaking'); // treated as freshly live
+  });
+
+  it('reinstates a satellite on satellite_online and drops it on satellite_offline', () => {
+    const { result } = renderHook(() => useKioskSocket());
+    act(() => {
+      latest().fireOpen();
+      latest().fireMessage(baseSnapshot());
+    });
+
+    // offline drops the satellite out of the roster (stops it pinning the core)
+    act(() => {
+      latest().fireMessage({ type: 'satellite_offline', satellite_id: 'sat-ez', room: 'Esszimmer', room_id: 2, online: false });
+    });
+    expect(result.current.live.satellites.map((s) => s.satellite_id)).toEqual(['sat-wz']);
+
+    // online reinstates it (defaulting to idle until a state delta arrives)
+    act(() => {
+      latest().fireMessage({ type: 'satellite_online', satellite_id: 'sat-ez', room: 'Esszimmer', room_id: 2, online: true });
+    });
+    const ez = result.current.live.satellites.find((s) => s.satellite_id === 'sat-ez');
+    expect(ez?.state).toBe('idle');
+
+    // a redundant online for an already-present satellite doesn't duplicate it
+    act(() => {
+      latest().fireMessage({ type: 'satellite_online', satellite_id: 'sat-wz', room: 'Wohnzimmer', room_id: 1, online: true });
+    });
+    expect(result.current.live.satellites.filter((s) => s.satellite_id === 'sat-wz')).toHaveLength(1);
+  });
+
+  it('folds presence / now_playing / weather / tool_health deltas', () => {
+    const { result } = renderHook(() => useKioskSocket());
+    act(() => {
+      latest().fireOpen();
+      latest().fireMessage(baseSnapshot());
+    });
+
+    act(() => {
+      latest().fireMessage({
+        type: 'presence_changed',
+        rooms: [{ room_id: 2, room_name: 'Esszimmer', occupants: 1 }],
+        people_present: 1,
+        occupied_rooms: 1,
+      });
+      latest().fireMessage({ type: 'now_playing_changed', sessions: [] });
+      latest().fireMessage({ type: 'weather_updated', weather: null });
+      latest().fireMessage({ type: 'tool_health_changed', server: 'homeassistant', connected: false });
+    });
+
+    expect(result.current.live.presence.people_present).toBe(1);
+    expect(result.current.live.presence.rooms[0].room_name).toBe('Esszimmer');
+    expect(result.current.live.nowPlaying).toHaveLength(0);
+    expect(result.current.live.weather).toBeNull();
+    expect(result.current.live.mcp.servers.find((s) => s.name === 'homeassistant')?.connected).toBe(false);
+
+    // reconnect clears the stale error so the server isn't stuck degraded
+    act(() => {
+      latest().fireMessage({ type: 'tool_health_changed', server: 'homeassistant', connected: true });
+    });
+    const ha = result.current.live.mcp.servers.find((s) => s.name === 'homeassistant');
+    expect(ha?.connected).toBe(true);
+    expect(ha?.last_error ?? null).toBeNull();
   });
 
   it('folds a turn_activity delta into the trail and the subsystem pulses', () => {
@@ -216,10 +272,56 @@ describe('useKioskSocket', () => {
     // the hub re-sends a snapshot on connect → the missed-event gap self-heals
     act(() => {
       latest().fireOpen();
-      latest().fireMessage({ ...baseSnapshot(), satellites: [{ satellite_id: 'sat-wz', room: 'Wohnzimmer', room_id: 1, state: 'speaking', last_heartbeat: Date.now() / 1000 }] });
+      latest().fireMessage({ ...baseSnapshot(), satellites: [{ satellite_id: 'sat-wz', room: 'Wohnzimmer', room_id: 1, state: 'speaking' }] });
     });
     expect(result.current.status).toBe('open');
     expect(result.current.live.satellites).toHaveLength(1);
     expect(result.current.live.satellites[0].state).toBe('speaking');
+  });
+
+  it('resolves the boot skeleton on a first-connect failure (never hangs)', () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() => useKioskSocket());
+    expect(result.current.bootLoading).toBe(true);
+    // the very first socket closes before any snapshot (e.g. auth rejected)
+    act(() => {
+      latest().fireClose();
+    });
+    // boot skeleton clears → "reconnecting", not a stuck skeleton
+    expect(result.current.bootLoading).toBe(false);
+    expect(result.current.status).toBe('reconnecting');
+  });
+
+  it('keeps the board live through a brief blip, flips unreachable only when sustained', () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() => useKioskSocket());
+    act(() => {
+      latest().fireOpen();
+      latest().fireMessage(baseSnapshot());
+    });
+    expect(result.current.backendUnreachable).toBe(false);
+
+    // socket drops — still NOT unreachable (last-good board held through a blip)
+    act(() => {
+      latest().fireClose();
+    });
+    expect(result.current.backendUnreachable).toBe(false);
+
+    // it reopens quickly (< 8s) → the blip never escalates
+    act(() => {
+      vi.advanceTimersByTime(1000);
+      latest().fireOpen();
+      latest().fireMessage(baseSnapshot());
+    });
+    expect(result.current.backendUnreachable).toBe(false);
+
+    // now a sustained drop: no reopen past the 8s window → board reads stale
+    act(() => {
+      latest().fireClose();
+    });
+    act(() => {
+      vi.advanceTimersByTime(8000);
+    });
+    expect(result.current.backendUnreachable).toBe(true);
   });
 });

@@ -38,8 +38,6 @@ class MockWebSocket {
   }
 }
 
-const NOW_SEC = Date.now() / 1000;
-
 const roles = [
   { name: 'presence', description: { de: 'Presence', en: 'Presence' }, mcp_servers: [], internal_tools: null, has_agent_loop: true },
   { name: 'general', description: { de: 'General', en: 'General' }, mcp_servers: null, internal_tools: null, has_agent_loop: true },
@@ -64,8 +62,8 @@ function snapshot(satState: string, over: SnapOverrides = {}) {
     type: 'snapshot',
     at: '2026-07-04T21:00:00Z',
     satellites: over.satellites ?? [
-      { satellite_id: 'sat-wohnzimmer', room: 'Wohnzimmer', room_id: 1, state: satState, last_heartbeat: NOW_SEC },
-      { satellite_id: 'sat-esszimmer', room: 'Esszimmer', room_id: 2, state: 'idle', last_heartbeat: NOW_SEC },
+      { satellite_id: 'sat-wohnzimmer', room: 'Wohnzimmer', room_id: 1, state: satState },
+      { satellite_id: 'sat-esszimmer', room: 'Esszimmer', room_id: 2, state: 'idle' },
     ],
     presence: {
       rooms: [{ room_id: 1, room_name: 'Wohnzimmer', occupants: 1 }],
@@ -137,18 +135,26 @@ describe('KioskPage', () => {
     });
   });
 
-  it('counts the real satellite list and ignores a stale satellite in the core', async () => {
+  it('drops a satellite from the roster on a satellite_offline delta (core + counts)', async () => {
     renderWithProviders(<KioskPage />);
-    // 3 satellites: two share a room, one is stale (heartbeat > 90s) AND still
-    // reporting 'listening' — it must not count as online nor drive the core.
+    // 3 satellites, one of them (c) reporting 'listening'.
     pushSnapshot(snapshot('idle', {
       satellites: [
-        { satellite_id: 'a', room: 'Wohnzimmer', room_id: 1, state: 'idle', last_heartbeat: NOW_SEC },
-        { satellite_id: 'b', room: 'Wohnzimmer', room_id: 1, state: 'idle', last_heartbeat: NOW_SEC },
-        { satellite_id: 'c', room: 'Esszimmer', room_id: 2, state: 'listening', last_heartbeat: NOW_SEC - 4000 },
+        { satellite_id: 'a', room: 'Wohnzimmer', room_id: 1, state: 'idle' },
+        { satellite_id: 'b', room: 'Wohnzimmer', room_id: 1, state: 'idle' },
+        { satellite_id: 'c', room: 'Esszimmer', room_id: 2, state: 'listening' },
       ],
     }));
-    await waitFor(() => expect(screen.getByText('2/3 online')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('3/3 online')).toBeInTheDocument());
+    expect(coreState()).toBe('listening'); // c drives the core while online
+
+    // the backend detects c dropped (unregister / heartbeat timeout) and pushes
+    // satellite_offline → it leaves the roster, stops counting AND driving core.
+    const ws = MockWebSocket.instances[MockWebSocket.instances.length - 1];
+    act(() => {
+      ws.fireMessage({ type: 'satellite_offline', satellite_id: 'c', room: 'Esszimmer', room_id: 2, online: false });
+    });
+    await waitFor(() => expect(screen.getByText('2/2 online')).toBeInTheDocument());
     expect(coreState()).toBe('idle');
   });
 
@@ -174,7 +180,7 @@ describe('KioskPage', () => {
   it('surfaces a live-satellite error as busy, not a false ready', async () => {
     renderWithProviders(<KioskPage />);
     pushSnapshot(snapshot('idle', {
-      satellites: [{ satellite_id: 'a', room: 'Wohnzimmer', room_id: 1, state: 'error', last_heartbeat: NOW_SEC }],
+      satellites: [{ satellite_id: 'a', room: 'Wohnzimmer', room_id: 1, state: 'error' }],
     }));
     await waitFor(() => {
       expect(coreState()).toBe('busy');

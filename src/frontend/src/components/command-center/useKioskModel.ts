@@ -31,21 +31,18 @@ const STATE_PRIORITY: Record<string, number> = {
   speaking: 3,
 };
 
-/** A satellite whose last heartbeat is older than this is treated as offline —
- *  its self-reported state (e.g. a stale 'listening') must NOT drive the core.
- *  Mirrors the same window useCommandCenterModel applies. */
-const SATELLITE_OFFLINE_S = 90;
-
 // ---- ring-assembly constants (mirrored from useCommandCenterModel) ---------
+// NOTE: satellite liveness and peer reachability are NO LONGER wall-clock
+// derived — the backend pushes `satellite_online`/`satellite_offline` (a
+// satellite in the roster IS online) and stamps `peer.reachable` in the
+// snapshot. Only the active-role glow / pulse trail still decay by time.
 /** An activation older than this no longer lights the core (the turn is over). */
 const ACTIVE_WINDOW_MS = 90_000;
 /** Trail entries older than this are fully decayed and dropped from the board. */
 const TRAIL_WINDOW_MS = 15 * 60_000;
-/** Wall-clock recompute cadence: active-role expiry / trail decay / peer
- *  reachability must advance by the PASSAGE OF TIME, not only on new data. */
+/** Wall-clock recompute cadence: active-role expiry / trail decay must advance
+ *  by the PASSAGE OF TIME, not only on new data. */
 const CLOCK_TICK_MS = 15_000;
-/** A federation peer unseen for longer than this renders unreachable. */
-const PEER_OFFLINE_MS = 10 * 60_000;
 /** Aggregated per-server success rate below this (with enough calls) = degraded. */
 const DEGRADED_SUCCESS_RATE = 0.8;
 const DEGRADED_MIN_CALLS = 3;
@@ -199,19 +196,21 @@ function buildCommandCenterModel(
     }
   >();
   for (const sat of live.satellites) {
+    // A satellite without a room binding yet (online delta before its DB sync)
+    // can't be placed on the rooms ring — skip until a state/snapshot names it.
+    if (!sat.room) continue;
     const key = sat.room.toLowerCase();
-    const online = sat.heartbeat_ago_seconds < SATELLITE_OFFLINE_S;
+    // Every satellite in the roster is online — the backend removed it via a
+    // `satellite_offline` delta the moment it dropped (no wall-clock decay).
     const existing = rooms.get(key);
     let state = existing?.state;
-    if (online) {
-      if (!state || (STATE_RANK[sat.state] ?? 0) > (STATE_RANK[state] ?? 0)) {
-        state = sat.state;
-      }
+    if (!state || (STATE_RANK[sat.state] ?? 0) > (STATE_RANK[state] ?? 0)) {
+      state = sat.state;
     }
     rooms.set(key, {
       id: key,
       label: sat.room,
-      online: (existing?.online ?? false) || online,
+      online: true,
       occupants: occupantsByRoom.get(key) ?? 0,
       state,
       hint: sat.satellite_id,
@@ -232,14 +231,13 @@ function buildCommandCenterModel(
   }
 
   // ---- peers arc --------------------------------------------------------
-  const peers = live.peers.map((peer) => {
-    const lastSeen = peer.last_seen_at ? parseNaiveUtcMs(peer.last_seen_at) : NaN;
-    return {
-      id: String(peer.id),
-      label: peer.name,
-      online: Number.isFinite(lastSeen) && now - lastSeen < PEER_OFFLINE_MS,
-    };
-  });
+  // Trust the backend's snapshot `reachable` flag directly — no wall-clock
+  // decay (a frozen snapshot must not fade every peer to red over time).
+  const peers = live.peers.map((peer) => ({
+    id: String(peer.id),
+    label: peer.name,
+    online: peer.reachable,
+  }));
 
   return {
     core: { label: 'Renfield', activeRoleId },
@@ -253,11 +251,11 @@ function buildCommandCenterModel(
 
 export function useKioskModel(): KioskState {
   const { t, i18n } = useTranslation();
-  const { live, bootLoading, reconnecting } = useKioskSocket();
+  const { live, bootLoading, backendUnreachable } = useKioskSocket();
   const lang = i18n.language?.startsWith('de') ? 'de' : 'en';
 
-  // Wall-clock input for the memo: active-role expiry / trail decay / peer
-  // reachability must advance even when no new event arrives.
+  // Wall-clock input for the memo: active-role expiry / trail decay must
+  // advance even when no new event arrives (liveness is now delta-driven).
   const [nowTick, setNowTick] = useState(() => Date.now());
   useEffect(() => {
     const id = setInterval(() => setNowTick(Date.now()), CLOCK_TICK_MS);
@@ -268,19 +266,12 @@ export function useKioskModel(): KioskState {
   const nowPlaying = live.nowPlaying.length > 0 ? live.nowPlaying : EMPTY_NOW_PLAYING;
   const subsystemPulses = live.subsystemPulses;
 
-  // A dropped socket after the first hydrate = the board is now stale; surface
-  // it exactly like the old all-queries-failed state (calm "reconnecting" +
-  // busy core), NOT a frozen board read as live.
-  const backendUnreachable = !bootLoading && reconnecting;
-
   return useMemo<KioskState>(() => {
     const model = buildCommandCenterModel(live, t, lang, nowTick);
 
-    // Only satellites with a fresh heartbeat count as live — a dead one can't
-    // be "listening", however it last reported.
-    const onlineSats = live.satellites.filter(
-      (s) => s.heartbeat_ago_seconds < SATELLITE_OFFLINE_S,
-    );
+    // Every satellite in the roster is online — the backend drops a dead one
+    // via a `satellite_offline` delta, so there is no stale-heartbeat to filter.
+    const onlineSats = live.satellites;
 
     // ---- voice-reactive core state from the ONLINE satellites' own state ---
     let core: CoreState = backendUnreachable ? 'busy' : 'idle';
