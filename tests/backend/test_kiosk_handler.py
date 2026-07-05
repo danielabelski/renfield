@@ -52,6 +52,7 @@ def _clear_clients():
     kiosk._event_queue = None
     kiosk._consumer_task = None
     kiosk._consumer_loop = None
+    kiosk._active_chat_turns = 0
     yield
     if kiosk._consumer_task is not None:
         kiosk._consumer_task.cancel()
@@ -206,6 +207,35 @@ async def test_broadcast_delivers_to_connected_clients():
     await _drain_fanout()
     assert a.sent == [event]
     assert b.sent == [event]
+
+
+@pytest.mark.backend
+@pytest.mark.asyncio
+async def test_note_chat_turn_active_edges_and_floor():
+    """The core-activity counter broadcasts a chat_activity delta ONLY on the
+    0↔1 edge (concurrent turns don't spam), and never goes negative."""
+    kiosk._active_chat_turns = 0
+    client = _FakeWS()
+    kiosk._kiosk_clients.add(client)
+
+    await kiosk.note_chat_turn_active(True)   # 0 -> 1 : edge, broadcast active
+    await kiosk.note_chat_turn_active(True)   # 1 -> 2 : no edge, silent
+    await _drain_fanout()
+    assert kiosk._active_chat_turns == 2
+    assert [e["active"] for e in client.sent] == [True]  # only the 0->1 edge
+
+    await kiosk.note_chat_turn_active(False)  # 2 -> 1 : no edge, silent
+    await kiosk.note_chat_turn_active(False)  # 1 -> 0 : edge, broadcast inactive
+    await _drain_fanout()
+    assert kiosk._active_chat_turns == 0
+    assert [e["active"] for e in client.sent] == [True, False]
+
+    # floor at 0 — a stray decrement (double-clear) can't go negative
+    await kiosk.note_chat_turn_active(False)
+    await _drain_fanout()
+    assert kiosk._active_chat_turns == 0
+    assert len(client.sent) == 2  # no extra broadcast
+    kiosk._active_chat_turns = 0
 
 
 @pytest.mark.backend

@@ -225,6 +225,23 @@ describe('KioskPage', () => {
     );
   });
 
+  it('drives the core to processing on a chat_activity delta (typed web-chat)', async () => {
+    renderWithProviders(<KioskPage />);
+    pushSnapshot(snapshot('idle')); // all satellites idle, no voice activity
+    await waitFor(() => expect(coreState()).toBe('idle'));
+    const ws = MockWebSocket.instances[MockWebSocket.instances.length - 1];
+    // a web-chat turn starts processing → the core thinks even with no satellite
+    act(() => {
+      ws.fireMessage({ type: 'chat_activity', active: true });
+    });
+    await waitFor(() => expect(coreState()).toBe('processing'));
+    // turn ends → core returns to idle
+    act(() => {
+      ws.fireMessage({ type: 'chat_activity', active: false });
+    });
+    await waitFor(() => expect(coreState()).toBe('idle'));
+  });
+
   it('does not duplicate a synthetic node when a real MCP server owns its id', async () => {
     renderWithProviders(<KioskPage />);
     // an operator adds an output-provider MCP server literally named 'media'

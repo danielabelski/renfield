@@ -329,6 +329,17 @@ export function useKioskModel(): KioskState {
     }
     if (!backendUnreachable && best === 0 && anyError) core = 'busy';
 
+    // A typed web-chat turn has no satellite/room, but Renfield IS working — show
+    // the core "thinking" when no satellite outranks it and nothing's errored.
+    if (
+      !backendUnreachable &&
+      live.chatActive &&
+      best < STATE_PRIORITY.processing &&
+      !anyError
+    ) {
+      core = 'processing';
+    }
+
     const activeRoleLabel = model.core.activeRoleId
       ? roleLabel(t, model.core.activeRoleId)
       : null;

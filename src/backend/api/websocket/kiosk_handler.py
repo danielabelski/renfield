@@ -48,6 +48,10 @@ each into the same reducer-held model. Every event is CONTENT-FREE.
     connection flipped (reconnect healed it / it dropped). Phase 2.
   * ``weather_updated`` — ``{type, weather:{…}|null}`` — pushed when the
     backend-internal weather cache refreshes (never a client poll). Phase 2.
+  * ``chat_activity`` — ``{type, active}`` — pushed on the 0↔1 edge of the
+    web-chat turn counter, so the core shows "processing" while Renfield handles
+    a TYPED turn (voice already drives the core via satellite_state). Snapshot
+    carries ``chat_active``.
   * ``peer_status_changed`` — see the plan §1.4/§9; REMAINING (needs a small
     backend-internal reachability timer — no discrete federation event exists).
 """
@@ -68,6 +72,29 @@ router = APIRouter()
 # Connected kiosk wall displays. No per-viewer scoping: the kiosk projection is
 # household-wide (ADMIN-gated at connect), so every client sees every event.
 _kiosk_clients: set[WebSocket] = set()
+
+# How many web-chat turns are being processed right now (across all chat sockets
+# on this process). Lets the kiosk core show "processing" while Renfield handles
+# ANY turn — typed web-chat, not just satellite voice (rooms stay satellite-
+# driven; a web-chat turn has no room). Counter (not a bool) so concurrent turns
+# don't cancel each other; floored at 0.
+_active_chat_turns = 0
+
+
+async def note_chat_turn_active(active: bool) -> None:
+    """Mark a web-chat turn as starting (``True``) / ending (``False``) and push a
+    ``chat_activity`` delta only on the 0↔1 edge (so redundant concurrent-turn
+    increments don't spam the hub). Fire-and-forget; a hub failure must never
+    break the chat turn."""
+    global _active_chat_turns
+    was_active = _active_chat_turns > 0
+    _active_chat_turns = max(0, _active_chat_turns + (1 if active else -1))
+    now_active = _active_chat_turns > 0
+    if now_active != was_active:
+        try:
+            await broadcast_kiosk_event({"type": "chat_activity", "active": now_active})
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"kiosk chat_activity broadcast failed: {e}")
 
 
 # Per-client send deadline. A backpressured wall display (tab asleep, WiFi
@@ -209,6 +236,9 @@ async def build_kiosk_snapshot(app) -> dict:
         "peers": [],
         "weather": None,
         "now_playing": [],
+        # True while ≥1 web-chat turn is being processed → the core shows
+        # "processing" even with no satellite active (reconnect hydrate).
+        "chat_active": _active_chat_turns > 0,
     }
 
     # --- Satellites (roster + live state) --------------------------------
