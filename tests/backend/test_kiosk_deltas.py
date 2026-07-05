@@ -330,7 +330,7 @@ async def test_weather_updated_diff_gated(monkeypatch):
         condition="clear",
     )
 
-    async def _fake_compute(_mgr):
+    async def _fake_compute(_mgr, force=False):
         return weather
 
     monkeypatch.setattr(cc, "compute_kiosk_weather", _fake_compute)
@@ -352,7 +352,7 @@ async def test_weather_updated_pushes_none_when_unavailable(monkeypatch):
 
     monkeypatch.setattr(cc, "_weather_last_pushed", {"temp": 5.0}, raising=False)
 
-    async def _fake_compute(_mgr):
+    async def _fake_compute(_mgr, force=False):
         return None
 
     monkeypatch.setattr(cc, "compute_kiosk_weather", _fake_compute)

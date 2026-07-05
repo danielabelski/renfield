@@ -464,7 +464,7 @@ class PresenceService:
 
             payload = build_presence_payload(self)
             await broadcast_kiosk_event({"type": "presence_changed", **payload})
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.debug(f"kiosk presence_changed broadcast failed: {e}")
 
     async def register_voice_presence(
