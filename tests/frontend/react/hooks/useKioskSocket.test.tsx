@@ -94,11 +94,11 @@ afterEach(() => {
 });
 
 describe('useKioskSocket', () => {
-  it('opens /ws/kiosk and starts unhydrated (connecting)', () => {
+  it('opens /ws/kiosk and starts unhydrated (boot skeleton)', () => {
     const { result } = renderHook(() => useKioskSocket());
     expect(latest().url).toContain('/ws/kiosk');
-    expect(result.current.status).toBe('connecting');
     expect(result.current.bootLoading).toBe(true);
+    expect(result.current.backendUnreachable).toBe(false);
     expect(result.current.live.hydrated).toBe(false);
   });
 
@@ -109,8 +109,8 @@ describe('useKioskSocket', () => {
       latest().fireMessage(baseSnapshot());
     });
 
-    expect(result.current.status).toBe('open');
     expect(result.current.bootLoading).toBe(false);
+    expect(result.current.backendUnreachable).toBe(false);
     const m = result.current.live;
     expect(m.hydrated).toBe(true);
     // The roster is connected-only: every satellite it carries is online.
@@ -141,17 +141,25 @@ describe('useKioskSocket', () => {
     expect(result.current.live.satellites.find((s) => s.satellite_id === 'sat-ez')?.state).toBe('idle');
   });
 
-  it('appends a satellite_state delta for a satellite not in the snapshot', () => {
+  it('ignores a satellite_state for an id not in the roster (offline can\'t be resurrected)', () => {
     const { result } = renderHook(() => useKioskSocket());
     act(() => {
       latest().fireOpen();
       latest().fireMessage(baseSnapshot());
     });
+    // Drop sat-ez, then a stale/reordered state frame arrives for it: roster
+    // membership is owned by online/offline, so the state event must NOT re-add
+    // it (that would resurrect the offline satellite and re-pin the core).
+    act(() => {
+      latest().fireMessage({ type: 'satellite_offline', satellite_id: 'sat-ez', room: 'Esszimmer', room_id: 2, online: false });
+      latest().fireMessage({ type: 'satellite_state', satellite_id: 'sat-ez', room: 'Esszimmer', room_id: 2, state: 'speaking' });
+    });
+    expect(result.current.live.satellites.map((s) => s.satellite_id)).toEqual(['sat-wz']);
+    // an unknown id (never in the roster) is likewise ignored, not added
     act(() => {
       latest().fireMessage({ type: 'satellite_state', satellite_id: 'sat-new', room: 'Küche', room_id: 9, state: 'speaking' });
     });
-    const added = result.current.live.satellites.find((s) => s.satellite_id === 'sat-new');
-    expect(added?.state).toBe('speaking'); // treated as freshly live
+    expect(result.current.live.satellites.find((s) => s.satellite_id === 'sat-new')).toBeUndefined();
   });
 
   it('reinstates a satellite on satellite_online and drops it on satellite_offline', () => {
@@ -256,11 +264,11 @@ describe('useKioskSocket', () => {
     });
     expect(MockWebSocket.instances).toHaveLength(1);
 
-    // socket drops → reconnecting, no new socket yet
+    // socket drops → no new socket yet (waits for the backoff), board held live
     act(() => {
       latest().fireClose();
     });
-    expect(result.current.status).toBe('reconnecting');
+    expect(result.current.backendUnreachable).toBe(false);
     expect(MockWebSocket.instances).toHaveLength(1);
 
     // first backoff (1s) elapses → a fresh socket is opened
@@ -274,12 +282,12 @@ describe('useKioskSocket', () => {
       latest().fireOpen();
       latest().fireMessage({ ...baseSnapshot(), satellites: [{ satellite_id: 'sat-wz', room: 'Wohnzimmer', room_id: 1, state: 'speaking' }] });
     });
-    expect(result.current.status).toBe('open');
+    expect(result.current.backendUnreachable).toBe(false);
     expect(result.current.live.satellites).toHaveLength(1);
     expect(result.current.live.satellites[0].state).toBe('speaking');
   });
 
-  it('resolves the boot skeleton on a first-connect failure (never hangs)', () => {
+  it('surfaces unreachable at once on a first-connect failure (no empty ready board)', () => {
     vi.useFakeTimers();
     const { result } = renderHook(() => useKioskSocket());
     expect(result.current.bootLoading).toBe(true);
@@ -287,9 +295,10 @@ describe('useKioskSocket', () => {
     act(() => {
       latest().fireClose();
     });
-    // boot skeleton clears → "reconnecting", not a stuck skeleton
+    // boot skeleton clears AND we go straight to unreachable — there is no
+    // last-good board, so we must NOT show a calm idle wall for the grace window.
     expect(result.current.bootLoading).toBe(false);
-    expect(result.current.status).toBe('reconnecting');
+    expect(result.current.backendUnreachable).toBe(true);
   });
 
   it('keeps the board live through a brief blip, flips unreachable only when sustained', () => {

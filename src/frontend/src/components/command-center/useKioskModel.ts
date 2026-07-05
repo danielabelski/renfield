@@ -32,17 +32,21 @@ const STATE_PRIORITY: Record<string, number> = {
 };
 
 // ---- ring-assembly constants (mirrored from useCommandCenterModel) ---------
-// NOTE: satellite liveness and peer reachability are NO LONGER wall-clock
-// derived — the backend pushes `satellite_online`/`satellite_offline` (a
-// satellite in the roster IS online) and stamps `peer.reachable` in the
-// snapshot. Only the active-role glow / pulse trail still decay by time.
+// NOTE: SATELLITE liveness is no longer wall-clock derived — the backend pushes
+// `satellite_online`/`satellite_offline` (a satellite in the roster IS online).
+// FEDERATION PEERS have no such delta yet (peer_status_changed is deferred), so
+// they keep the wall-clock staleness backstop below: the snapshot's `reachable`
+// alone would freeze a since-gone-down peer green for the whole session.
 /** An activation older than this no longer lights the core (the turn is over). */
 const ACTIVE_WINDOW_MS = 90_000;
 /** Trail entries older than this are fully decayed and dropped from the board. */
 const TRAIL_WINDOW_MS = 15 * 60_000;
-/** Wall-clock recompute cadence: active-role expiry / trail decay must advance
- *  by the PASSAGE OF TIME, not only on new data. */
+/** Wall-clock recompute cadence: active-role expiry / trail decay / peer
+ *  staleness must advance by the PASSAGE OF TIME, not only on new data. */
 const CLOCK_TICK_MS = 15_000;
+/** A federation peer unseen for longer than this renders unreachable (the
+ *  freshness backstop while there is no peer_status_changed delta). */
+const PEER_OFFLINE_MS = 10 * 60_000;
 /** Aggregated per-server success rate below this (with enough calls) = degraded. */
 const DEGRADED_SUCCESS_RATE = 0.8;
 const DEGRADED_MIN_CALLS = 3;
@@ -231,13 +235,19 @@ function buildCommandCenterModel(
   }
 
   // ---- peers arc --------------------------------------------------------
-  // Trust the backend's snapshot `reachable` flag directly — no wall-clock
-  // decay (a frozen snapshot must not fade every peer to red over time).
-  const peers = live.peers.map((peer) => ({
-    id: String(peer.id),
-    label: peer.name,
-    online: peer.reachable,
-  }));
+  // No peer_status_changed delta yet (deferred), so back the snapshot's
+  // `reachable` flag with a wall-clock staleness decay: a peer we haven't seen
+  // for PEER_OFFLINE_MS reads offline even on a long-lived socket, so a
+  // since-gone-down peer can't stay green until the next reconnect.
+  const peers = live.peers.map((peer) => {
+    const lastSeen = peer.last_seen_at ? parseNaiveUtcMs(peer.last_seen_at) : NaN;
+    const fresh = Number.isFinite(lastSeen) && now - lastSeen < PEER_OFFLINE_MS;
+    return {
+      id: String(peer.id),
+      label: peer.name,
+      online: peer.reachable && fresh,
+    };
+  });
 
   return {
     core: { label: 'Renfield', activeRoleId },
@@ -272,6 +282,10 @@ export function useKioskModel(): KioskState {
     // Every satellite in the roster is online — the backend drops a dead one
     // via a `satellite_offline` delta, so there is no stale-heartbeat to filter.
     const onlineSats = live.satellites;
+    // Telemetry counts only satellites that carry a room, so the "N/M online"
+    // corner never exceeds the number of room dots actually drawn (the rooms
+    // ring skips a just-registered satellite whose room binding hasn't landed).
+    const placedSats = onlineSats.filter((s) => s.room);
 
     // ---- voice-reactive core state from the ONLINE satellites' own state ---
     let core: CoreState = backendUnreachable ? 'busy' : 'idle';
@@ -308,8 +322,8 @@ export function useKioskModel(): KioskState {
       nowPlaying,
       subsystemPulses,
       telemetry: {
-        satellitesOnline: onlineSats.length,
-        satellitesTotal: live.satellites.length,
+        satellitesOnline: placedSats.length,
+        satellitesTotal: placedSats.length,
         peoplePresent: liveOccupiedRooms.reduce((n, r) => n + r.occupants, 0),
         occupiedRooms: liveOccupiedRooms.length,
         toolsHealthy: model.tools.filter((tool) => tool.health === 'healthy').length,

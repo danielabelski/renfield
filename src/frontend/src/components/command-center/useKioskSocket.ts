@@ -252,10 +252,16 @@ function reduce(state: KioskLiveModel, msg: KioskMessage): KioskLiveModel {
 
     case 'satellite_state': {
       const delta = msg as SatelliteStateDelta;
-      let found = false;
+      // Roster membership is owned EXCLUSIVELY by satellite_online/offline (and
+      // the snapshot); a state event only updates an already-known satellite.
+      // Ignoring an unknown id here stops a stale/reordered state frame from
+      // resurrecting a satellite that satellite_offline just dropped — the very
+      // stale-core bug the offline drop exists to prevent. A satellite that
+      // connected after hydrate arrives via its own satellite_online delta.
+      let changed = false;
       const satellites = state.satellites.map((sat) => {
         if (sat.satellite_id !== delta.satellite_id) return sat;
-        found = true;
+        changed = true;
         return {
           ...sat,
           room: delta.room ?? sat.room,
@@ -263,18 +269,7 @@ function reduce(state: KioskLiveModel, msg: KioskMessage): KioskLiveModel {
           state: delta.state,
         };
       });
-      if (!found) {
-        // A state transition for a satellite not in the roster (it connected
-        // after hydrate and its online delta hasn't been folded yet). It is
-        // reporting state → it's live; add it.
-        satellites.push({
-          satellite_id: delta.satellite_id,
-          room: delta.room,
-          room_id: delta.room_id ?? null,
-          state: delta.state,
-        });
-      }
-      return { ...state, satellites };
+      return changed ? { ...state, satellites } : state;
     }
 
     case 'satellite_online': {
@@ -391,8 +386,6 @@ function reduce(state: KioskLiveModel, msg: KioskMessage): KioskLiveModel {
 
 // ---- connection lifecycle --------------------------------------------------
 
-export type KioskConnStatus = 'connecting' | 'open' | 'reconnecting';
-
 const INITIAL_BACKOFF_MS = 1000;
 const MAX_BACKOFF_MS = 30_000;
 /** A drop shorter than this keeps the last-good board (a WS blip mustn't flip
@@ -401,16 +394,14 @@ const SUSTAINED_DISCONNECT_MS = 8000;
 
 export interface KioskSocketState {
   live: KioskLiveModel;
-  status: KioskConnStatus;
   /** True until the first snapshot lands OR the first connection attempt fails
-   *  (so an auth/backend failure at boot shows "reconnecting", not a stuck
-   *  skeleton forever). */
+   *  (so an auth/backend failure at boot doesn't hang on the skeleton forever). */
   bootLoading: boolean;
-  /** True whenever the socket is not currently open (connecting or dropped) —
-   *  a calm, immediate indicator. */
-  reconnecting: boolean;
-  /** True only after a SUSTAINED disconnect — the board is now stale and the
-   *  core should read "busy". Held false through a brief blip. */
+  /** True when the board can no longer be trusted as live: either a SUSTAINED
+   *  mid-session disconnect (held false through a brief blip so the last-good
+   *  board survives), or a boot that resolved WITHOUT ever hydrating (a failed
+   *  first connect — there is no last-good board to hold, so surface it at once
+   *  rather than showing an empty "idle/ready" wall for the grace window). */
   backendUnreachable: boolean;
 }
 
@@ -436,7 +427,6 @@ function kioskWsUrl(): string {
  */
 export function useKioskSocket(): KioskSocketState {
   const [live, dispatch] = useReducer(reduce, EMPTY_MODEL);
-  const [status, setStatus] = useState<KioskConnStatus>('connecting');
   // Resolves the first-paint skeleton on EITHER the first snapshot or the first
   // failed connect — so a boot that never authenticates doesn't hang forever.
   const [bootResolved, setBootResolved] = useState(false);
@@ -482,7 +472,6 @@ export function useKioskSocket(): KioskSocketState {
         attemptRef.current = 0;
         clearSustainedTimer();
         setSustainedDisconnect(false);
-        setStatus('open');
       };
 
       ws.onmessage = (event: MessageEvent) => {
@@ -509,7 +498,6 @@ export function useKioskSocket(): KioskSocketState {
         if (intentionalCloseRef.current) return;
         debug.log('Kiosk WS closed — scheduling reconnect');
         setBootResolved(true);
-        setStatus('reconnecting');
         armSustainedTimer();
         scheduleReconnect();
       };
@@ -551,9 +539,10 @@ export function useKioskSocket(): KioskSocketState {
 
   return {
     live,
-    status,
     bootLoading: !live.hydrated && !bootResolved,
-    reconnecting: status !== 'open',
-    backendUnreachable: sustainedDisconnect,
+    // Sustained mid-session drop, OR a boot that resolved without ever
+    // hydrating (failed first connect — no last-good board to hold, so don't
+    // pass the 8s grace showing an empty "ready" wall).
+    backendUnreachable: sustainedDisconnect || (bootResolved && !live.hydrated),
   };
 }
