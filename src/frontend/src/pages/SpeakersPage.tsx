@@ -12,6 +12,8 @@ import Modal from '../components/Modal';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import Badge from '../components/Badge';
+import GuidedEnrollModal from '../components/speakers/GuidedEnrollModal';
+import { useUsersQuery } from '../api/resources/users';
 import {
   useSpeakersQuery,
   useSpeakerStatusQuery,
@@ -36,6 +38,8 @@ export default function SpeakersPage() {
   const { confirm, ConfirmDialogComponent } = useConfirmDialog();
 
   const speakersQuery = useSpeakersQuery();
+  const usersQuery = useUsersQuery();
+  const [showGuidedEnroll, setShowGuidedEnroll] = useState(false);
   const statusQuery = useSpeakerStatusQuery();
   const speakers: Speaker[] = speakersQuery.data ?? [];
   const loading = speakersQuery.isLoading;
@@ -385,6 +389,15 @@ export default function SpeakersPage() {
         </button>
 
         <button
+          onClick={() => setShowGuidedEnroll(true)}
+          className="btn btn-primary flex items-center space-x-2"
+          disabled={!serviceStatus?.available}
+        >
+          <UserPlus className="w-4 h-4" />
+          <span>{t('speakers.enrollGuided')}</span>
+        </button>
+
+        <button
           onClick={openIdentifyModal}
           className="btn btn-secondary flex items-center space-x-2"
           disabled={!serviceStatus?.available || speakers.length === 0}
@@ -492,6 +505,14 @@ export default function SpeakersPage() {
           </div>
         )}
       </div>
+
+      {/* Guided (controlled) enrollment */}
+      <GuidedEnrollModal
+        isOpen={showGuidedEnroll}
+        onClose={() => setShowGuidedEnroll(false)}
+        users={(usersQuery.data ?? []).map((u) => ({ id: u.id, username: u.username }))}
+        onEnrolled={() => setSuccess(t('speakers.enrollSuccess'))}
+      />
 
       {/* Create Speaker Modal */}
       <Modal isOpen={showCreateModal} onClose={() => setShowCreateModal(false)} title={t('speakers.createSpeaker')}>
