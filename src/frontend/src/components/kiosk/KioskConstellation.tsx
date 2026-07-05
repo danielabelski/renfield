@@ -335,8 +335,11 @@ export default function KioskConstellation({ kiosk }: Props) {
           const deg = at(i, tools.length, toolOffset);
           const [x, y] = polar(R_TOOLS, deg);
           const [lx, ly] = polar(R_TOOLS + 22, deg);
-          const col = healthColor(tool.health);
-          const on = tool.health === 'healthy' || tool.health === 'degraded';
+          // Synthetic internal pseudo-nodes (knowledge / presence / media) carry
+          // no health — render them as a dim, dotted placeholder that only comes
+          // alive on a pulse, visually distinct from a monitored MCP tool.
+          const col = tool.synthetic ? C.unknown : healthColor(tool.health);
+          const on = !tool.synthetic && (tool.health === 'healthy' || tool.health === 'degraded');
           // Active-subsystem pulse: a turn_activity naming this MCP server lights
           // its node. The signal rides TWO channels (WCAG 1.4.1 — not colour
           // alone): the turquoise ACTIVE accent AND an expanding concentric ring
@@ -355,7 +358,8 @@ export default function KioskConstellation({ kiosk }: Props) {
               <rect x={x - 8} y={y - 8} width={16} height={16} rx={3} transform={`rotate(45 ${x} ${y})`}
                 fill={active ? C.active : on ? col : 'none'}
                 stroke={active ? C.active : col} strokeWidth={2.5}
-                strokeDasharray={tool.health === 'down' ? '3 3' : undefined}
+                strokeOpacity={tool.synthetic && !active ? 0.55 : 1}
+                strokeDasharray={tool.synthetic ? '1 3' : tool.health === 'down' ? '3 3' : undefined}
                 filter={on || active ? 'url(#k-glow)' : undefined} />
               <text x={lx} y={ly + 5} textAnchor={anchorFor(lx)} fontSize={16}
                 fill={active ? '#eafffb' : C.dim} fontWeight={active ? 600 : 400}>{tool.label}</text>

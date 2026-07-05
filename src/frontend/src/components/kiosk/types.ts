@@ -30,6 +30,10 @@ export interface ToolNode {
   health: NodeHealth;
   /** Tooltip detail, e.g. "12 tools" or the last error. */
   hint?: string;
+  /** True for an INTERNAL-only subsystem (knowledge / presence / media) that has
+   *  no MCP server: a pulse-only pseudo-node with no health, excluded from the
+   *  tool-health telemetry counts and rendered distinctly (dotted, dim). */
+  synthetic?: boolean;
 }
 
 /** The satellite voice states, colour-coded on the kiosk to match the physical

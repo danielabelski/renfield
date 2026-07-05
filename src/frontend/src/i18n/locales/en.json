@@ -1871,7 +1871,12 @@
     "noSatellite": "No satellite",
     "toolHint_one": "{{count}} tool",
     "toolHint_other": "{{count}} tools",
-    "exit": "Exit kiosk"
+    "exit": "Exit kiosk",
+    "subsystem": {
+      "knowledge": "Knowledge",
+      "presence": "Presence",
+      "media": "Media"
+    }
   },
   "routing": {
     "title": "Routing Dashboard",

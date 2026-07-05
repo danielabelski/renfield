@@ -55,6 +55,7 @@ interface SnapOverrides {
   satellites?: unknown[];
   weather?: unknown;
   now_playing?: unknown[];
+  mcp?: unknown;
 }
 
 function snapshot(satState: string, over: SnapOverrides = {}) {
@@ -70,7 +71,7 @@ function snapshot(satState: string, over: SnapOverrides = {}) {
       people_present: 1,
       occupied_rooms: 1,
     },
-    mcp,
+    mcp: over.mcp ?? mcp,
     tool_health: [],
     roles,
     activity: [],
@@ -201,5 +202,43 @@ describe('KioskPage', () => {
     await waitFor(() =>
       expect(document.querySelector('[data-tool-id="homeassistant"][data-tool-active="1"]')).not.toBeNull(),
     );
+  });
+
+  it('renders synthetic internal-subsystem nodes and pulses them (knowledge)', async () => {
+    renderWithProviders(<KioskPage />);
+    pushSnapshot(snapshot('idle'));
+    await waitFor(() => expect(screen.getByText('2/2 online')).toBeInTheDocument());
+    // the knowledge/presence/media pseudo-nodes are always present (no MCP server)
+    expect(document.querySelector('[data-tool-id="knowledge"]')).not.toBeNull();
+    expect(document.querySelector('[data-tool-id="presence"]')).not.toBeNull();
+    expect(document.querySelector('[data-tool-id="media"]')).not.toBeNull();
+    // idle until named — and synthetic nodes don't inflate the tool-health count
+    expect(document.querySelector('[data-tool-id="knowledge"][data-tool-active="1"]')).toBeNull();
+    expect(screen.getByText('1/2 gesund')).toBeInTheDocument(); // still 2 MCP tools, not 5
+    // an internal.knowledge_search turn → subsystems:['knowledge'] lights it
+    const ws = MockWebSocket.instances[MockWebSocket.instances.length - 1];
+    act(() => {
+      ws.fireMessage({ type: 'turn_activity', role: 'knowledge', subsystems: ['knowledge'], ok: true, at: new Date().toISOString() });
+    });
+    await waitFor(() =>
+      expect(document.querySelector('[data-tool-id="knowledge"][data-tool-active="1"]')).not.toBeNull(),
+    );
+  });
+
+  it('does not duplicate a synthetic node when a real MCP server owns its id', async () => {
+    renderWithProviders(<KioskPage />);
+    // an operator adds an output-provider MCP server literally named 'media'
+    pushSnapshot(snapshot('idle', {
+      mcp: {
+        enabled: true,
+        total_tools: 5,
+        servers: [{ name: 'media', connected: true, transport: 'stdio', tool_count: 5 }],
+      },
+    }));
+    await waitFor(() => expect(document.querySelector('[data-tool-id="media"]')).not.toBeNull());
+    // the real server wins — exactly one 'media' node, no duplicate React key
+    expect(document.querySelectorAll('[data-tool-id="media"]')).toHaveLength(1);
+    // knowledge / presence still get their synthetic nodes
+    expect(document.querySelector('[data-tool-id="knowledge"]')).not.toBeNull();
   });
 });

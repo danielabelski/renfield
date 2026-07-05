@@ -14,7 +14,7 @@ import { useTranslation } from 'react-i18next';
 import { roleLabel } from '../chat/AgentRoleBadge';
 import { useKioskSocket, type KioskLiveModel } from './useKioskSocket';
 import type { KioskWeather, KioskNowPlaying } from '../../api/resources/kiosk';
-import type { CommandCenterModel, NodeHealth } from './types';
+import type { CommandCenterModel, NodeHealth, ToolNode } from './types';
 
 export type CoreState = 'idle' | 'listening' | 'processing' | 'speaking' | 'busy';
 
@@ -56,6 +56,18 @@ const SERVER_LABELS: Record<string, string> = {
   searxng: 'SearXNG',
   tts: 'TTS',
 };
+
+/** The INTERNAL-only subsystems (`internal.*` tools with no MCP server) that the
+ *  active-subsystem pulse can name. Rendered as always-present, pulse-only
+ *  pseudo-nodes on the tools ring so a knowledge/presence/media turn has a node
+ *  to light. MUST stay in sync with the backend `INTERNAL_SUBSYSTEM_LABELS`
+ *  internal-only value set (api/websocket/chat_handler.py). `homeassistant` /
+ *  `weather` are excluded here — they are real MCP servers with their own nodes. */
+const INTERNAL_SUBSYSTEM_NODES: { id: string; labelKey: string; fallback: string }[] = [
+  { id: 'knowledge', labelKey: 'kiosk.subsystem.knowledge', fallback: 'Knowledge' },
+  { id: 'presence', labelKey: 'kiosk.subsystem.presence', fallback: 'Presence' },
+  { id: 'media', labelKey: 'kiosk.subsystem.media', fallback: 'Media' },
+];
 
 function prettifyServerName(name: string): string {
   const known = SERVER_LABELS[name.toLowerCase()];
@@ -150,7 +162,7 @@ function buildCommandCenterModel(
     agg.fail += fail;
     failing.set(match[1], agg);
   }
-  const tools = live.mcp.servers.map((server) => {
+  const tools: ToolNode[] = live.mcp.servers.map((server) => {
     let health: NodeHealth;
     if (!server.connected) {
       health = 'down';
@@ -177,6 +189,23 @@ function buildCommandCenterModel(
         : server.last_error || t('kiosk.legend.down'),
     };
   });
+
+  // Append the internal-only subsystem pseudo-nodes (knowledge / presence /
+  // media) so an `internal.*` turn has a node to light. Pulse-only: no health,
+  // excluded from the tool-health telemetry counts below. Skip any id that a
+  // REAL MCP server already owns (e.g. an operator adds an output-provider
+  // stanza named `media`) — the real node wins and handles that pulse, and we
+  // never emit a duplicate `data-tool-id` / React key.
+  const realServerIds = new Set(tools.map((tool) => tool.id));
+  for (const node of INTERNAL_SUBSYSTEM_NODES) {
+    if (realServerIds.has(node.id)) continue;
+    tools.push({
+      id: node.id,
+      label: t(node.labelKey, { defaultValue: node.fallback }),
+      health: 'unknown',
+      synthetic: true,
+    });
+  }
 
   // ---- rooms ring -------------------------------------------------------
   // Union of satellite rooms (online state) and presence rooms (occupants).
@@ -323,8 +352,9 @@ export function useKioskModel(): KioskState {
         satellitesTotal: placedSats.length,
         peoplePresent: liveOccupiedRooms.reduce((n, r) => n + r.occupants, 0),
         occupiedRooms: liveOccupiedRooms.length,
-        toolsHealthy: model.tools.filter((tool) => tool.health === 'healthy').length,
-        toolsTotal: model.tools.length,
+        // Synthetic internal pseudo-nodes have no health → excluded from counts.
+        toolsHealthy: model.tools.filter((tool) => !tool.synthetic && tool.health === 'healthy').length,
+        toolsTotal: model.tools.filter((tool) => !tool.synthetic).length,
       },
     };
   }, [t, lang, nowTick, live, bootLoading, backendUnreachable, weather, nowPlaying, subsystemPulses]);

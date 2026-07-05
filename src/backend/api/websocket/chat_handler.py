@@ -210,15 +210,48 @@ def _extract_agent_sources(tool_results: list) -> list[dict]:
 
 
 # Maps the platform-core / ha_glue ``internal.*`` tools (which have no MCP
-# server, hence no natural ring node) onto a kiosk subsystem id. Unknown
-# internal tools are intentionally skipped (no synthetic node). Keep in sync
-# with the kiosk's rendered subsystem nodes.
+# server, hence no natural ring node) onto a kiosk subsystem id. Unknown internal
+# tools are intentionally skipped (no pulse). ``homeassistant`` and ``weather``
+# are REAL MCP servers (they already render as tool-ring nodes); ``knowledge`` /
+# ``presence`` / ``media`` are INTERNAL-ONLY subsystems with no MCP server — the
+# kiosk renders synthetic pulse-only nodes for exactly those three, so this map's
+# internal-only value set MUST stay in sync with the frontend
+# ``INTERNAL_SUBSYSTEM_NODES`` (components/kiosk/useKioskModel.ts). Pure Gen-UI
+# formatting tools (render_table / render_list) touch no subsystem → omitted.
 INTERNAL_SUBSYSTEM_LABELS: dict[str, str] = {
+    # knowledge / second brain — RAG, memory, document ingest + maintenance
     "internal.knowledge_search": "knowledge",
+    "internal.list_my_memories": "knowledge",
+    "internal.forward_attachment_to_paperless": "knowledge",
+    "internal.paperless_commit_upload": "knowledge",
+    "internal.ingest_file": "knowledge",
+    "internal.ingest_status": "knowledge",
+    "internal.reindex_documents": "knowledge",
+    "internal.list_chunkless_documents": "knowledge",
+    # presence
     "internal.presence_map": "presence",
+    "internal.presence_history": "presence",
+    "internal.get_all_presence": "presence",
+    "internal.get_user_location": "presence",
     "internal.bluetooth_scan": "presence",
+    # home assistant — device control + spoken announcements via HA speakers
     "internal.device_action": "homeassistant",
     "internal.device_controls": "homeassistant",
+    "internal.announce_in_room": "homeassistant",
+    "internal.broadcast_announcement": "homeassistant",
+    # weather (wraps the weather MCP)
+    "internal.weather_widget": "weather",
+    # media — DLNA / radio / server playback orchestration
+    "internal.media_control": "media",
+    "internal.play_radio": "media",
+    "internal.play_in_room": "media",
+    "internal.play_from_server": "media",
+    "internal.play_album_on_dlna": "media",
+    "internal.play_video_on_dlna": "media",
+    "internal.list_radio_favorites": "media",
+    "internal.save_radio_favorite": "media",
+    "internal.remove_radio_favorite": "media",
+    "internal.resolve_room_player": "media",
 }
 
 # A single turn rarely touches many subsystems; cap the pushed/persisted list so
