@@ -139,10 +139,12 @@ class TestMergeSpeakers:
             tgt_uid = await _mk_user(s, speaker_id=tgt)
             await s.commit()
         async with maker() as s:
-            await merge_speakers(
+            resp = await merge_speakers(
                 MergeSpeakersRequest(source_speaker_id=src, target_speaker_id=tgt),
                 db=s, _user=None,
             )
+        # the severed source-user link is surfaced in the response
+        assert "link was removed" in resp.message
         async with maker() as s:
             assert (await s.execute(
                 select(User).where(User.id == tgt_uid))).scalar_one().speaker_id == tgt

@@ -409,11 +409,24 @@ async def merge_speakers(
         .where(SpeakerEmbedding.speaker_id == tgt_id)
     )).scalar() or 0
 
+    # If BOTH speakers were linked to (different) users, the source's link could
+    # not move (users.speaker_id is UNIQUE) and was severed when the source was
+    # deleted — surface it so the admin knows that user must re-pair their voice.
+    source_user_unlinked = source_has_user and target_has_user
+
     logger.info(
         f"🔗 Merged speaker '{source_name}' into '{target_name}': "
         f"{source_embedding_count} embeddings moved, "
         f"{total_embedding_count} total embeddings"
+        + (" (source user unlinked — was linked to a different account)"
+           if source_user_unlinked else "")
     )
+
+    message = (f"Successfully merged '{source_name}' into '{target_name}'. "
+               f"{source_embedding_count} embeddings transferred.")
+    if source_user_unlinked:
+        message += (" Note: the source speaker was linked to a different user "
+                    "account; that link was removed (a speaker maps to one user).")
 
     return MergeSpeakersResponse(
         target_speaker_id=tgt_id,
@@ -421,8 +434,7 @@ async def merge_speakers(
         merged_embedding_count=source_embedding_count,
         total_embedding_count=total_embedding_count,
         source_speaker_deleted=source_name,
-        message=f"Successfully merged '{source_name}' into '{target_name}'. "
-                f"{source_embedding_count} embeddings transferred."
+        message=message,
     )
 
 

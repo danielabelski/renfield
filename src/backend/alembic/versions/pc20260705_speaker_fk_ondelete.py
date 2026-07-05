@@ -14,8 +14,10 @@ with no way to remove or consolidate them.
 Give each FK the semantically-correct delete action:
 
 - ``speaker_embeddings.speaker_id`` → ``CASCADE`` (an embedding belongs to its
-  speaker; delete it with the speaker). Pairs with the ORM ``cascade=
-  "all, delete-orphan"`` + ``passive_deletes=True`` so the DB does the work.
+  speaker; delete it with the speaker). The delete/merge routes use bulk SQL, so
+  this DB-level CASCADE does the work; the ORM keeps ``cascade="all,
+  delete-orphan"`` (NOT ``passive_deletes`` — sqlite ignores DB-level ON DELETE)
+  for any ORM ``db.delete(speaker)`` caller + the model tests.
 - ``conversations.speaker_id`` → ``SET NULL`` (keep the conversation, drop the
   now-dangling speaker attribution).
 - ``users.speaker_id`` → ``SET NULL`` (keep the user account, drop the link).
