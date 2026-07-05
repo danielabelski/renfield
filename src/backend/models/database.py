@@ -37,7 +37,7 @@ class Conversation(Base):
 
     # Ownership (nullable for anonymous/legacy conversations)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
-    speaker_id = Column(Integer, ForeignKey("speakers.id"), nullable=True, index=True)
+    speaker_id = Column(Integer, ForeignKey("speakers.id", ondelete="SET NULL"), nullable=True, index=True)
 
     # Conversation state (survives history truncation)
     context_vars = Column(JSON, nullable=True)   # Pinned structured state (entities, focus)
@@ -163,11 +163,21 @@ class Speaker(Base):
     created_at = Column(DateTime, default=_utcnow)
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
-    # Beziehungen
-    embeddings = relationship("SpeakerEmbedding", back_populates="speaker", cascade="all, delete-orphan")
+    # Beziehungen. The FK-column ON DELETE rules (migration pc20260705) are the
+    # authoritative cleanup for the bulk-SQL delete/merge paths + referential
+    # integrity; the ORM cascade here still handles any ORM ``db.delete(speaker)``
+    # caller (and the sqlite test harness, which doesn't enforce DB-level ON
+    # DELETE). NOT passive_deletes — that would defer to the DB cascade, which
+    # sqlite ignores, orphaning embeddings in the model tests.
+    embeddings = relationship(
+        "SpeakerEmbedding", back_populates="speaker", cascade="all, delete-orphan",
+    )
 
     # Link to User account (for voice authentication)
-    user = relationship("User", back_populates="speaker", uselist=False, foreign_keys="User.speaker_id")
+    user = relationship(
+        "User", back_populates="speaker", uselist=False,
+        foreign_keys="User.speaker_id",
+    )
 
 
 class SpeakerEmbedding(Base):
@@ -175,7 +185,7 @@ class SpeakerEmbedding(Base):
     __tablename__ = "speaker_embeddings"
 
     id = Column(Integer, primary_key=True, index=True)
-    speaker_id = Column(Integer, ForeignKey("speakers.id"), nullable=False, index=True)
+    speaker_id = Column(Integer, ForeignKey("speakers.id", ondelete="CASCADE"), nullable=False, index=True)
     embedding = Column(Text, nullable=False)         # Base64-encoded numpy array
     sample_duration = Column(Integer, nullable=True)  # Dauer des Samples in Millisekunden
     created_at = Column(DateTime, default=_utcnow)
@@ -779,7 +789,7 @@ class User(Base):
     paperless_confirms_used = Column(Integer, nullable=False, default=0, server_default="0")
 
     # Optional link to Speaker for voice authentication
-    speaker_id = Column(Integer, ForeignKey("speakers.id"), nullable=True, unique=True)
+    speaker_id = Column(Integer, ForeignKey("speakers.id", ondelete="SET NULL"), nullable=True, unique=True)
 
     # Timestamps
     created_at = Column(DateTime, default=_utcnow)
