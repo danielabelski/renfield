@@ -16,7 +16,7 @@ import { Music2, Radio as RadioIcon, Film, ListMusic } from 'lucide-react';
 import { iconForCode } from '../chat/artifacts/WeatherArtifact';
 import type { NodeHealth, SatelliteState } from './types';
 import type { CoreState, KioskState } from './useKioskModel';
-import type { KioskNowPlaying } from '../../api/resources/commandCenter';
+import type { KioskNowPlaying } from '../../api/resources/kiosk';
 
 const VW = 1920;
 const VH = 1080;

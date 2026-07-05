@@ -68,7 +68,7 @@
     "adminToolHealth": "Tool Health",
     "adminTrajectories": "Trajectories",
     "adminCurator": "Curator",
-    "commandCenter": "Command Center",
+    "kiosk": "Kiosk",
     "wissen": "Knowledge"
   },
   "auth": {
@@ -1865,58 +1865,13 @@
     "legend": {
       "present": "Present / healthy",
       "empty": "Online · empty",
-      "offline": "Offline"
-    }
-  },
-  "commandCenter": {
-    "title": "Command Center",
-    "subtitle": "Live constellation of the running system",
-    "kiosk": "Kiosk",
-    "openKiosk": "Open the fullscreen wall display",
-    "idle": "idle",
-    "srSummary": "{{roles}} agent roles, {{tools}} tools, {{rooms}} rooms. Active role: {{active}}.",
-    "ring": {
-      "roles": "Agent roles",
-      "tools": "Tools & integrations",
-      "rooms": "Rooms & satellites",
-      "peers": "Federation peers"
+      "offline": "Offline",
+      "down": "Down"
     },
-    "legend": {
-      "healthy": "Healthy",
-      "degraded": "Degraded",
-      "down": "Down",
-      "unknown": "Unknown",
-      "active": "Active / occupied"
-    },
-    "busy": "system busy",
-    "loading": "Assembling the constellation…",
-    "unreachableHint": "Backend unreachable or busy — showing the last known state. The board recovers on its own.",
-    "rolesLoadError": "Agent roles could not be loaded",
-    "activityLoadError": "Activity could not be loaded",
-    "activityTitle": "Live activity",
-    "activityEmpty": "Quiet right now — the board lights up with the next question.",
-    "summaryTitle": "At a glance",
-    "occupiedRooms": "Occupied rooms",
-    "turnOk": "succeeded",
-    "turnFailed": "failed",
-    "justNow": "just now",
-    "minutesAgo": "{{n}} min ago",
-    "activeNow": "answering now",
-    "occupants_one": "{{count}} present",
-    "occupants_other": "{{count}} present",
-    "emptyRoom": "empty",
-    "reachable": "reachable",
-    "unreachable": "unreachable",
-    "sectionEmpty": "Nothing configured yet.",
     "noSatellite": "No satellite",
     "toolHint_one": "{{count}} tool",
     "toolHint_other": "{{count}} tools",
-    "openRole": "Open routing: {{role}}",
-    "openTool": "Open integrations: {{tool}}",
-    "openRoom": "Open satellites: {{room}}",
-    "openPeer": "Open federation audit: {{peer}}",
-    "weatherLoadError": "Could not load weather",
-    "nowPlayingLoadError": "Could not load playback"
+    "exit": "Exit kiosk"
   },
   "routing": {
     "title": "Routing Dashboard",

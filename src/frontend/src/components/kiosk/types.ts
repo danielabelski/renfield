@@ -1,13 +1,10 @@
-// Command Center — typed model for the live constellation.
-// See docs/design/command-center.md. The component is fed this shape;
-// useCommandCenterModel assembles it live from the admin endpoints + the
-// content-free activity pulse (/api/command-center/activity).
+// Kiosk constellation — typed model for the live wall-display rings.
+// `useKioskModel` assembles this shape from the `/ws/kiosk` push snapshot +
+// deltas (content-free). Retained from the decommissioned admin Command Center;
+// the type names kept their `…Node`/`CommandCenterModel` spelling to bound the
+// diff — they now describe the kiosk's rings.
 
 export type NodeHealth = 'healthy' | 'degraded' | 'down' | 'unknown';
-
-/** Per-ring fetch state so each ring can render its own loading/error
- *  treatment without blanking the whole board. */
-export type RingStatus = 'loading' | 'ready' | 'error';
 
 export interface CoreNode {
   /** Display name of the orchestrator, e.g. "Renfield". */
@@ -77,6 +74,4 @@ export interface CommandCenterModel {
   peers?: PeerNode[];
   /** Recent activations, newest first — drives the active edge + decay trail. */
   trail?: PulseEntry[];
-  /** Per-ring fetch state (absent = ready, keeps the demo model terse). */
-  ringStatus?: Partial<Record<'roles' | 'tools' | 'rooms' | 'peers', RingStatus>>;
 }

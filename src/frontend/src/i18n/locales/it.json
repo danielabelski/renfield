@@ -68,6 +68,7 @@
     "adminToolHealth": "Stato strumenti",
     "adminTrajectories": "Traiettorie",
     "adminCurator": "Curatore",
+    "kiosk": "Kiosk",
     "wissen": "Conoscenza"
   },
   "auth": {
@@ -1835,23 +1836,39 @@
       "openInGraph": "Apri nel Grafo"
     }
   },
-  "commandCenter": {
-    "title": "Centro di comando",
-    "subtitle": "Costellazione in tempo reale del sistema in esecuzione",
+  "kiosk": {
+    "loading": "Attivazione del centro di comando…",
+    "disconnected": "Riconnessione a Renfield…",
+    "srSummary": "Centro di comando Renfield. {{present}} persone presenti, {{online}} di {{total}} satelliti online.",
     "idle": "inattivo",
-    "srSummary": "{{roles}} ruoli agente, {{tools}} strumenti, {{rooms}} stanze. Ruolo attivo: {{active}}.",
-    "ring": {
-      "roles": "Ruoli agente",
-      "tools": "Strumenti e integrazioni",
-      "rooms": "Stanze e satelliti",
-      "peers": "Istanze federate"
+    "online": "online",
+    "healthy": "integro",
+    "inRoom": "{{state}} · {{room}}",
+    "presentValue": "{{people}} in {{rooms}} stanze",
+    "state": {
+      "idle": "pronto",
+      "listening": "in ascolto",
+      "processing": "elaborazione",
+      "speaking": "in risposta",
+      "busy": "sistema occupato",
+      "error": "Errore"
+    },
+    "telemetry": {
+      "satellites": "Satelliti",
+      "present": "Presenti",
+      "tools": "Strumenti",
+      "agent": "Agente"
     },
     "legend": {
-      "healthy": "In salute",
-      "degraded": "Degradato",
-      "down": "Non attivo",
-      "unknown": "Sconosciuto"
-    }
+      "present": "Presente / integro",
+      "empty": "Online · vuoto",
+      "offline": "Offline",
+      "down": "Non disponibile"
+    },
+    "noSatellite": "Nessun satellite",
+    "toolHint_one": "{{count}} strumento",
+    "toolHint_other": "{{count}} strumenti",
+    "exit": "Esci dal kiosk"
   },
   "routing": {
     "title": "Pannello di routing",

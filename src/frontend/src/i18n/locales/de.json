@@ -68,7 +68,7 @@
     "adminToolHealth": "Werkzeug-Gesundheit",
     "adminTrajectories": "Verlaufstrajektorien",
     "adminCurator": "Kurator",
-    "commandCenter": "Kommandozentrale",
+    "kiosk": "Kiosk",
     "wissen": "Wissen"
   },
   "auth": {
@@ -1865,58 +1865,13 @@
     "legend": {
       "present": "Anwesend / gesund",
       "empty": "Online · leer",
-      "offline": "Offline"
-    }
-  },
-  "commandCenter": {
-    "title": "Kommandozentrale",
-    "subtitle": "Live-Konstellation des laufenden Systems",
-    "kiosk": "Kiosk",
-    "openKiosk": "Vollbild-Wandanzeige öffnen",
-    "idle": "inaktiv",
-    "srSummary": "{{roles}} Agenten-Rollen, {{tools}} Werkzeuge, {{rooms}} Räume. Aktive Rolle: {{active}}.",
-    "ring": {
-      "roles": "Agenten-Rollen",
-      "tools": "Werkzeuge & Integrationen",
-      "rooms": "Räume & Satelliten",
-      "peers": "Föderations-Instanzen"
+      "offline": "Offline",
+      "down": "Ausgefallen"
     },
-    "legend": {
-      "healthy": "Gesund",
-      "degraded": "Eingeschränkt",
-      "down": "Ausgefallen",
-      "unknown": "Unbekannt",
-      "active": "Aktiv / belegt"
-    },
-    "busy": "System ausgelastet",
-    "loading": "Konstellation wird aufgebaut…",
-    "unreachableHint": "Backend nicht erreichbar oder ausgelastet — letzter bekannter Stand wird angezeigt. Die Ansicht erholt sich von selbst.",
-    "rolesLoadError": "Agenten-Rollen konnten nicht geladen werden",
-    "activityLoadError": "Aktivität konnte nicht geladen werden",
-    "activityTitle": "Live-Aktivität",
-    "activityEmpty": "Gerade ruhig — mit der nächsten Frage leuchtet die Tafel auf.",
-    "summaryTitle": "Auf einen Blick",
-    "occupiedRooms": "Belegte Räume",
-    "turnOk": "erfolgreich",
-    "turnFailed": "fehlgeschlagen",
-    "justNow": "gerade eben",
-    "minutesAgo": "vor {{n}} Min.",
-    "activeNow": "antwortet gerade",
-    "occupants_one": "{{count}} anwesend",
-    "occupants_other": "{{count}} anwesend",
-    "emptyRoom": "leer",
-    "reachable": "erreichbar",
-    "unreachable": "nicht erreichbar",
-    "sectionEmpty": "Noch nichts eingerichtet.",
     "noSatellite": "Kein Satellit",
-    "toolHint_one": "{{count}} Werkzeug",
-    "toolHint_other": "{{count}} Werkzeuge",
-    "openRole": "Routing öffnen: {{role}}",
-    "openTool": "Integrationen öffnen: {{tool}}",
-    "openRoom": "Satelliten öffnen: {{room}}",
-    "openPeer": "Föderations-Audit öffnen: {{peer}}",
-    "weatherLoadError": "Wetter konnte nicht geladen werden",
-    "nowPlayingLoadError": "Wiedergabe konnte nicht geladen werden"
+    "toolHint_one": "{{count}} Tool",
+    "toolHint_other": "{{count}} Tools",
+    "exit": "Kiosk verlassen"
   },
   "routing": {
     "title": "Routing-Dashboard",

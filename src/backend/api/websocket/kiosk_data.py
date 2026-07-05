@@ -1,75 +1,39 @@
 """
-Command Center API — read-only data for the /admin/command-center constellation.
+Kiosk data helpers — the read-only, content-free reads that back the `/ws/kiosk`
+snapshot + push deltas (`kiosk_handler`).
 
-Two small admin-gated endpoints backing docs/design/command-center.md:
+This is kiosk-OWNED code: it moved here wholesale from the now-decommissioned
+`api/routes/command_center.py` when the admin Command Center was removed and the
+kiosk became the surviving wall-display surface (the kiosk sources everything
+over the WS hub — no REST poll). It holds two pieces of shared logic:
 
-  GET /roles     — the agent roles loaded from agent_roles.yaml (the router's
-                   live, availability-filtered set). /api/roles is RBAC system
-                   roles; the agent roles had no REST surface until this.
-  GET /activity  — the recent role activations (role name + timestamp + ok),
-                   read from the assistant messages' persisted
-                   ``message_metadata.agent_role`` (role-surfacing). This is the
-                   board's live pulse. Deliberately CONTENT-FREE: no message
-                   text, no user ids — safe for the future kiosk projection.
+  * recent_role_activity_entries — newest-first role activations for the pulse
+    trail, content-free by construction (role + timestamp + ok only).
+  * compute_kiosk_weather / refresh_and_push_kiosk_weather — the process-cached
+    home-location weather reading + the backend-internal refresher that PUSHES a
+    ``weather_updated`` delta on change (NOT a client poll — the timer refreshes
+    an external cache Open-Meteo doesn't push).
 
-Both are ADMIN because they expose household-wide operational state.
+Both degrade to an empty/None payload (never an error) when the feature is off or
+the source is unavailable, so the kiosk simply hides the tile.
 """
 
 import time
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query, Request
 from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import Message, User
-from models.permissions import Permission
-from services.api_rate_limiter import limiter
-from services.auth_service import require_permission
-from services.database import get_db
+from models.database import Message
 from utils.config import settings
-
-router = APIRouter()
-
-
-class AgentRoleResponse(BaseModel):
-    name: str
-    description: dict[str, str]
-    # None = the role may use ALL servers / internal tools (agent_router
-    # semantics). The frontend uses these lists for the hover reach-edges.
-    mcp_servers: list[str] | None
-    internal_tools: list[str] | None
-    has_agent_loop: bool
 
 
 class RoleActivityEntry(BaseModel):
     role: str
     at: datetime
     ok: bool | None
-
-
-@router.get("/roles", response_model=list[AgentRoleResponse])
-@limiter.limit(settings.api_rate_limit_admin)
-async def list_agent_roles(
-    request: Request,
-    _: User = Depends(require_permission(Permission.ADMIN)),
-):
-    """Agent roles as the router currently sees them (availability-filtered)."""
-    agent_router = getattr(request.app.state, "agent_router", None)
-    if agent_router is None or not getattr(agent_router, "roles", None):
-        return []
-    return [
-        AgentRoleResponse(
-            name=role.name,
-            description=role.description,
-            mcp_servers=role.mcp_servers,
-            internal_tools=role.internal_tools,
-            has_agent_loop=role.has_agent_loop,
-        )
-        for role in agent_router.roles.values()
-    ]
 
 
 # How many recent assistant messages to scan for role entries. Shortcut paths
@@ -81,8 +45,8 @@ async def recent_role_activity_entries(
     db: AsyncSession, limit: int = 30
 ) -> list[RoleActivityEntry]:
     """Newest-first role activations, content-free by construction: only the
-    role name, timestamp, and the turn's action_success. Shared by the REST
-    ``/activity`` poll and the kiosk WS snapshot (``kiosk_handler``).
+    role name, timestamp, and the turn's action_success. Feeds the kiosk WS
+    snapshot (``kiosk_handler``).
 
     The agent_role extraction happens in Python over a bounded recent window
     (JSON, not JSONB, column — portable across the test sqlite shim and prod
@@ -117,23 +81,9 @@ async def recent_role_activity_entries(
     return entries
 
 
-@router.get("/activity", response_model=list[RoleActivityEntry])
-@limiter.limit(settings.api_rate_limit_admin)
-async def recent_role_activity(
-    request: Request,
-    limit: int = Query(default=30, ge=1, le=100),
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_permission(Permission.ADMIN)),
-):
-    """Newest-first role activations. Content-free by construction: only the
-    role name, timestamp, and the turn's action_success leave this endpoint."""
-    return await recent_role_activity_entries(db, limit)
-
-
 # ---------------------------------------------------------------------------
-# Ambient kiosk tiles — weather + now-playing. Both read-only, ADMIN-gated, and
-# degrade to an empty payload (never an error) when the feature is off or the
-# source is unavailable, so the kiosk simply hides the tile.
+# Ambient kiosk weather tile. Read-only, degrades to None (never an error) when
+# the feature is off or the source is unavailable, so the kiosk hides the tile.
 # ---------------------------------------------------------------------------
 
 
@@ -147,8 +97,8 @@ class KioskWeather(BaseModel):
     low: float | None = None
 
 
-# Weather barely moves; a kiosk polls every few minutes. Serve a process-local
-# cached reading so the poll never hammers the Open-Meteo MCP.
+# Weather barely moves; serve a process-local cached reading so the refresher
+# never hammers the Open-Meteo MCP.
 _WEATHER_TTL_SECONDS = 600
 _weather_cache: dict[str, object] = {"at": 0.0, "value": None}
 
@@ -156,9 +106,9 @@ _weather_cache: dict[str, object] = {"at": 0.0, "value": None}
 async def compute_kiosk_weather(mcp_manager, force: bool = False) -> "KioskWeather | None":
     """Current conditions for the configured home location (process-cached).
 
-    Shared by the REST ``/weather`` poll and the kiosk WS snapshot
-    (``kiosk_handler``). ``None`` (never an error) when weather is disabled, no
-    location is configured, or the MCP can't answer — the tile hides itself.
+    Feeds the kiosk WS snapshot + ``weather_updated`` delta. ``None`` (never an
+    error) when weather is disabled, no location is configured, or the MCP can't
+    answer — the tile hides itself.
 
     ``force=True`` bypasses the TTL cache READ (used by the periodic refresher so
     a tick genuinely re-fetches even if a client snapshot just warmed the cache
@@ -239,43 +189,3 @@ async def refresh_and_push_kiosk_weather(mcp_manager) -> None:
         await broadcast_kiosk_event({"type": "weather_updated", "weather": payload})
     except Exception as e:
         logger.debug(f"kiosk weather_updated broadcast failed: {e}")
-
-
-@router.get("/weather", response_model=KioskWeather | None)
-@limiter.limit(settings.api_rate_limit_admin)
-async def kiosk_weather(
-    request: Request,
-    _: User = Depends(require_permission(Permission.ADMIN)),
-):
-    """Current conditions for the configured home location, for the kiosk tile."""
-    return await compute_kiosk_weather(getattr(request.app.state, "mcp_manager", None))
-
-
-class KioskNowPlaying(BaseModel):
-    room: str
-    kind: str
-    title: str
-    subtitle: str | None = None
-    track: int | None = None
-    total: int | None = None
-
-
-@router.get("/now-playing", response_model=list[KioskNowPlaying])
-@limiter.limit(settings.api_rate_limit_admin)
-async def kiosk_now_playing(
-    request: Request,
-    _: User = Depends(require_permission(Permission.ADMIN)),
-):
-    """Live media-follow sessions, one per room (content-minimal). Empty list
-    when media-follow is disabled or nothing is playing."""
-    from ha_glue.utils.config import ha_glue_settings
-
-    if not ha_glue_settings.media_follow_enabled:
-        return []
-    try:
-        from ha_glue.services.media_follow_service import get_media_follow_service
-
-        return get_media_follow_service().active_sessions()
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"kiosk_now_playing: {e}")
-        return []

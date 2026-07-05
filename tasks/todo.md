@@ -1,53 +1,32 @@
-# Feature: Command Center — Phase 3 Fullscreen Kiosk (DONE)
+# Phase 4 — Decommission the Command Center
 
-Fullscreen ambient wall-display per the cinematic mockups
-(`docs/design/assets/command-center/`). Deliberately breaks DESIGN.md's
-restrained look — sanctioned in TODOS.md line 315 (glow aesthetic belongs on
-the kiosk, stays out of the restrained admin board).
+**Boundary rule:** anything the kiosk needs MOVES to kiosk-owned code; command-center-only surface is DELETED.
 
-## Shipped
-- [x] `KioskConstellation.tsx` — the GLOW variant (separate from restrained
-      AgentConstellation): full-bleed dark cosmic field + stars, glowing bloom
-      core with idle/listening/processing/speaking states + voice-burst ring,
-      rings (roles/tools/rooms/peers), ambient telemetry corner, wordmark,
-      clock, legend. Reduced-motion honoured. Content-free.
-- [x] `useKioskModel.ts` — CommandCenterModel + voice-core state derived from
-      the satellites' real `state` (idle/listening/processing/speaking) + room.
-- [x] `KioskPage.tsx` — fullscreen, NO Layout chrome, hides cursor after 4s idle.
-- [x] Route `/kiosk` in App.tsx OUTSIDE the Layout (AdminRoute; auth-off = open)
-      + "Kiosk" link on the admin command-center header (opens in new tab).
-- [x] i18n de/en (`kiosk.*`).
-- [x] 3 RTL smoke tests (idle vs listening core state, telemetry counts).
+## Backend
+- [ ] Create `src/backend/api/websocket/kiosk_data.py` — move the shared read logic out of `command_center.py`: `KioskWeather` model, `_WEATHER_TTL_SECONDS`/`_weather_cache`/`compute_kiosk_weather`, `_weather_last_pushed`/`refresh_and_push_kiosk_weather`, `RoleActivityEntry` model + `_ACTIVITY_SCAN_WINDOW`/`recent_role_activity_entries`.
+- [ ] Rewire `kiosk_handler.py` imports (`recent_role_activity_entries`, `compute_kiosk_weather`) → `kiosk_data`.
+- [ ] Rewire `lifecycle.py` imports (`_WEATHER_TTL_SECONDS`, `refresh_and_push_kiosk_weather`) → `kiosk_data`.
+- [ ] Delete `api/routes/command_center.py` (router + `/roles` `/activity` `/weather` `/now-playing` + `AgentRoleResponse`/`KioskNowPlaying` — no non-board consumer).
+- [ ] `main.py`: remove `command_center` import (line 27) + `include_router` (line 201).
+- [ ] Tests: rewrite `test_command_center_routes.py` → `test_kiosk_data.py` (test the moved functions, drop endpoint tests); update `test_kiosk_deltas.py`/`test_kiosk_handler.py` patch targets → `kiosk_data`.
 
-## Verified
-- [x] typecheck + lint + prod build green; 3/3 kiosk tests + guard tests pass.
-- [x] Browser at 1920×1080: idle (crimson "BEREIT" core) + listening (turquoise
-      "HÖRT ZU · Wohnzimmer" + voice-burst ring + active role beam), telemetry
-      corner, clock, legend. Matches cc_stunning_smarthome / cc_voice_listening.
-- [ ] Deploy frontend + prod check.
+## Frontend
+- [ ] `git mv` the 4 kiosk files `components/command-center/{KioskConstellation.tsx,useKioskModel.ts,useKioskSocket.ts,types.ts}` → `components/kiosk/`.
+- [ ] Delete `components/command-center/{AgentConstellation.tsx,useCommandCenterModel.ts,demoData.ts}` + `pages/CommandCenterPage.tsx`.
+- [ ] New `api/resources/kiosk.ts` with the 4 types the kiosk uses (`AgentRoleInfo`, `RoleActivityEntry`, `KioskWeather`, `KioskNowPlaying`); delete `api/resources/commandCenter.ts` (its query hooks were command-center-only).
+- [ ] Update imports: kiosk files + `KioskPage.tsx` → `components/kiosk/*` + `resources/kiosk`.
+- [ ] `App.tsx`: drop `CommandCenterPage` lazy import + `/admin/command-center` route.
+- [ ] `Layout.tsx`: swap nav `nav.commandCenter`→`/admin/command-center` for `nav.kiosk`→`/kiosk` (same `admin` permission) — REQUIRED, else `/kiosk` is unreachable.
+- [ ] Tests: delete `CommandCenterPage.test.tsx`; update `useKioskSocket.test.tsx`/`KioskPage.test.tsx` import paths.
 
-## Fast-follow — ambient tiles (DONE, 2026-07-03)
-- [x] **Weather tile** — `GET /api/command-center/weather` (weather MCP, home
-      location `KIOSK_WEATHER_LOCATION`, ~10-min TTL cache, self-hides). Reuses
-      the chat weather artifact's WMO→icon map (`iconForCode` exported).
-- [x] **Now-playing tile** — `GET /api/command-center/now-playing` off
-      `MediaFollowService.active_sessions()` (one-per-room, PLAYING-only,
-      content-minimal, no user ids). Bottom-center pills.
-- [x] **Dynamic background** — drifting nebula + twinkling stars + slow radar
-      sweep (all reduced-motion gated); no more flat black.
-- [x] **Room-colour fix** — online-empty rooms no longer read as grey "unknown":
-      online = turquoise (dim if empty), offline = crimson-dashed; legend redone.
-- [x] Tests: backend TestKioskWeather/TestKioskNowPlaying/TestActiveSessions
-      (60 passed on .159); frontend KioskPage tile tests (7 passed). Review clean.
-- Skipped per user: next-public-Frist tile.
+## i18n / docs
+- [ ] i18n: add `nav.kiosk`, remove `nav.commandCenter`; keep `commandCenter.*` render keys the kiosk still uses (toolHint/legend/noSatellite); remove clearly board-only keys.
+- [ ] `docs/design/command-center.md`: SUPERSEDED banner (keep the "why not poll" history).
+- [ ] `CLAUDE.md`: rewrite the Command Center paragraph → kiosk-only push architecture (drop the six-admin-pages framing).
+- [ ] `docs/FEATURES.md`: remove/merge §Command Center into the kiosk section.
+- [ ] `tasks/kiosk-active-subsystem-plan.md`: mark phase 4 done.
 
-## Still open
-Next public Frist tile (deferred by user); true circle-aware login-free
-projection (only needed once prod runs multi-user — today it's auth-off / one
-trust domain, kept content-free by design).
-
-## Deploy note
-`KIOSK_WEATHER_LOCATION` must be set in the prod ConfigMap (`renfield-env`) — it
-is env-only (no real place name in git). Empty = weather tile hidden. Needs a
-backend image build (new endpoints) + frontend build; `WEATHER_ENABLED` and
-`MEDIA_FOLLOW_ENABLED` are already `true` in prod.
+## Verify
+- [ ] `tsc --noEmit` (source + tests) + `npm run build` clean.
+- [ ] Kiosk vitest green; no dead refs to command-center.
+- [ ] Backend: grep for stray `command_center` refs; run kiosk/kiosk_data tests on .159.
