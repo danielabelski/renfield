@@ -299,8 +299,10 @@ The hybrid extractor (deterministic Steuernummer/IBAN with whitespace normalizat
 
 ## P3 — Conditional / on signal
 
-### ~~Command Center — Phase 3 kiosk mode~~ ✅ SHIPPED 2026-07 (Phase 1+2+3 all live)
+### ~~Command Center — Phase 3 kiosk mode~~ ✅ SHIPPED 2026-07 · ⚠️ admin board DECOMMISSIONED 2026-07
 Origin: 2026-06-27, sparked by the "Apex" (Reznikov Engineering) radial mission-control UI. Design doc + on-brand React prototype landed on `docs/command-center`; cinematic video mockups in `renfield-video/`. **Primary source: `docs/design/command-center.md`.**
+
+> **Update (2026-07):** the kiosk was converted from polling to a `/ws/kiosk` **event-push** hub (plan phases 1a–3), and the **admin `/admin/command-center` board was then DECOMMISSIONED** (phase 4): route/page/`AgentConstellation`/`useCommandCenterModel`/`command_center.py` router + `/api/command-center/*` endpoints removed; the kiosk moved to `components/kiosk/` and is the surviving surface. Below is the original done-record; paths marked `components/command-center/*` are now `components/kiosk/*`. See `tasks/kiosk-active-subsystem-plan.md`.
 
 **Phase 1+2 SHIPPED** (`feature/command-center-phase1`): `/admin/command-center` is routed + live — model composed from `/api/mcp/status` + `/api/tool-health` + `/api/satellites` + `/api/presence/rooms` + `/api/federation/peers` + the NEW read-only ADMIN `/api/command-center/{roles,activity}`. Decaying pulse trail, hover role↔tool reach-edges, drill-downs, activity rail, grouped-list fallback < lg.
 

@@ -1,5 +1,15 @@
 # Command Center — live constellation of the running system
 
+> **SUPERSEDED (decommissioned 2026-07).** The admin Command Center
+> (`/admin/command-center`, `AgentConstellation` / `useCommandCenterModel`, and
+> the `/api/command-center/*` REST feeds) has been **removed**. The **kiosk**
+> (`/kiosk`) is the surviving wall-display surface, and it is now **event-push,
+> not poll** — see [`kiosk-active-subsystem-plan.md`](../../tasks/kiosk-active-subsystem-plan.md)
+> and FEATURES.md §Fullscreen-Kiosk. This document is kept as institutional
+> memory: it records *why* the board originally used a 3s poll and *why* that was
+> later reversed (the "no polling" directive), so the next person doesn't
+> reintroduce a poll. Everything below describes the now-removed admin board.
+
 Status: **Phase 1+2+3 IMPLEMENTED** (2026-07, `feature/command-center-kiosk`):
 `/admin/command-center` is routed (`<AdminRoute>` + nav entry), fed live by
 `useCommandCenterModel`, with drill-downs, a decaying pulse trail, hover
