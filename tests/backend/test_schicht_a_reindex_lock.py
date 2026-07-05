@@ -65,6 +65,40 @@ async def test_reindex_lock_noop_when_document_id_none():
         assert got is True
 
 
+@pytest.mark.unit
+async def test_reindex_lock_degrades_to_unlocked_on_connect_failure(monkeypatch):
+    """Pool pressure / connect failure → degrade to UNLOCKED (yield True), never
+    block or raise into the ingest path."""
+    from services import schicht_a_extractor as mod
+
+    class _BadEngine:
+        def connect(self):
+            async def _boom():
+                raise RuntimeError("pool exhausted")
+            return _boom()
+
+    monkeypatch.setattr(mod, "_resolve_lock_engine", lambda bind: _BadEngine())
+    async with mod._reindex_lock(_FakeBind("postgresql"), 7) as got:
+        assert got is True
+
+
+@pytest.mark.unit
+async def test_reindex_lock_degrades_to_unlocked_on_connect_timeout(monkeypatch):
+    """A hung lock-connection acquire times out and degrades to UNLOCKED."""
+    from services import schicht_a_extractor as mod
+
+    class _HangEngine:
+        def connect(self):
+            async def _hang():
+                await asyncio.sleep(30)
+            return _hang()
+
+    monkeypatch.setattr(mod, "_resolve_lock_engine", lambda bind: _HangEngine())
+    monkeypatch.setattr(mod, "_LOCK_CONN_ACQUIRE_TIMEOUT_S", 0.05)
+    async with mod._reindex_lock(_FakeBind("postgresql"), 7) as got:
+        assert got is True
+
+
 # ============================================================================
 # Real Postgres: the hook wires the lock in
 # ============================================================================

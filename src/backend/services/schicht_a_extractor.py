@@ -22,6 +22,7 @@ hook. Spec: ``tests/eval/schicht_a_fixtures_local/labels.yaml`` (local/gitignore
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from contextlib import asynccontextmanager
@@ -764,6 +765,15 @@ def _clean_currency(value: Any) -> str | None:
 # _RECONCILER_LOCK_NS = 0x4B47) so their locks never collide.
 _SCHICHT_A_REINDEX_LOCK_NS = 0x5341
 
+# Bounded wait for the DEDICATED advisory-lock connection. The hook already holds
+# a pooled session connection, and this lock opens a SECOND one; a folder-ingest
+# backlog fanning many hooks at once could otherwise pile up on the pool (the
+# failure class behind the 2026-07-01 watch-folder outage). A short timeout means
+# that under pool pressure we DEGRADE to running unlocked (a rare duplicate the
+# next reindex reconciles) rather than blocking the ingest path or exhausting the
+# pool — breaking the hold-and-wait needed for a two-resource deadlock.
+_LOCK_CONN_ACQUIRE_TIMEOUT_S = 5.0
+
 
 def _resolve_lock_engine(bind: Any) -> AsyncEngine | None:
     """The AsyncEngine to open the dedicated advisory-lock connection on.
@@ -797,6 +807,10 @@ async def _reindex_lock(bind: Any, document_id: int | None):
     Non-blocking ``pg_try_advisory_lock`` (skip, don't wait) mirrors the KG
     reconciler: reindex is idempotent over the document's current content, so the
     winner's fresh set is always a valid refresh.
+
+    The dedicated lock connection is acquired with a bounded timeout; if the pool
+    can't hand one over in time (backlog), we DEGRADE to unlocked (yield ``True``)
+    instead of blocking the ingest path — see ``_LOCK_CONN_ACQUIRE_TIMEOUT_S``.
     """
     dialect = bind.dialect.name if bind is not None else ""
     lock_engine = _resolve_lock_engine(bind) if dialect == "postgresql" else None
@@ -804,7 +818,21 @@ async def _reindex_lock(bind: Any, document_id: int | None):
         yield True
         return
 
-    async with lock_engine.connect() as lock_conn:
+    try:
+        lock_conn = await asyncio.wait_for(
+            lock_engine.connect(), timeout=_LOCK_CONN_ACQUIRE_TIMEOUT_S
+        )
+    except Exception as e:  # noqa: BLE001 — TimeoutError / pool / connect failure
+        # Degrade to unlocked rather than block or fail the ingest: the guard is
+        # best-effort, and a rare duplicate is reconciled by the next reindex.
+        logger.warning(
+            f"Schicht A: advisory-lock connection unavailable for doc "
+            f"{document_id} ({e!r}); proceeding UNLOCKED"
+        )
+        yield True
+        return
+
+    try:
         got = bool((await lock_conn.execute(
             text("SELECT pg_try_advisory_lock(:ns, :doc)"),
             {"ns": _SCHICHT_A_REINDEX_LOCK_NS, "doc": int(document_id)},
@@ -813,10 +841,20 @@ async def _reindex_lock(bind: Any, document_id: int | None):
             yield got
         finally:
             if got:
-                await lock_conn.execute(
-                    text("SELECT pg_advisory_unlock(:ns, :doc)"),
-                    {"ns": _SCHICHT_A_REINDEX_LOCK_NS, "doc": int(document_id)},
-                )
+                # Explicit unlock; a checkin-hook (pg_advisory_unlock_all) is the
+                # backstop if this raises or the connection dies.
+                try:
+                    await lock_conn.execute(
+                        text("SELECT pg_advisory_unlock(:ns, :doc)"),
+                        {"ns": _SCHICHT_A_REINDEX_LOCK_NS, "doc": int(document_id)},
+                    )
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(
+                        f"Schicht A: advisory unlock failed for doc {document_id} "
+                        f"({e!r}); checkin backstop will release it"
+                    )
+    finally:
+        await lock_conn.close()
 
 
 async def schicht_a_post_document_ingest_hook(
