@@ -205,6 +205,34 @@ async def compute_kiosk_weather(mcp_manager) -> "KioskWeather | None":
     return weather
 
 
+# Last weather value PUSHED to the kiosk hub, so the periodic refresher only
+# broadcasts on an actual change (diff-gate). None until the first push.
+_weather_last_pushed: dict | None = None
+
+
+async def refresh_and_push_kiosk_weather(mcp_manager) -> None:
+    """Backend-internal weather refresh → PUSH to the kiosk hub on change.
+
+    NOT a client poll (plan §1.6): the timer refreshes an EXTERNAL cache
+    (Open-Meteo has no push of its own), and the moment the reading changes it
+    streams a ``weather_updated`` delta to the connected wall displays instead of
+    waiting for the next connect/snapshot. Runs at ``_WEATHER_TTL_SECONDS`` so
+    each tick actually re-fetches. Diff-gated + fire-and-forget.
+    """
+    global _weather_last_pushed
+    weather = await compute_kiosk_weather(mcp_manager)
+    payload = weather.model_dump() if weather is not None else None
+    if payload == _weather_last_pushed:
+        return
+    _weather_last_pushed = payload
+    try:
+        from api.websocket.kiosk_handler import broadcast_kiosk_event
+
+        await broadcast_kiosk_event({"type": "weather_updated", "weather": payload})
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"kiosk weather_updated broadcast failed: {e}")
+
+
 @router.get("/weather", response_model=KioskWeather | None)
 @limiter.limit(settings.api_rate_limit_admin)
 async def kiosk_weather(

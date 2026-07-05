@@ -19,6 +19,37 @@ differences from ``kg_live_handler`` are:
 Privacy bar (non-negotiable): every message this hub emits is CONTENT-FREE —
 ids, names, counts, health, and state strings only. Never an utterance, never
 an entity name, never a user id. See ``tasks/kiosk-active-subsystem-plan.md`` §5.
+
+Protocol (hydrate-then-subscribe). On connect: one ``snapshot`` (all keys below,
+one-time compute). Then small delta events as they happen — the frontend folds
+each into the same reducer-held model. Every event is CONTENT-FREE.
+
+  * ``snapshot`` — ``{type, at, satellites[], presence{rooms[],people_present,
+    occupied_rooms}, mcp{enabled,total_tools,servers[]}, tool_health[], roles[],
+    activity[], peers[], weather|null, now_playing[]}``.
+  * ``satellite_state`` — ``{type, satellite_id, room, room_id, state}`` — a
+    satellite's SESSION state changed (idle/listening/processing/speaking/error).
+  * ``satellite_online`` / ``satellite_offline`` — ``{type, satellite_id, room,
+    room_id, online}`` — a satellite REGISTERED (connect/reconnect) or DROPPED
+    (disconnect / heartbeat-timeout). The liveness signal the frontend needs so a
+    crashed satellite stops pinning the voice core and a resumed one reappears —
+    distinct from ``satellite_state`` (which only carries the session state of an
+    already-online satellite). Phase 2.
+  * ``presence_changed`` — ``{type, rooms:[{room_id,room_name,occupants}],
+    people_present, occupied_rooms}`` — fires ONLY on an actual room-occupant-set
+    change (someone entered/left a room), never on a bare BLE RSSI tick. Same
+    shape as the snapshot's ``presence`` section. Phase 2.
+  * ``turn_activity`` — ``{type, role, subsystems[], ok, at}`` — one completed
+    chat turn (role + the subsystems it touched).
+  * ``now_playing_changed`` — ``{type, sessions:[…]}`` — the deduped per-room
+    PLAYING media set changed (start/stop/track/room move). ``sessions`` has the
+    same shape as the snapshot's ``now_playing``. Phase 2.
+  * ``tool_health_changed`` — ``{type, server, connected}`` — an MCP server's
+    connection flipped (reconnect healed it / it dropped). Phase 2.
+  * ``weather_updated`` — ``{type, weather:{…}|null}`` — pushed when the
+    backend-internal weather cache refreshes (never a client poll). Phase 2.
+  * ``peer_status_changed`` — see the plan §1.4/§9; REMAINING (needs a small
+    backend-internal reachability timer — no discrete federation event exists).
 """
 
 import asyncio
@@ -134,6 +165,31 @@ _TOOL_HEALTH_DEGRADED_BELOW = 0.5
 _PEER_REACHABLE_WITHIN_SECONDS = 300
 
 
+def build_presence_payload(presence) -> dict:
+    """Content-free rooms→occupant-count rollup of the live presence map.
+
+    The one shared shape behind both the connect ``snapshot``'s ``presence``
+    section and the ``presence_changed`` delta (``presence_service`` calls this
+    when an occupant set actually changes). Never emits user ids — only room
+    ids/names and integer counts.
+    """
+    rooms: dict[int, dict] = {}
+    for pres in presence.get_all_presence().values():
+        key = pres.room_id
+        if key is None:
+            continue
+        room = rooms.setdefault(
+            key, {"room_id": key, "room_name": pres.room_name, "occupants": 0}
+        )
+        room["occupants"] += 1
+    room_list = list(rooms.values())
+    return {
+        "rooms": room_list,
+        "people_present": sum(r["occupants"] for r in room_list),
+        "occupied_rooms": len(room_list),
+    }
+
+
 async def build_kiosk_snapshot(app) -> dict:
     """Compute the full current kiosk state ONCE, for the connect ``snapshot``.
 
@@ -167,22 +223,7 @@ async def build_kiosk_snapshot(app) -> dict:
     try:
         from ha_glue.services.presence_service import get_presence_service
 
-        presence = get_presence_service()
-        rooms: dict[int | None, dict] = {}
-        for pres in presence.get_all_presence().values():
-            key = pres.room_id
-            if key is None:
-                continue
-            room = rooms.setdefault(
-                key, {"room_id": key, "room_name": pres.room_name, "occupants": 0}
-            )
-            room["occupants"] += 1
-        room_list = list(rooms.values())
-        snapshot["presence"] = {
-            "rooms": room_list,
-            "people_present": sum(r["occupants"] for r in room_list),
-            "occupied_rooms": len(room_list),
-        }
+        snapshot["presence"] = build_presence_payload(get_presence_service())
     except Exception as e:
         logger.debug(f"kiosk snapshot: presence unavailable: {e}")
 

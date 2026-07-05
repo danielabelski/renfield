@@ -61,6 +61,15 @@ class MediaFollowService:
 
     def __init__(self) -> None:
         self._sessions: dict[int, MediaSession] = {}   # user_id → session
+        # Last now-playing set we broadcast to the kiosk hub. The delta is
+        # diff-gated against this so a no-op mutation (e.g. a suspend that leaves
+        # the PLAYING set unchanged) never fires a spurious push. None = never
+        # broadcast yet.
+        self._last_now_playing: list[dict] | None = None
+        # Strong refs to fire-and-forget broadcast tasks scheduled from SYNC
+        # mutation sites, so they aren't GC'd mid-flight (the boot-reconnect
+        # strand bug). Discarded on completion.
+        self._np_bg_tasks: set[asyncio.Task] = set()
 
     # ------------------------------------------------------------------
     # Playback Registration (called by InternalToolService)
@@ -96,12 +105,14 @@ class MediaFollowService:
             f"🎵 Media session registered: user={user_id} "
             f"type={media_type.value} room={room_name}"
         )
+        self._schedule_now_playing_broadcast()
 
     def clear_session(self, user_id: int) -> None:
         """Remove a user's media session."""
         removed = self._sessions.pop(user_id, None)
         if removed:
             logger.debug(f"🎵 Media session cleared: user={user_id}")
+            self._schedule_now_playing_broadcast()
 
     def clear_session_by_room(self, room_id: int) -> None:
         """Clear all sessions in a given room (e.g. on explicit stop)."""
@@ -112,6 +123,8 @@ class MediaFollowService:
         for uid in to_remove:
             self._sessions.pop(uid, None)
             logger.debug(f"🎵 Media session cleared by room stop: user={uid} room_id={room_id}")
+        if to_remove:
+            self._schedule_now_playing_broadcast()
 
     def get_session(self, user_id: int) -> MediaSession | None:
         return self._sessions.get(user_id)
@@ -146,6 +159,40 @@ class MediaFollowService:
         return out
 
     # ------------------------------------------------------------------
+    # Kiosk push (now_playing_changed delta)
+    # ------------------------------------------------------------------
+
+    async def _broadcast_now_playing_if_changed(self) -> None:
+        """Push a content-free ``now_playing_changed`` delta to the kiosk hub,
+        but ONLY when the deduped per-room PLAYING set actually changed
+        (start / stop / track / room move). Diff-gated against the last broadcast
+        so a mutation that leaves the visible set identical stays silent — the
+        transition guard that keeps this from firing on every internal touch.
+        Fire-and-forget: a hub failure must never disrupt playback."""
+        try:
+            sessions = self.active_sessions()
+            if sessions == self._last_now_playing:
+                return
+            self._last_now_playing = sessions
+            from api.websocket.kiosk_handler import broadcast_kiosk_event
+
+            await broadcast_kiosk_event(
+                {"type": "now_playing_changed", "sessions": sessions}
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"kiosk now_playing broadcast failed: {e}")
+
+    def _schedule_now_playing_broadcast(self) -> None:
+        """Fire the diff-gated now_playing broadcast from a SYNC mutation site
+        (register/clear). Strong-refs the task so it isn't GC'd before it runs."""
+        try:
+            task = asyncio.ensure_future(self._broadcast_now_playing_if_changed())
+        except RuntimeError:
+            return  # no running loop (e.g. a unit test poking the sync setter)
+        self._np_bg_tasks.add(task)
+        task.add_done_callback(self._np_bg_tasks.discard)
+
+    # ------------------------------------------------------------------
     # Presence Hook Handlers
     # ------------------------------------------------------------------
 
@@ -173,6 +220,7 @@ class MediaFollowService:
         await self._stop_playback(session)
         session.state = SessionState.SUSPENDED
         session.suspended_at = time.time()
+        await self._broadcast_now_playing_if_changed()
 
     async def on_user_enter_room(
         self, user_id: int, room_id: int, room_name: str, **kw
@@ -251,6 +299,8 @@ class MediaFollowService:
             await self._stop_playback(session)
             session.state = SessionState.SUSPENDED
             session.suspended_at = time.time()
+        if to_stop:
+            await self._broadcast_now_playing_if_changed()
 
     # ------------------------------------------------------------------
     # Internal: Stop / Resume
@@ -346,6 +396,7 @@ class MediaFollowService:
                     new_room_name,
                     session.title or session.station_name or session.album_name or "Media",
                 )
+                await self._broadcast_now_playing_if_changed()
             else:
                 logger.warning(
                     f"🎵 Resume failed for user {session.user_id} in {new_room_name}: "

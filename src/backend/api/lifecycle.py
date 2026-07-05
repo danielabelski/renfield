@@ -744,6 +744,42 @@ def _schedule_paperless_sweepers(app):
     )
 
 
+def _schedule_kiosk_weather_refresh(app):
+    """Backend-internal weather refresher → PUSHES a ``weather_updated`` delta to
+    the kiosk hub when the reading changes.
+
+    This is the §1.6-sanctioned exception to the no-polling rule: Open-Meteo has
+    no push, so a backend timer refreshes the external cache at the TTL cadence
+    and streams new values to the wall displays — the kiosk's browser never polls
+    our API for weather. Diff-gated in ``refresh_and_push_kiosk_weather`` so a
+    tick that produces the same reading stays silent. Gated on weather being on
+    AND a kiosk location configured; a no-op otherwise.
+    """
+    location = (settings.kiosk_weather_location or "").strip()
+    if not settings.weather_enabled or not location:
+        return
+
+    from api.routes.command_center import _WEATHER_TTL_SECONDS
+
+    async def _tick():
+        from api.routes.command_center import refresh_and_push_kiosk_weather
+
+        mgr = getattr(app.state, "mcp_manager", None)
+        if mgr is None:
+            return
+        await refresh_and_push_kiosk_weather(mgr)
+
+    _spawn_periodic_task(
+        name="Kiosk weather refresh",
+        interval=_WEATHER_TTL_SECONDS,
+        work=_tick,
+        started_msg=(
+            f"Kiosk weather refresher gestartet "
+            f"(interval={_WEATHER_TTL_SECONDS}s, location={location})"
+        ),
+    )
+
+
 def _schedule_notification_poller(app):
     """Start the MCP notification poller for servers with notifications enabled."""
     if not settings.notification_poller_enabled:
@@ -1066,6 +1102,7 @@ async def lifespan(app: "FastAPI"):
     _schedule_paperless_sweepers(app)
     _schedule_paperless_reconciler(app)
     _schedule_obligation_calendar_sync(app)
+    _schedule_kiosk_weather_refresh(app)
 
     # Self-learning Phase 1: load bundled seed skills into the database.
     # Idempotent — seeds with a matching title are skipped, so re-running

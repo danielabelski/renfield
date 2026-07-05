@@ -232,6 +232,11 @@ class SatelliteManager:
                 "capabilities": capabilities
             })
 
+            # Push liveness so the kiosk reinstates a (re)connected satellite.
+            await self._broadcast_satellite_liveness(
+                satellite_id, room, self.satellites[satellite_id].room_id, online=True
+            )
+
             return True
 
     async def unregister(self, satellite_id: str):
@@ -246,6 +251,11 @@ class SatelliteManager:
 
                 del self.satellites[satellite_id]
                 logger.info(f"👋 Satellite unregistered: {satellite_id}")
+
+                # Push liveness so the kiosk drops the departed satellite.
+                await self._broadcast_satellite_liveness(
+                    satellite_id, sat.room, sat.room_id, online=False
+                )
 
     async def start_session(
         self,
@@ -398,6 +408,36 @@ class SatelliteManager:
             )
         except Exception as e:  # noqa: BLE001
             logger.debug(f"kiosk satellite_state broadcast failed: {e}")
+
+    async def _broadcast_satellite_liveness(
+        self, satellite_id: str, room: str | None, room_id: int | None, online: bool
+    ):
+        """Push a content-free ``satellite_online``/``satellite_offline`` delta.
+
+        This is the Phase-2 LIVENESS signal — distinct from ``satellite_state``
+        (which only carries the SESSION state of an already-connected satellite).
+        It fires when a satellite REGISTERS (connect/reconnect → online) or DROPS
+        (unregister / heartbeat-timeout → offline), so the kiosk drops a crashed
+        satellite out of the constellation (stops it pinning the voice core) and
+        reinstates a resumed one, instead of decaying frozen roster data against
+        the wall clock. Fire-and-forget: a hub failure must never break voice.
+        Called under ``self._lock`` — safe because ``broadcast_kiosk_event`` only
+        enqueues (the hub offloads the real send).
+        """
+        try:
+            from api.websocket.kiosk_handler import broadcast_kiosk_event
+
+            await broadcast_kiosk_event(
+                {
+                    "type": "satellite_online" if online else "satellite_offline",
+                    "satellite_id": satellite_id,
+                    "room": room,
+                    "room_id": room_id,
+                    "online": online,
+                }
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"kiosk satellite liveness broadcast failed: {e}")
 
     async def set_session_state(
         self,
@@ -875,7 +915,12 @@ class SatelliteManager:
                 sat = self.satellites[sat_id]
                 if sat.current_session_id:
                     await self._end_session_internal(sat.current_session_id, reason="disconnect")
+                room, room_id = sat.room, sat.room_id
                 del self.satellites[sat_id]
+                # Push liveness so the kiosk drops a satellite that timed out.
+                await self._broadcast_satellite_liveness(
+                    sat_id, room, room_id, online=False
+                )
 
 
 # Global singleton instance
