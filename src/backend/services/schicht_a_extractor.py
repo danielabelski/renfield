@@ -24,12 +24,15 @@ from __future__ import annotations
 
 import json
 import re
+from contextlib import asynccontextmanager
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from loguru import logger
 from pydantic import BaseModel, Field
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from models.database import (
     DOC_FACT_CATEGORY_IDENTIFIER,
@@ -756,6 +759,65 @@ def _clean_currency(value: Any) -> str | None:
 # post_document_ingest hook — extract + store facts as atoms
 # ---------------------------------------------------------------------------
 
+# Per-document advisory-lock namespace for Schicht A re-extraction. 0x5341 = "SA".
+# Kept distinct from other subsystems' namespaces (e.g. the KG reconciler's
+# _RECONCILER_LOCK_NS = 0x4B47) so their locks never collide.
+_SCHICHT_A_REINDEX_LOCK_NS = 0x5341
+
+
+def _resolve_lock_engine(bind: Any) -> AsyncEngine | None:
+    """The AsyncEngine to open the dedicated advisory-lock connection on.
+
+    Mirrors ``kg_reconciler_service._resolve_lock_engine`` (kept local to avoid
+    coupling two feature modules over a 3-line helper). An ``AsyncSession``
+    commit returns its connection to the pool — which drops a session-level
+    advisory lock — so the lock must live on a SEPARATE connection that spans the
+    hook's mid-flight commit + the post-commit purge. Prod binds to an
+    ``AsyncEngine`` (use directly; its ``.engine`` is the SYNC engine); tests bind
+    to an ``AsyncConnection`` (its ``.engine`` IS the AsyncEngine).
+    """
+    if isinstance(bind, AsyncEngine):
+        return bind
+    if isinstance(bind, AsyncConnection):
+        return bind.engine
+    return None
+
+
+@asynccontextmanager
+async def _reindex_lock(bind: Any, document_id: int | None):
+    """Serialize Schicht A re-extraction of ONE document (Postgres advisory lock).
+
+    Yields ``True`` when the caller holds the per-document lock, ``False`` when
+    another re-extraction of the same document is already in flight (the caller
+    must skip — the in-flight run refreshes the fact set, so skipping avoids the
+    duplicate-fact race where two overlapping write-new-then-purge-old passes
+    each leave their new set behind). No-op (always ``True``) on non-Postgres
+    (the sqlite test harness has neither advisory locks nor concurrency).
+
+    Non-blocking ``pg_try_advisory_lock`` (skip, don't wait) mirrors the KG
+    reconciler: reindex is idempotent over the document's current content, so the
+    winner's fresh set is always a valid refresh.
+    """
+    dialect = bind.dialect.name if bind is not None else ""
+    lock_engine = _resolve_lock_engine(bind) if dialect == "postgresql" else None
+    if lock_engine is None or document_id is None:
+        yield True
+        return
+
+    async with lock_engine.connect() as lock_conn:
+        got = bool((await lock_conn.execute(
+            text("SELECT pg_try_advisory_lock(:ns, :doc)"),
+            {"ns": _SCHICHT_A_REINDEX_LOCK_NS, "doc": int(document_id)},
+        )).scalar())
+        try:
+            yield got
+        finally:
+            if got:
+                await lock_conn.execute(
+                    text("SELECT pg_advisory_unlock(:ns, :doc)"),
+                    {"ns": _SCHICHT_A_REINDEX_LOCK_NS, "doc": int(document_id)},
+                )
+
 
 async def schicht_a_post_document_ingest_hook(
     chunks: list[str],
@@ -826,109 +888,131 @@ async def schicht_a_post_document_ingest_hook(
             if not result.facts:
                 return
 
-            # Capture prior fact-atoms BEFORE writing — they're purged only AFTER
-            # the new set is safely committed. AtomPurgeService.purge commits per
-            # call, so a purge-then-write ordering would, on any write failure,
-            # leave the document with ZERO facts. Write-new-then-purge-old means
-            # the worst case is recoverable duplicates (cleaned on the next
-            # reindex), never silent loss of a document's facts.
-            old_atom_ids = (await db.execute(
-                select(DocumentFact.atom_id).where(
-                    DocumentFact.document_id == document_id
-                )
-            )).scalars().all()
-
-            # Carry-over snapshot: a per-fact tier OVERRIDE (e.g. a public issuer
-            # on a private document) is bound to the current fact row, but a
-            # re-extraction recreates the fact set from scratch — without this it
-            # would silently reset to the doc tier (P2 follow-up, TODOS.md). Snapshot
-            # the prior OVERRIDDEN facts keyed by content identity so a re-extracted
-            # fact that matches re-acquires its override. Only overrides need carrying;
-            # non-overridden facts already follow the doc tier by default.
-            prior_overrides = (await db.execute(
-                select(
-                    DocumentFact.category,
-                    DocumentFact.kind,
-                    DocumentFact.normalized_value,
-                    DocumentFact.value,
-                    DocumentFact.circle_tier,
-                ).where(
-                    DocumentFact.document_id == document_id,
-                    DocumentFact.tier_overridden.is_(True),
-                )
-            )).all()
-            override_by_key: dict[tuple[str, str, str], int] = {
-                _fact_identity_key(r.category, r.kind, r.normalized_value, r.value):
-                    int(r.circle_tier)
-                for r in prior_overrides
-            }
-
-            atom_svc = AtomService(db)
-            stored = 0
-            carried_over = 0
             capped = result.facts[:_MAX_FACTS_PER_DOC]
             if len(result.facts) > _MAX_FACTS_PER_DOC:
                 logger.warning(
                     f"Schicht A: doc {document_id} produced {len(result.facts)} "
                     f"facts; capping at {_MAX_FACTS_PER_DOC}"
                 )
-            for f in capped:
-                # If this fact matches a prior per-fact override, carry that tier
-                # + the sticky flag forward; otherwise it follows the doc tier.
-                # An override can never raise a fact ABOVE the document's own
-                # visibility intent in a way the owner didn't pick — they DID pick
-                # it (the prior PATCH), and a re-extraction must not silently undo
-                # that choice. (The override tier is whatever the owner set; it is
-                # NOT clamped to the doc tier — same as the live override.)
-                carried = override_by_key.get(
-                    _fact_identity_key(
-                        f.category, f.kind, f.normalized_value, f.value
+
+            # Serialize concurrent re-extraction of THIS document. Two overlapping
+            # passes each do write-new-then-purge-old and would leave BOTH new sets
+            # behind (duplicate facts). The loser skips — the winner's fresh set is a
+            # complete refresh of the document's facts. Postgres-only advisory lock on
+            # a DEDICATED connection (a session-level lock would drop at the mid-flight
+            # commit below); a no-op on the sqlite test harness.
+            async with _reindex_lock(db.bind, document_id) as got_lock:
+                if not got_lock:
+                    logger.info(
+                        f"Schicht A: doc {document_id} re-extract already in flight; "
+                        f"skipping (the in-flight pass refreshes the facts)"
                     )
-                )
-                fact_tier = carried if carried is not None else tier
-                is_override = carried is not None
+                    return
 
-                atom_id = await atom_svc.create_with_source(
-                    atom_type=ATOM_TYPE_DOCUMENT_FACT,
-                    owner_user_id=int(owner_id),
-                    tier=fact_tier,
-                )
-                row = DocumentFact(
-                    document_id=document_id,
-                    category=f.category,
-                    kind=f.kind,
-                    value=f.value,
-                    normalized_value=f.normalized_value,
-                    excerpt=f.excerpt,
-                    obligation_date=f.obligation_date,
-                    amount_value=f.amount_value,
-                    amount_currency=f.amount_currency,
-                    legal_gate=f.legal_gate,
-                    payment_method=f.payment_method,
-                    confidence=f.confidence,
-                    source=f.source,
-                    atom_id=atom_id,
-                    circle_tier=fact_tier,
-                    tier_overridden=is_override,
-                )
-                db.add(row)
-                await db.flush()
-                await atom_svc.finalize_source_id(atom_id, row.id)
-                stored += 1
-                if is_override:
-                    carried_over += 1
-
-            await db.commit()
-
-            # New facts are committed; now retire the prior set.
-            for aid in old_atom_ids:
-                if aid:
-                    await AtomPurgeService.purge(
-                        db, atom_id=aid, reason="schicht_a_reextract"
+                # Capture prior fact-atoms BEFORE writing — they're purged only AFTER
+                # the new set is safely committed. AtomPurgeService.purge commits per
+                # call, so a purge-then-write ordering would, on any write failure,
+                # leave the document with ZERO facts. Write-new-then-purge-old means
+                # the worst case is recoverable duplicates (cleaned on the next
+                # reindex) — and the advisory lock above closes the concurrent window
+                # that produced them — never silent loss of a document's facts.
+                old_atom_ids = (await db.execute(
+                    select(DocumentFact.atom_id).where(
+                        DocumentFact.document_id == document_id
                     )
+                )).scalars().all()
+
+                # Carry-over snapshot: a per-fact tier OVERRIDE (e.g. a public issuer
+                # on a private document) is bound to the current fact row, but a
+                # re-extraction recreates the fact set from scratch — without this it
+                # would silently reset to the doc tier. Snapshot the prior OVERRIDDEN
+                # facts keyed by content identity so a re-extracted fact that matches
+                # re-acquires its override. Only overrides need carrying; non-overridden
+                # facts already follow the doc tier by default.
+                prior_overrides = (await db.execute(
+                    select(
+                        DocumentFact.category,
+                        DocumentFact.kind,
+                        DocumentFact.normalized_value,
+                        DocumentFact.value,
+                        DocumentFact.circle_tier,
+                    ).where(
+                        DocumentFact.document_id == document_id,
+                        DocumentFact.tier_overridden.is_(True),
+                    )
+                )).all()
+                override_by_key: dict[tuple[str, str, str], int] = {
+                    _fact_identity_key(r.category, r.kind, r.normalized_value, r.value):
+                        int(r.circle_tier)
+                    for r in prior_overrides
+                }
+
+                atom_svc = AtomService(db)
+                stored = 0
+                carried_over = 0
+                for f in capped:
+                    # If this fact matches a prior per-fact override, carry that tier
+                    # + the sticky flag forward; otherwise it follows the doc tier.
+                    # An override can never raise a fact ABOVE the document's own
+                    # visibility intent in a way the owner didn't pick — they DID pick
+                    # it (the prior PATCH), and a re-extraction must not silently undo
+                    # that choice. (The override tier is whatever the owner set; it is
+                    # NOT clamped to the doc tier — same as the live override.)
+                    carried = override_by_key.get(
+                        _fact_identity_key(
+                            f.category, f.kind, f.normalized_value, f.value
+                        )
+                    )
+                    fact_tier = carried if carried is not None else tier
+                    is_override = carried is not None
+
+                    atom_id = await atom_svc.create_with_source(
+                        atom_type=ATOM_TYPE_DOCUMENT_FACT,
+                        owner_user_id=int(owner_id),
+                        tier=fact_tier,
+                    )
+                    row = DocumentFact(
+                        document_id=document_id,
+                        category=f.category,
+                        kind=f.kind,
+                        value=f.value,
+                        normalized_value=f.normalized_value,
+                        excerpt=f.excerpt,
+                        obligation_date=f.obligation_date,
+                        amount_value=f.amount_value,
+                        amount_currency=f.amount_currency,
+                        legal_gate=f.legal_gate,
+                        payment_method=f.payment_method,
+                        confidence=f.confidence,
+                        source=f.source,
+                        atom_id=atom_id,
+                        circle_tier=fact_tier,
+                        tier_overridden=is_override,
+                    )
+                    db.add(row)
+                    await db.flush()
+                    await atom_svc.finalize_source_id(atom_id, row.id)
+                    stored += 1
+                    if is_override:
+                        carried_over += 1
+
+                await db.commit()
+
+                # New facts are committed; now retire the prior set.
+                for aid in old_atom_ids:
+                    if aid:
+                        await AtomPurgeService.purge(
+                            db, atom_id=aid, reason="schicht_a_reextract"
+                        )
+
+                logger.info(
+                    f"Schicht A: stored {stored} fact(s) for doc {document_id} "
+                    f"(tier={tier}, carried-over overrides={carried_over})"
+                )
 
             # Synthesize a human-meaningful display title from the facts (best-
-            # effort; a miss leaves the metadata title / filename as-is).
+            # effort; a miss leaves the metadata title / filename as-is). Outside the
+            # re-extract lock — it touches only documents.generated_title, not facts.
             try:
                 title = await generate_document_title(capped, lang=lang)
                 if title:
@@ -936,10 +1020,5 @@ async def schicht_a_post_document_ingest_hook(
                     await db.commit()
             except Exception as e:  # noqa: BLE001 — title is non-essential
                 logger.warning(f"Schicht A: title synthesis failed for doc {document_id}: {e}")
-
-            logger.info(
-                f"Schicht A: stored {stored} fact(s) for doc {document_id} "
-                f"(tier={tier}, carried-over overrides={carried_over})"
-            )
     except Exception as e:  # noqa: BLE001 — never fail the ingest on a fact miss
         logger.warning(f"Schicht A post_document_ingest hook failed: {e}")
