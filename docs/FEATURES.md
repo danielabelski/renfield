@@ -411,7 +411,7 @@ PDF, DOCX, PPTX, XLSX, HTML, Markdown, TXT — verarbeitet mit IBM Docling.
 - **Follow-up-Fragen** — RAG-Kontext bleibt für Nachfragen erhalten
 - **Quellen-Zitation** — wissensgestützte Chat-Antworten zeigen die verwendeten Dokumente als anklickbare **Quellen-Chips** (siehe „Rich Content in Chat-Nachrichten")
 - **Re-Embedding** — `POST /admin/reembed` nach Modellwechsel
-- **knowledge_search Agent Tool** — Internes Tool im Agent Loop für kombinierte Suche über RAG-Dokumente und MCP-Quellen (Paperless)
+- **knowledge_search Agent Tool** — Internes Tool im Agent Loop für kombinierte Suche über RAG-Dokumente und MCP-Quellen (Paperless). Liefert zusätzlich **circle-gefilterte Schicht-A-Fakten** (Steuernummer/IBAN/Aussteller/Fristen aus `DocumentFactRetrieval`) als eigenen `FAKTEN`-Block, sodass der Agent den präzisen Wert zitiert statt der Passage (aktiv bei `schicht_a_extraction_enabled`; Quell-Dokumenttitel separat circle-gefiltert, damit ein tier-übersteuerter Fakt keinen privaten Dokumenttitel preisgibt)
 - **EasyOCR Fallback** — Garbled PDFs werden automatisch mit EasyOCR nachverarbeitet für bessere Text-Extraktion
 - **Separate Embedding-Instanz** — `OLLAMA_EMBED_URL` für dedizierten Embedding-Server (entlastet die Haupt-Ollama-Instanz)
 
