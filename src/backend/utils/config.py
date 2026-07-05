@@ -181,6 +181,14 @@ class Settings(BaseSettings):
     speaker_quality_gating_enabled: bool = False
     speaker_recognition_min_duration_s: float = 1.0   # too-short turns don't enroll/reinforce
     speaker_continuous_learning_min_confidence: float = 0.45  # only reinforce on a strong match
+    # Controlled enrollment (Phase 1): a deliberate, guided, quality-gated flow
+    # that builds ONE trusted reference profile per person via the voice-server
+    # ONNX model (same as inference). A sample must be >= min_duration; the set
+    # must have >= min_samples that mutually cohere (mean pairwise cosine >=
+    # min_cohesion) or the enrollment is rejected — the anti-pollution key.
+    speaker_enroll_min_duration_s: float = 2.0
+    speaker_enroll_min_samples: int = 3
+    speaker_enroll_min_cohesion: float = 0.5
     # Per-user vocabulary corpus capture (Phase B-3 follow-up). Confirmed-
     # speaker transcripts are appended to speaker_vocabulary_corpus and a
     # daily batch job rebuilds the per-user vocab table for STT bias.

@@ -160,6 +160,10 @@ class Speaker(Base):
     name = Column(String(100), nullable=False)       # "Max Mustermann"
     alias = Column(String(50), unique=True, index=True)  # "max" (für Ansprache)
     is_admin = Column(Boolean, default=False)        # Admin-Berechtigung (legacy, use User.role)
+    # True = a deliberately enrolled reference profile (guided, quality-gated,
+    # user-linked); False = ambient auto-enrolled "Unbekannter" (migration
+    # pc20260706). See docs/design/speaker-enrollment-redesign.md.
+    enrolled = Column(Boolean, nullable=False, default=False, server_default="false")
     created_at = Column(DateTime, default=_utcnow)
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
