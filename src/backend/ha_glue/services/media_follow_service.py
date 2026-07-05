@@ -179,7 +179,7 @@ class MediaFollowService:
             await broadcast_kiosk_event(
                 {"type": "now_playing_changed", "sessions": sessions}
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.debug(f"kiosk now_playing broadcast failed: {e}")
 
     def _schedule_now_playing_broadcast(self) -> None:
@@ -262,6 +262,10 @@ class MediaFollowService:
                     f"🎵 Conflict in {room_name}: user {existing_user_id} wins, "
                     f"user {user_id} stays suspended"
                 )
+                # The mover's old-room playback was already stopped above, so the
+                # kiosk now-playing tile must reflect that (diff-gated → no-op if
+                # nothing actually changed).
+                await self._broadcast_now_playing_if_changed()
                 return
             else:
                 # Entering user wins — suspend existing
@@ -402,6 +406,9 @@ class MediaFollowService:
                     f"🎵 Resume failed for user {session.user_id} in {new_room_name}: "
                     f"{result.get('message', 'unknown error')}"
                 )
+                # The old-room session was already stopped before this resume
+                # attempt, so reflect the now-stopped state on the kiosk too.
+                await self._broadcast_now_playing_if_changed()
 
         except Exception as e:
             logger.error(f"🎵 Error resuming playback in {new_room_name}: {e}")

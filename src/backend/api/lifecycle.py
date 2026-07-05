@@ -763,7 +763,12 @@ def _schedule_kiosk_weather_refresh(app):
 
     async def _tick():
         from api.routes.command_center import refresh_and_push_kiosk_weather
+        from api.websocket.kiosk_handler import _kiosk_clients
 
+        # No wall display connected → skip the external MCP round-trip nobody
+        # would consume (the broadcast would no-op anyway).
+        if not _kiosk_clients:
+            return
         mgr = getattr(app.state, "mcp_manager", None)
         if mgr is None:
             return

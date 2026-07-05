@@ -153,19 +153,27 @@ _WEATHER_TTL_SECONDS = 600
 _weather_cache: dict[str, object] = {"at": 0.0, "value": None}
 
 
-async def compute_kiosk_weather(mcp_manager) -> "KioskWeather | None":
+async def compute_kiosk_weather(mcp_manager, force: bool = False) -> "KioskWeather | None":
     """Current conditions for the configured home location (process-cached).
 
     Shared by the REST ``/weather`` poll and the kiosk WS snapshot
     (``kiosk_handler``). ``None`` (never an error) when weather is disabled, no
     location is configured, or the MCP can't answer — the tile hides itself.
+
+    ``force=True`` bypasses the TTL cache READ (used by the periodic refresher so
+    a tick genuinely re-fetches even if a client snapshot just warmed the cache
+    mid-cycle); it still writes the cache on success.
     """
     location = (settings.kiosk_weather_location or "").strip()
     if not settings.weather_enabled or not location:
         return None
 
     now = time.monotonic()
-    if _weather_cache["value"] is not None and now - float(_weather_cache["at"]) < _WEATHER_TTL_SECONDS:
+    if (
+        not force
+        and _weather_cache["value"] is not None
+        and now - float(_weather_cache["at"]) < _WEATHER_TTL_SECONDS
+    ):
         return _weather_cache["value"]
 
     if mcp_manager is None:
@@ -220,7 +228,7 @@ async def refresh_and_push_kiosk_weather(mcp_manager) -> None:
     each tick actually re-fetches. Diff-gated + fire-and-forget.
     """
     global _weather_last_pushed
-    weather = await compute_kiosk_weather(mcp_manager)
+    weather = await compute_kiosk_weather(mcp_manager, force=True)
     payload = weather.model_dump() if weather is not None else None
     if payload == _weather_last_pushed:
         return
@@ -229,7 +237,7 @@ async def refresh_and_push_kiosk_weather(mcp_manager) -> None:
         from api.websocket.kiosk_handler import broadcast_kiosk_event
 
         await broadcast_kiosk_event({"type": "weather_updated", "weather": payload})
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.debug(f"kiosk weather_updated broadcast failed: {e}")
 
 

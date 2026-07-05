@@ -849,12 +849,15 @@ class MCPManager:
         if state.connected == connected:
             return
         state.connected = connected
+        # Check for a running loop BEFORE creating the coroutine, so the
+        # config-time / sync path doesn't leave an un-awaited coroutine.
         try:
-            task = asyncio.ensure_future(
-                self._broadcast_tool_health(state.config.name, connected)
-            )
+            loop = asyncio.get_running_loop()
         except RuntimeError:
             return  # no running loop (config-time / sync test path)
+        task = loop.create_task(
+            self._broadcast_tool_health(state.config.name, connected)
+        )
         self._health_bg_tasks.add(task)
         task.add_done_callback(self._health_bg_tasks.discard)
 
@@ -869,7 +872,7 @@ class MCPManager:
                     "connected": connected,
                 }
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.debug(f"kiosk tool_health broadcast failed: {e}")
 
     def load_config(self, path: str, only: set[str] | None = None) -> None:

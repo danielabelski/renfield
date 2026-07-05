@@ -233,29 +233,45 @@ class SatelliteManager:
             })
 
             # Push liveness so the kiosk reinstates a (re)connected satellite.
+            # room_id may still be None here (DB sync + set_room_id run after
+            # register); the delta carries the room NAME regardless, and the
+            # kiosk resolves the precise room_id from the next satellite_state
+            # delta / the next snapshot (handled Phase 3, frontend).
             await self._broadcast_satellite_liveness(
                 satellite_id, room, self.satellites[satellite_id].room_id, online=True
             )
 
             return True
 
-    async def unregister(self, satellite_id: str):
-        """Remove a satellite from the registry"""
+    async def unregister(self, satellite_id: str, websocket=None):
+        """Remove a satellite from the registry.
+
+        Pass the caller's ``websocket`` so a FAST RECONNECT is handled safely: if
+        a new connection already re-registered this id (its ``register`` ran
+        before this dying socket's ``finally``), the stored entry belongs to the
+        NEW socket — deleting it would drop a live satellite and push a spurious
+        ``satellite_offline``. The identity guard skips that. ``websocket=None``
+        keeps the legacy unconditional behavior for any caller without it.
+        """
         async with self._lock:
-            if satellite_id in self.satellites:
-                sat = self.satellites[satellite_id]
+            sat = self.satellites.get(satellite_id)
+            if sat is None:
+                return
+            if websocket is not None and sat.websocket is not websocket:
+                # A newer connection already replaced this entry — leave it.
+                return
 
-                # End any active session
-                if sat.current_session_id:
-                    await self._end_session_internal(sat.current_session_id)
+            # End any active session
+            if sat.current_session_id:
+                await self._end_session_internal(sat.current_session_id)
 
-                del self.satellites[satellite_id]
-                logger.info(f"👋 Satellite unregistered: {satellite_id}")
+            del self.satellites[satellite_id]
+            logger.info(f"👋 Satellite unregistered: {satellite_id}")
 
-                # Push liveness so the kiosk drops the departed satellite.
-                await self._broadcast_satellite_liveness(
-                    satellite_id, sat.room, sat.room_id, online=False
-                )
+            # Push liveness so the kiosk drops the departed satellite.
+            await self._broadcast_satellite_liveness(
+                satellite_id, sat.room, sat.room_id, online=False
+            )
 
     async def start_session(
         self,
@@ -406,7 +422,7 @@ class SatelliteManager:
                     "state": state.value,
                 }
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.debug(f"kiosk satellite_state broadcast failed: {e}")
 
     async def _broadcast_satellite_liveness(
@@ -436,7 +452,7 @@ class SatelliteManager:
                     "online": online,
                 }
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.debug(f"kiosk satellite liveness broadcast failed: {e}")
 
     async def set_session_state(

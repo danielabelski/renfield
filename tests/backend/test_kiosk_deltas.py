@@ -90,6 +90,28 @@ async def test_unregister_broadcasts_satellite_offline():
 
 @pytest.mark.backend
 @pytest.mark.asyncio
+async def test_stale_unregister_does_not_drop_reconnected_satellite():
+    """Fast reconnect: a NEW connection re-registers sat-1 before the OLD
+    socket's finally→unregister runs. The identity-guarded unregister(old_ws)
+    must NOT delete the live (new) entry nor push a spurious satellite_offline."""
+    from ha_glue.services.satellite_manager import SatelliteManager
+
+    mgr = SatelliteManager()
+    old_ws, new_ws = AsyncMock(), AsyncMock()
+    await mgr.register("sat-1", "Room", old_ws, {})
+    await mgr.register("sat-1", "Room", new_ws, {})  # reconnect replaces the entry
+    assert mgr.satellites["sat-1"].websocket is new_ws
+
+    with _patch_broadcast() as bcast:
+        await mgr.unregister("sat-1", websocket=old_ws)  # the DYING old socket
+
+    assert "sat-1" in mgr.satellites  # live entry preserved
+    assert mgr.satellites["sat-1"].websocket is new_ws
+    assert _events_of_type(bcast, "satellite_offline") == []  # no spurious offline
+
+
+@pytest.mark.backend
+@pytest.mark.asyncio
 async def test_cleanup_stale_broadcasts_satellite_offline():
     from ha_glue.services.satellite_manager import SatelliteManager
 
