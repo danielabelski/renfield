@@ -192,8 +192,13 @@ function buildCommandCenterModel(
 
   // Append the internal-only subsystem pseudo-nodes (knowledge / presence /
   // media) so an `internal.*` turn has a node to light. Pulse-only: no health,
-  // excluded from the tool-health telemetry counts below.
+  // excluded from the tool-health telemetry counts below. Skip any id that a
+  // REAL MCP server already owns (e.g. an operator adds an output-provider
+  // stanza named `media`) — the real node wins and handles that pulse, and we
+  // never emit a duplicate `data-tool-id` / React key.
+  const realServerIds = new Set(tools.map((tool) => tool.id));
   for (const node of INTERNAL_SUBSYSTEM_NODES) {
+    if (realServerIds.has(node.id)) continue;
     tools.push({
       id: node.id,
       label: t(node.labelKey, { defaultValue: node.fallback }),

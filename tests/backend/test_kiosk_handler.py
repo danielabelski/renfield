@@ -14,6 +14,8 @@ Run on the .159 build box (CI is non-functional): see
 from __future__ import annotations
 
 import asyncio
+import re
+from pathlib import Path
 
 import pytest
 
@@ -92,20 +94,50 @@ def test_extract_unknown_internal_tool_skipped():
     assert _extract_subsystems_used([("internal.render_list", {})]) == []
 
 
+# Real MCP servers that `internal.*` tools bridge to — they already render as
+# tool-ring nodes, so they need NO synthetic frontend node. Every OTHER mapped
+# value is internal-only and MUST have a matching frontend synthetic node.
+_REAL_MCP_SERVER_TARGETS = {"homeassistant", "weather"}
+
+
+def _frontend_synthetic_node_ids() -> set[str] | None:
+    """Extract the `id`s from the frontend INTERNAL_SUBSYSTEM_NODES so the
+    coupling guard ENFORCES the real cross-file invariant (not two same-file
+    literals). Returns None when the frontend tree isn't present (isolated
+    backend test runs on .159 only rsync `src/backend` + `tests`) → the test
+    skips there rather than falsely failing."""
+    fe = (
+        Path(__file__).resolve().parents[2]
+        / "src/frontend/src/components/kiosk/useKioskModel.ts"
+    )
+    if not fe.exists():
+        return None
+    block = re.search(
+        r"INTERNAL_SUBSYSTEM_NODES\b.*?=\s*\[(.*?)\];", fe.read_text(encoding="utf-8"), re.S
+    )
+    assert block, "INTERNAL_SUBSYSTEM_NODES not found in useKioskModel.ts"
+    return set(re.findall(r"id:\s*'([^']+)'", block.group(1)))
+
+
 @pytest.mark.backend
 @pytest.mark.unit
 def test_internal_only_subsystem_ids_match_frontend_synthetic_nodes():
     """Coupling guard: every subsystem id an internal tool can pulse is EITHER a
-    real MCP server (homeassistant / weather) OR one of the three internal-only
-    ids the kiosk renders synthetic nodes for. If someone adds a mapping to a new
-    internal-only id, they must add a matching node to the frontend
-    INTERNAL_SUBSYSTEM_NODES (components/kiosk/useKioskModel.ts) or its pulse
-    lights nothing."""
-    real_mcp_servers = {"homeassistant", "weather"}
-    frontend_synthetic_nodes = {"knowledge", "presence", "media"}
+    real MCP server OR one of the internal-only ids the kiosk renders a synthetic
+    node for. The frontend set is READ FROM THE ACTUAL SOURCE (useKioskModel.ts),
+    so adding an internal-only mapping without a matching frontend node — the
+    drift that would silently light nothing on the wall — fails this test."""
+    frontend = _frontend_synthetic_node_ids()
+    if frontend is None:
+        pytest.skip("frontend tree not present (isolated backend run)")
     values = set(INTERNAL_SUBSYSTEM_LABELS.values())
-    assert values == real_mcp_servers | frontend_synthetic_nodes
-    assert (values - real_mcp_servers) == frontend_synthetic_nodes
+    internal_only = values - _REAL_MCP_SERVER_TARGETS
+    assert internal_only == frontend, (
+        f"backend internal-only subsystem ids {internal_only} != frontend synthetic "
+        f"nodes {frontend} — sync components/kiosk/useKioskModel.ts INTERNAL_SUBSYSTEM_NODES"
+    )
+    # Belt and braces: every mapped value resolves to a rendered node.
+    assert values <= _REAL_MCP_SERVER_TARGETS | frontend
 
 
 @pytest.mark.backend
