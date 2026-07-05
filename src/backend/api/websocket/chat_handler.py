@@ -858,6 +858,11 @@ async def websocket_endpoint(
     except Exception as e:
         logger.warning(f"⚠️ Failed to detect room context: {e}")
 
+    # Kiosk core-activity: True between marking THIS connection's in-flight chat
+    # turn active and clearing it, so a mid-turn disconnect/error still decrements
+    # the global counter in the outer handlers below (no stuck "processing" core).
+    _chat_turn_marked = False
+
     try:
         while True:
             # Receive message
@@ -1164,6 +1169,16 @@ async def websocket_endpoint(
                 await websocket.send_json({"type": "stream", "content": blocked_msg})
                 await websocket.send_json({"type": "done"})
                 continue
+
+            # Kiosk core-activity: past all turn-level early-exits (validation /
+            # injection block), this turn is committed to processing → the kiosk
+            # core shows "processing" (cleared at the `done` frame + crash-safe in
+            # the outer finally). Remaining `continue`s below are inner loops only.
+            if not _chat_turn_marked:
+                from api.websocket.kiosk_handler import note_chat_turn_active
+
+                _chat_turn_marked = True
+                await note_chat_turn_active(True)
 
             # Handle session_id for conversation persistence
             if msg_session_id:
@@ -2498,6 +2513,13 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                 done_msg["role"] = role.name
             await websocket.send_json(done_msg)
 
+            # Kiosk core-activity: turn finished → clear its "processing" mark.
+            if _chat_turn_marked:
+                from api.websocket.kiosk_handler import note_chat_turn_active
+
+                _chat_turn_marked = False
+                await note_chat_turn_active(False)
+
             # Proactive feedback: ask user when action failed or returned empty
             should_request_feedback = False
             if intent and intent.get("intent") != "general.conversation":
@@ -2635,3 +2657,11 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
         import traceback
         logger.error(traceback.format_exc())
         await websocket.close()
+    finally:
+        # Crash-safe: a turn interrupted between its start-mark and the `done`
+        # clear (disconnect / mid-turn error) must still decrement the global
+        # counter, or the kiosk core would stay stuck "processing".
+        if _chat_turn_marked:
+            from api.websocket.kiosk_handler import note_chat_turn_active
+
+            await note_chat_turn_active(False)

@@ -95,6 +95,9 @@ export interface KioskLiveModel {
   peers: KioskPeer[];
   weather: KioskWeather | null;
   nowPlaying: KioskNowPlaying[];
+  /** True while ≥1 web-chat turn is being processed → the core shows
+   *  "processing" even with no satellite active (typed commands have no room). */
+  chatActive: boolean;
   /** subsystem id → epoch-ms of its most recent `turn_activity` mention. Drives
    *  the active-subsystem pulse; the view fades it on a render tick. Preserved
    *  across snapshots (it is delta-sourced state with its own decay). */
@@ -125,6 +128,12 @@ interface SnapshotMessage {
   peers?: KioskPeer[];
   weather?: KioskWeather | null;
   now_playing?: KioskNowPlaying[];
+  chat_active?: boolean;
+}
+
+interface ChatActivityDelta {
+  type: 'chat_activity';
+  active: boolean;
 }
 
 interface SatelliteStateDelta {
@@ -185,6 +194,7 @@ type KioskMessage =
   | ToolHealthChangedDelta
   | WeatherUpdatedDelta
   | TurnActivityDelta
+  | ChatActivityDelta
   | { type: string; [key: string]: unknown };
 
 // ---- reducer ---------------------------------------------------------------
@@ -201,6 +211,7 @@ const EMPTY_MODEL: KioskLiveModel = {
   peers: [],
   weather: null,
   nowPlaying: [],
+  chatActive: false,
   subsystemPulses: {},
 };
 
@@ -239,6 +250,7 @@ function hydrate(prev: KioskLiveModel, msg: SnapshotMessage): KioskLiveModel {
     peers: msg.peers ?? [],
     weather: msg.weather ?? null,
     nowPlaying: msg.now_playing ?? [],
+    chatActive: msg.chat_active ?? false,
     // Preserve the pulse map: it is delta-sourced and self-decays in the view,
     // so a reconnect snapshot must not wipe an in-flight subsystem pulse.
     subsystemPulses: prev.subsystemPulses,
@@ -360,6 +372,11 @@ function reduce(state: KioskLiveModel, msg: KioskMessage): KioskLiveModel {
     case 'weather_updated': {
       const delta = msg as WeatherUpdatedDelta;
       return { ...state, weather: delta.weather ?? null };
+    }
+
+    case 'chat_activity': {
+      const delta = msg as ChatActivityDelta;
+      return { ...state, chatActive: !!delta.active };
     }
 
     case 'turn_activity': {
