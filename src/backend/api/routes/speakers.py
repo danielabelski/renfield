@@ -6,7 +6,7 @@ Uses SpeechBrain ECAPA-TDNN for speaker embeddings.
 """
 
 import numpy as np
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy import delete, func, select, update
@@ -444,6 +444,34 @@ async def merge_speakers(
         source_speaker_deleted=source_name,
         message=message,
     )
+
+
+@router.post("/enroll")
+async def enroll_controlled(
+    name: str = Form(...),
+    audio: list[UploadFile] = File(...),
+    user_id: int | None = Form(None),
+    speaker_id: int | None = Form(None),
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.SPEAKERS_ALL)),
+):
+    """Controlled multi-sample enrollment (docs/design/speaker-enrollment-redesign.md).
+
+    Builds ONE trusted, named reference profile from several audio samples via the
+    voice-server ONNX model (same as inference), quality- + cohesion-gated. Links
+    the profile to a user. `speaker_id` re-enrols an existing speaker (replaces
+    its embeddings). Returns the structured result (`ok` + reason on rejection —
+    a rejection is a normal, actionable outcome of the guided flow, not a 500).
+    """
+    samples: list[tuple[bytes, str]] = [
+        (await f.read(), f.filename or "sample.wav") for f in audio
+    ]
+    from services.speaker_enrollment_service import enroll_speaker_controlled
+
+    result = await enroll_speaker_controlled(
+        db, name=name, samples=samples, user_id=user_id, speaker_id=speaker_id,
+    )
+    return result
 
 
 @router.post("/{speaker_id}/enroll", response_model=EnrollResponse)

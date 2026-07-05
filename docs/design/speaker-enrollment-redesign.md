@@ -98,7 +98,18 @@ Flag-off = today's behavior byte-identical (dark rollout).
 - **Phase 1 (enrollment):** voice-server enroll endpoint (ONNX) + backend enroll service (multi-sample + cohesion gate) + `users`-link. Purge script.
 - **Phase 2 (frontend):** guided multi-take enroll flow on SpeakersPage; then purge + re-enroll the 3 members.
 - **Phase 3 (recalibrate):** measure enrolled same/diff separation; set threshold + margin; flip `speaker_controlled_enrollment_enabled` on (auto-enroll OFF, identify-vs-enrolled-only).
-- **Phase 4 (optional):** adaptation / review-bucket; score-normalization (AS-norm) if separation still marginal.
+- **Phase 4 (upstream capture — the biggest quality lever; research 2026-07-05):** adaptation / review-bucket; AS-norm if still marginal; and **XVF3800 DSP tuning** (below).
+
+### Phase 4 detail — XVF3800 capture is mis-tuned for biometrics (research 2026-07-05)
+We drive the XVF3800 for **LEDs only** and capture **channel 0** (the *conference*-tuned tap: AGC-pumped + DNN-noise-suppressed + dereverbed — optimized for human intelligibility) at **16-bit / 16 kHz mono**, and set **none** of the ~40 DSP params (defaults, never persisted). ECAPA embeddings are biometric and far more sensitive than ASR to time-varying gain (AGC pumping), timbre distortion (aggressive NS), and residual echo/reverb — so we're feeding it the single worst-for-identity tap. This is a prime suspect for the 0.28 same-speaker cosine. All controllable via the existing `xvf_host` + `libcommand_map.so` already in `src/satellite/hardware/xvf3800/` — no reflash needed. Ranked (impact/effort):
+1. **Capture the ASR beam (ch 1), not conference ch 0** — or a less-post-processed `MUX_*` tap (`MUX_PROCESSED_MICS`/`MUX_DELAYED_MICS`); the chip has a dedicated ASR-optimized beam (`AEC_ASROUTONOFF`/`ASROUTGAIN`, `AUDIO_MGR_SELECTED_CHANNELS`). High impact / low effort.
+2. **Tame AGC on the embedding path** — `PP_AGCONOFF`/`PP_AGCMAXGAIN` (our memory says we RAISED it — wrong for a stable embedding), fix `AUDIO_MGR_MIC_GAIN`, lengthen `PP_AGCTIME`/`AGCFASTTIME`. High / low.
+3. **Soften DNN NS** — `PP_MIN_NS`/`PP_MIN_NN` gain floors, `PP_NLATTENONOFF`; preserve voice timbre. High / low.
+4. **Fix AEC reference wiring/policy** — datasheet: far-end reference must be on ch 0. On-board TTS (`plughw:XVF3800,0`) gives a reference; **routing TTS to a DLNA/room speaker leaves the board with NO reference → capture during playback is echo-polluted → must be gated out of enroll/inference.**
+5. **DOA-driven beam steering** — read talker azimuth (`AEC_AZIMUTH_VALUES`) and pin a fixed beam (`AEC_FIXEDBEAMS*`), not just LED color. Medium.
+6. **24-bit capture** (`USB_BIT_DEPTH`) — more SNR headroom once AGC is softened. Low–med.
+7. **`SAVE_CONFIGURATION`** — else every reboot reverts to conference defaults. Trivial enabler.
+Sources: XMOS VocalFusion audio-pipeline datasheet; Seeed wiki HA/ESPHome reference (`noise_suppression_level: 0` — trusts the chip, refuses to double-process); the board's own `libcommand_map.so`. Highest-leverage experiment: **capture the ASR/less-processed tap, AGC+NS softened, 24-bit, persisted, playback-gated.**
 
 ---
 
