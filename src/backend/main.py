@@ -24,7 +24,6 @@ from api.routes import (
     chat,
     chat_upload,
     circles,
-    command_center,
     email_ingest,
     federation_audit,
     federation_pairing,
@@ -198,7 +197,6 @@ app.include_router(feedback.router, prefix="/api/feedback", tags=["Feedback"])
 app.include_router(skills.router, prefix="/api/skills", tags=["Skills"])
 app.include_router(trajectories.router, prefix="/api/trajectories", tags=["Trajectories"])
 app.include_router(tool_health.router, prefix="/api/tool-health", tags=["Tool Health"])
-app.include_router(command_center.router, prefix="/api/command-center", tags=["Command Center"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])
 app.include_router(kg_routes.router, prefix="/api/knowledge-graph", tags=["Knowledge Graph"])
 app.include_router(wissensbasis_routes.router, prefix="/api/wissensbasis", tags=["Wissensbasis - Graph"])

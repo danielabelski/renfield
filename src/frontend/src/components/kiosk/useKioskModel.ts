@@ -1,22 +1,19 @@
-// Kiosk model = the live CommandCenterModel + a voice-reactive core state
-// derived from the satellites' own state (idle/listening/processing/speaking).
-// The wall display reacts to real household voice activity, not a simulation.
+// Kiosk model = the ring model (CommandCenterModel shape) + a voice-reactive
+// core state derived from the satellites' own state (idle/listening/processing/
+// speaking). The wall display reacts to real household voice activity.
 //
-// DATA SOURCE (phase 1b): this now reads from the PUSH socket useKioskSocket()
-// instead of the former react-query polls (useCommandCenterModel +
-// useSatellites/Weather/NowPlaying queries). The derivation math below is
-// unchanged — voice-state priority merge + telemetry counts are byte-for-byte
-// the same, and the ring assembly (roles / tools / rooms / peers) mirrors the
-// admin board's useCommandCenterModel exactly, only re-sourced from the
-// snapshot+delta reducer. useCommandCenterModel stays in place for the
-// (still-live) admin Command Center; the two converge when it is decommissioned
-// (tasks/kiosk-active-subsystem-plan.md §3).
+// DATA SOURCE: reads from the PUSH socket useKioskSocket() (the `/ws/kiosk`
+// snapshot + deltas) — never a poll. The derivation below (voice-state priority
+// merge, telemetry counts, ring assembly of roles / tools / rooms / peers) was
+// inherited from the now-decommissioned admin board's `useCommandCenterModel`
+// (deleted with the Command Center, 2026-07) and re-sourced from the
+// snapshot+delta reducer. See tasks/kiosk-active-subsystem-plan.md §3.
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { roleLabel } from '../chat/AgentRoleBadge';
 import { useKioskSocket, type KioskLiveModel } from './useKioskSocket';
-import type { KioskWeather, KioskNowPlaying } from '../../api/resources/commandCenter';
+import type { KioskWeather, KioskNowPlaying } from '../../api/resources/kiosk';
 import type { CommandCenterModel, NodeHealth } from './types';
 
 export type CoreState = 'idle' | 'listening' | 'processing' | 'speaking' | 'busy';
@@ -173,11 +170,11 @@ function buildCommandCenterModel(
       label: prettifyServerName(server.name),
       health,
       hint: server.connected
-        ? t('commandCenter.toolHint', {
+        ? t('kiosk.toolHint', {
             count: server.tool_count,
             defaultValue: '{{count}} tools',
           })
-        : server.last_error || t('commandCenter.legend.down'),
+        : server.last_error || t('kiosk.legend.down'),
     };
   });
 
@@ -230,7 +227,7 @@ function buildCommandCenterModel(
       label: label ?? key,
       online: true, // presence saw someone here; there's just no satellite
       occupants,
-      hint: t('commandCenter.noSatellite', { defaultValue: 'No satellite' }),
+      hint: t('kiosk.noSatellite', { defaultValue: 'No satellite' }),
     });
   }
 

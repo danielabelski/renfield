@@ -283,7 +283,7 @@ async def build_kiosk_snapshot(app) -> dict:
 
     # --- Recent role activations (content-free pulse history) ------------
     try:
-        from api.routes.command_center import recent_role_activity_entries
+        from api.websocket.kiosk_data import recent_role_activity_entries
 
         async with AsyncSessionLocal() as db:
             entries = await recent_role_activity_entries(db, limit=30)
@@ -334,7 +334,7 @@ async def build_kiosk_snapshot(app) -> dict:
 
     # --- Weather tile (process-cached; None hides the tile) --------------
     try:
-        from api.routes.command_center import compute_kiosk_weather
+        from api.websocket.kiosk_data import compute_kiosk_weather
 
         weather = await compute_kiosk_weather(mcp_manager)
         if weather is not None:

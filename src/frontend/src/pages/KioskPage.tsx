@@ -4,8 +4,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import KioskConstellation from '../components/command-center/KioskConstellation';
-import { useKioskModel } from '../components/command-center/useKioskModel';
+import KioskConstellation from '../components/kiosk/KioskConstellation';
+import { useKioskModel } from '../components/kiosk/useKioskModel';
 
 export default function KioskPage() {
   const { t } = useTranslation();

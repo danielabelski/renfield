@@ -28,7 +28,7 @@ import type {
   KioskNowPlaying,
   KioskWeather,
   RoleActivityEntry,
-} from '../../api/resources/commandCenter';
+} from '../../api/resources/kiosk';
 
 // ---- snapshot section shapes (as the backend hub emits them) --------------
 

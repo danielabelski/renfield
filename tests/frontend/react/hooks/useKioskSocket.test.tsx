@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { useKioskSocket } from '../../../../src/frontend/src/components/command-center/useKioskSocket';
+import { useKioskSocket } from '../../../../src/frontend/src/components/kiosk/useKioskSocket';
 
 type WsListener<E = unknown> = ((event: E) => void) | null;
 

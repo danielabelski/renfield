@@ -317,7 +317,7 @@ async def test_tool_health_no_broadcast_on_same_value():
 @pytest.mark.backend
 @pytest.mark.asyncio
 async def test_weather_updated_diff_gated(monkeypatch):
-    import api.routes.command_center as cc
+    import api.websocket.kiosk_data as cc
 
     # Reset the module-level push-dedup state so the test is order-independent.
     monkeypatch.setattr(cc, "_weather_last_pushed", None, raising=False)
@@ -348,7 +348,7 @@ async def test_weather_updated_diff_gated(monkeypatch):
 @pytest.mark.backend
 @pytest.mark.asyncio
 async def test_weather_updated_pushes_none_when_unavailable(monkeypatch):
-    import api.routes.command_center as cc
+    import api.websocket.kiosk_data as cc
 
     monkeypatch.setattr(cc, "_weather_last_pushed", {"temp": 5.0}, raising=False)
 
