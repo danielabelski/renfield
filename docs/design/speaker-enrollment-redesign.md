@@ -7,11 +7,13 @@
 
 ## 1. Problem — measured, not assumed
 
-Prod snapshot (2026-07-05, 41 speakers / 140 embeddings, 192-dim ECAPA):
+> **UPDATE (2026-07-05, live capture experiment — reframes the diagnosis):** an A/B capture on sat-fitnessraum of continuous clean speech through the *same* XVF3800 gave **same-speaker cohesion 0.70** (baseline) / **0.74** (AGC off + NS 0.5). So a **clean capture is HEALTHY** — the embeddings and the mic are fine. The 0.275 below was measured *within* auto-enrolled "Unbekannter" profiles that actually **mix multiple people** (so it was never truly same-speaker) plus short/noisy far-field turns. **Corrected conclusion:** the disease is **profile pollution** (fixed by controlled enrollment + the cohesion gate, Phase 1) and real-world capture conditions — NOT a broken model or the wrong DSP tap. XVF3800 softening is a real but modest **+0.04** bonus (Phase 4, nice-to-have), not the lever. This *validates* Phases 0–2 as the right fix.
+
+Prod snapshot (2026-07-05, 41 speakers / 140 embeddings, 192-dim ECAPA) — the stored (largely polluted) profiles:
 
 | Metric | Measured | Healthy far-field ECAPA |
 |---|---|---|
-| **Same-speaker cosine (median)** | **0.275** | 0.6 – 0.85 |
+| **Same-speaker cosine (median)** | **0.275** (within-polluted-profile) | 0.6 – 0.85 |
 | **Different-speaker cosine (median / p95)** | **0.071 / 0.224** | 0.0 – 0.2 |
 | Within-profile spread (n=10 profiles) | min ~0.03 → max ~0.77 | tight, high |
 | Match threshold | **0.25** | — |

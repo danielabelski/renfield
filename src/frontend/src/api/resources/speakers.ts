@@ -29,6 +29,26 @@ export interface IdentifyResult {
   message?: string;
 }
 
+/** Result of a controlled (multi-sample, quality-gated) enrollment. */
+export interface ControlledEnrollResult {
+  ok: boolean;
+  reason?: string;
+  speaker_id?: number;
+  name?: string;
+  cohesion?: number;
+  accepted: number;
+  rejected?: number;
+  sample_reasons?: string[];
+  displaced_user_ids?: number[];
+}
+
+export interface ControlledEnrollInput {
+  name: string;
+  samples: Blob[];
+  userId?: number | null;
+  speakerId?: number | null;
+}
+
 async function fetchSpeakers(): Promise<Speaker[]> {
   const response = await apiClient.get<Speaker[]>('/api/speakers');
   return response.data ?? [];
@@ -84,6 +104,22 @@ async function enrollSpeakerRequest({ speakerId, audio }: EnrollInput): Promise<
   formData.append('audio', audio, 'voice_sample.webm');
   const response = await apiClient.post<{ message: string }>(
     `/api/speakers/${speakerId}/enroll`,
+    formData,
+    { headers: { 'Content-Type': 'multipart/form-data' } },
+  );
+  return response.data;
+}
+
+async function controlledEnrollRequest(
+  { name, samples, userId, speakerId }: ControlledEnrollInput,
+): Promise<ControlledEnrollResult> {
+  const formData = new FormData();
+  formData.append('name', name);
+  if (userId != null) formData.append('user_id', String(userId));
+  if (speakerId != null) formData.append('speaker_id', String(speakerId));
+  samples.forEach((blob, i) => formData.append('audio', blob, `sample_${i}.webm`));
+  const response = await apiClient.post<ControlledEnrollResult>(
+    '/api/speakers/enroll',
     formData,
     { headers: { 'Content-Type': 'multipart/form-data' } },
   );
@@ -185,6 +221,19 @@ export function useEnrollSpeaker() {
       },
     },
     'speakers.voiceSampleFailed',
+  );
+}
+
+export function useControlledEnroll() {
+  const queryClient = useQueryClient();
+  return useApiMutation(
+    {
+      mutationFn: controlledEnrollRequest,
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: keys.speakers.all });
+      },
+    },
+    'speakers.enrollFailed',
   );
 }
 
