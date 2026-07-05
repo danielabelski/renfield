@@ -6,10 +6,6 @@
 
 export type NodeHealth = 'healthy' | 'degraded' | 'down' | 'unknown';
 
-/** Per-ring fetch state so each ring can render its own loading/error
- *  treatment without blanking the whole board. */
-export type RingStatus = 'loading' | 'ready' | 'error';
-
 export interface CoreNode {
   /** Display name of the orchestrator, e.g. "Renfield". */
   label: string;
@@ -78,6 +74,4 @@ export interface CommandCenterModel {
   peers?: PeerNode[];
   /** Recent activations, newest first — drives the active edge + decay trail. */
   trail?: PulseEntry[];
-  /** Per-ring fetch state (absent = ready, keeps the demo model terse). */
-  ringStatus?: Partial<Record<'roles' | 'tools' | 'rooms' | 'peers', RingStatus>>;
 }

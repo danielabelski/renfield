@@ -1870,7 +1870,8 @@
     },
     "noSatellite": "Kein Satellit",
     "toolHint_one": "{{count}} Tool",
-    "toolHint_other": "{{count}} Tools"
+    "toolHint_other": "{{count}} Tools",
+    "exit": "Kiosk verlassen"
   },
   "routing": {
     "title": "Routing-Dashboard",
