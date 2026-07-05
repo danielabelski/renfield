@@ -682,7 +682,10 @@ class WhisperService:
             # caller's borrowed `db_session` mid-request.
             try:
                 async with AsyncSessionLocal() as spk_db:
-                    speaker_info = await resolve_speaker_from_embedding(spk_db, embedding)
+                    speaker_info = await resolve_speaker_from_embedding(
+                        spk_db, embedding,
+                        audio_duration_s=result.get("audio_duration_s"),
+                    )
             except Exception as e:
                 logger.warning(f"⚠️ wire-embedding speaker resolve failed: {e}")
 

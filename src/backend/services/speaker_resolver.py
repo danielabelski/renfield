@@ -31,6 +31,13 @@ from utils.config import settings
 MAX_EMBEDDINGS_PER_SPEAKER = 10
 
 
+def _l2_normalize(vec: np.ndarray) -> np.ndarray:
+    """Unit-normalize an embedding (ECAPA outputs are not unit-norm; averaging
+    raw vectors lets larger-norm samples dominate the centroid)."""
+    norm = float(np.linalg.norm(vec))
+    return vec / norm if norm > 0 else vec
+
+
 def _empty_speaker_info() -> dict[str, Any]:
     return {
         "speaker_id": None,
@@ -44,6 +51,8 @@ def _empty_speaker_info() -> dict[str, Any]:
 async def resolve_speaker_from_embedding(
     db_session: AsyncSession,
     embedding: list[float] | np.ndarray,
+    *,
+    audio_duration_s: float | None = None,
 ) -> dict[str, Any]:
     """Look up or create a Speaker for the given ECAPA embedding.
 
@@ -51,7 +60,20 @@ async def resolve_speaker_from_embedding(
     `speaker_info` dict so downstream consumers can swap callers without
     code change. Best-effort — on any error returns the empty info dict
     and logs the cause; the caller treats the speaker as unknown.
+
+    ``audio_duration_s`` (best-effort; callers that have it pass it) drives the
+    Phase-0 quality gate: when ``speaker_quality_gating_enabled`` and the turn is
+    shorter than ``speaker_recognition_min_duration_s``, the turn may still be
+    IDENTIFIED (read-only) but must NOT auto-enrol a new speaker or reinforce an
+    existing one — short/noisy turns are what pollute profiles. See
+    docs/design/speaker-enrollment-redesign.md.
     """
+    gating = settings.speaker_quality_gating_enabled
+    too_short = (
+        gating
+        and audio_duration_s is not None
+        and audio_duration_s < settings.speaker_recognition_min_duration_s
+    )
     if embedding is None:
         return _empty_speaker_info()
 
@@ -85,6 +107,11 @@ async def resolve_speaker_from_embedding(
             )[:MAX_EMBEDDINGS_PER_SPEAKER]
             decoded = [service.embedding_from_base64(emb.embedding) for emb in recent]
             if decoded:
+                # Phase-0: L2-normalize each embedding before averaging so the
+                # centroid isn't dominated by larger-norm samples (raw ECAPA
+                # norms vary ~250-410). Off = legacy raw mean.
+                if gating:
+                    decoded = [_l2_normalize(d) for d in decoded]
                 averaged = np.mean(decoded, axis=0)
                 known_speakers.append((speaker.id, speaker.name, averaged))
 
@@ -109,10 +136,17 @@ async def resolve_speaker_from_embedding(
             }
             logger.info(f"🎤 Speaker identified from wire-embedding: {identified.name} ({confidence:.2f})")
 
-            if settings.speaker_continuous_learning:
+            # Reinforce the profile only on a STRONG, long-enough match — a weak
+            # (barely-over-threshold, possibly wrong) or too-short match appended
+            # every turn is exactly what pollutes profiles (Phase-0 gate).
+            strong_enough = (
+                not gating
+                or confidence >= settings.speaker_continuous_learning_min_confidence
+            )
+            if settings.speaker_continuous_learning and not too_short and strong_enough:
                 await _append_embedding(db_session, identified.id, embedding_array, service)
 
-        elif settings.speaker_auto_enroll:
+        elif settings.speaker_auto_enroll and not too_short:
             unknown_count = sum(
                 1 for s in all_speakers if s.name.startswith("Unbekannter Sprecher")
             )
@@ -143,6 +177,12 @@ async def resolve_speaker_from_embedding(
             logger.info(
                 f"🆕 New unknown speaker auto-enrolled from wire-embedding: "
                 f"{new_speaker.name} (ID: {new_speaker.id})"
+            )
+        elif too_short:
+            logger.info(
+                f"🎤 Speaker not recognised — turn too short "
+                f"({audio_duration_s:.2f}s < {settings.speaker_recognition_min_duration_s}s); "
+                f"not auto-enrolling (quality gate)"
             )
         else:
             logger.info("🎤 Speaker not recognised (auto-enrol disabled)")

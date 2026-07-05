@@ -18,6 +18,7 @@ from models.permissions import Permission
 from services.auth_service import require_permission
 from services.database import get_db
 from services.speaker_service import SPEECHBRAIN_ERROR, get_speaker_service
+from utils.config import settings
 
 router = APIRouter()
 
@@ -121,6 +122,13 @@ async def get_speaker_embeddings_averaged(
         ]
 
         if embeddings:
+            # Phase-0: L2-normalize before averaging (mirror speaker_resolver) so
+            # /identify uses the same centroid as live recognition. Off = legacy.
+            if settings.speaker_quality_gating_enabled:
+                embeddings = [
+                    (e / n if (n := float(np.linalg.norm(e))) > 0 else e)
+                    for e in embeddings
+                ]
             averaged = np.mean(embeddings, axis=0)
             speaker_data.append((speaker.id, speaker.name, averaged))
 
