@@ -1,7 +1,7 @@
 """Backend unit tests for the kiosk push hub (Phase 1a).
 
 Covers:
-  * ``_extract_subsystems_used`` — mcp-vs-internal mapping, the internal
+  * ``extract_subsystems_used`` — mcp-vs-internal mapping, the internal
     allowlist, dedup, order-preservation, the cap, and the empty case.
   * ``broadcast_kiosk_event`` — fire-and-forget: an empty registry is a no-op,
     a broken socket is pruned (not raised), a good socket receives the event.
@@ -20,10 +20,11 @@ from pathlib import Path
 import pytest
 
 import api.websocket.kiosk_handler as kiosk
-from api.websocket.chat_handler import (
+from api.websocket.kiosk_data import (
     INTERNAL_SUBSYSTEM_LABELS,
     _MAX_SUBSYSTEMS_PER_TURN,
-    _extract_subsystems_used,
+    broadcast_turn_activity,
+    extract_subsystems_used,
 )
 from api.websocket.kiosk_handler import broadcast_kiosk_event, build_kiosk_snapshot
 
@@ -61,14 +62,14 @@ def _clear_clients():
 
 
 # --------------------------------------------------------------------------
-# _extract_subsystems_used
+# extract_subsystems_used
 # --------------------------------------------------------------------------
 
 
 @pytest.mark.backend
 @pytest.mark.unit
 def test_extract_mcp_tool_maps_to_server():
-    assert _extract_subsystems_used(
+    assert extract_subsystems_used(
         [("mcp.homeassistant.turn_on", {})]
     ) == ["homeassistant"]
 
@@ -76,22 +77,22 @@ def test_extract_mcp_tool_maps_to_server():
 @pytest.mark.backend
 @pytest.mark.unit
 def test_extract_internal_tool_uses_allowlist():
-    assert _extract_subsystems_used([("internal.knowledge_search", {})]) == ["knowledge"]
-    assert _extract_subsystems_used([("internal.list_my_memories", {})]) == ["knowledge"]
-    assert _extract_subsystems_used([("internal.device_controls", {})]) == ["homeassistant"]
-    assert _extract_subsystems_used([("internal.announce_in_room", {})]) == ["homeassistant"]
-    assert _extract_subsystems_used([("internal.presence_history", {})]) == ["presence"]
-    assert _extract_subsystems_used([("internal.play_radio", {})]) == ["media"]
-    assert _extract_subsystems_used([("internal.weather_widget", {})]) == ["weather"]
+    assert extract_subsystems_used([("internal.knowledge_search", {})]) == ["knowledge"]
+    assert extract_subsystems_used([("internal.list_my_memories", {})]) == ["knowledge"]
+    assert extract_subsystems_used([("internal.device_controls", {})]) == ["homeassistant"]
+    assert extract_subsystems_used([("internal.announce_in_room", {})]) == ["homeassistant"]
+    assert extract_subsystems_used([("internal.presence_history", {})]) == ["presence"]
+    assert extract_subsystems_used([("internal.play_radio", {})]) == ["media"]
+    assert extract_subsystems_used([("internal.weather_widget", {})]) == ["weather"]
 
 
 @pytest.mark.backend
 @pytest.mark.unit
 def test_extract_unknown_internal_tool_skipped():
-    assert _extract_subsystems_used([("internal.something_new", {})]) == []
+    assert extract_subsystems_used([("internal.something_new", {})]) == []
     # Pure Gen-UI formatting tools touch no subsystem → no pulse.
-    assert _extract_subsystems_used([("internal.render_table", {})]) == []
-    assert _extract_subsystems_used([("internal.render_list", {})]) == []
+    assert extract_subsystems_used([("internal.render_table", {})]) == []
+    assert extract_subsystems_used([("internal.render_list", {})]) == []
 
 
 # Real MCP servers that `internal.*` tools bridge to — they already render as
@@ -149,7 +150,7 @@ def test_extract_dedup_preserves_first_seen_order():
         ("mcp.weather.get_weather", {}),
         ("internal.knowledge_search", {}),  # -> knowledge
     ]
-    assert _extract_subsystems_used(results) == [
+    assert extract_subsystems_used(results) == [
         "homeassistant",
         "weather",
         "knowledge",
@@ -160,7 +161,7 @@ def test_extract_dedup_preserves_first_seen_order():
 @pytest.mark.unit
 def test_extract_caps_at_five_distinct_subsystems():
     results = [(f"mcp.server{i}.tool", {}) for i in range(8)]
-    out = _extract_subsystems_used(results)
+    out = extract_subsystems_used(results)
     assert len(out) == _MAX_SUBSYSTEMS_PER_TURN == 5
     assert out == ["server0", "server1", "server2", "server3", "server4"]
 
@@ -168,9 +169,9 @@ def test_extract_caps_at_five_distinct_subsystems():
 @pytest.mark.backend
 @pytest.mark.unit
 def test_extract_empty_and_malformed_are_safe():
-    assert _extract_subsystems_used([]) == []
+    assert extract_subsystems_used([]) == []
     # Malformed / non-tool entries are ignored, not raised.
-    assert _extract_subsystems_used(
+    assert extract_subsystems_used(
         [(), ("", {}), ("plain_intent", {}), ("mcp.", {}), ("mcp.only", {})]
     ) == []
 
@@ -205,6 +206,32 @@ async def test_broadcast_delivers_to_connected_clients():
     await _drain_fanout()
     assert a.sent == [event]
     assert b.sent == [event]
+
+
+@pytest.mark.backend
+@pytest.mark.asyncio
+async def test_broadcast_turn_activity_pushes_pulse_and_noops_when_empty():
+    client = _FakeWS()
+    kiosk._kiosk_clients.add(client)
+
+    # nothing to show (no role AND no subsystems) → no push
+    await broadcast_turn_activity(None, [], None)
+    await _drain_fanout()
+    assert client.sent == []
+
+    # a voice turn that ran a tool → one content-free turn_activity pulse
+    await broadcast_turn_activity(None, ["homeassistant"], True)
+    await _drain_fanout()
+    assert len(client.sent) == 1
+    evt = client.sent[0]
+    assert evt["type"] == "turn_activity"
+    assert evt["subsystems"] == ["homeassistant"]
+    assert evt["ok"] is True
+    assert "at" in evt  # timestamp stamped
+    # role-only turn (no tool) still pulses the role ring
+    await broadcast_turn_activity("smart_home", [], None)
+    await _drain_fanout()
+    assert client.sent[-1]["role"] == "smart_home"
 
 
 @pytest.mark.backend

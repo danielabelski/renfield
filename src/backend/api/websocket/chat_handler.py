@@ -209,84 +209,10 @@ def _extract_agent_sources(tool_results: list) -> list[dict]:
     return sources
 
 
-# Maps the platform-core / ha_glue ``internal.*`` tools (which have no MCP
-# server, hence no natural ring node) onto a kiosk subsystem id. Unknown internal
-# tools are intentionally skipped (no pulse). ``homeassistant`` and ``weather``
-# are REAL MCP servers (they already render as tool-ring nodes); ``knowledge`` /
-# ``presence`` / ``media`` are INTERNAL-ONLY subsystems with no MCP server — the
-# kiosk renders synthetic pulse-only nodes for exactly those three, so this map's
-# internal-only value set MUST stay in sync with the frontend
-# ``INTERNAL_SUBSYSTEM_NODES`` (components/kiosk/useKioskModel.ts). Pure Gen-UI
-# formatting tools (render_table / render_list) touch no subsystem → omitted.
-INTERNAL_SUBSYSTEM_LABELS: dict[str, str] = {
-    # knowledge / second brain — RAG, memory, document ingest + maintenance
-    "internal.knowledge_search": "knowledge",
-    "internal.list_my_memories": "knowledge",
-    "internal.forward_attachment_to_paperless": "knowledge",
-    "internal.paperless_commit_upload": "knowledge",
-    "internal.ingest_file": "knowledge",
-    "internal.ingest_status": "knowledge",
-    "internal.reindex_documents": "knowledge",
-    "internal.list_chunkless_documents": "knowledge",
-    # presence
-    "internal.presence_map": "presence",
-    "internal.presence_history": "presence",
-    "internal.get_all_presence": "presence",
-    "internal.get_user_location": "presence",
-    "internal.bluetooth_scan": "presence",
-    # home assistant — device control + spoken announcements via HA speakers
-    "internal.device_action": "homeassistant",
-    "internal.device_controls": "homeassistant",
-    "internal.announce_in_room": "homeassistant",
-    "internal.broadcast_announcement": "homeassistant",
-    # weather (wraps the weather MCP)
-    "internal.weather_widget": "weather",
-    # media — DLNA / radio / server playback orchestration
-    "internal.media_control": "media",
-    "internal.play_radio": "media",
-    "internal.play_in_room": "media",
-    "internal.play_from_server": "media",
-    "internal.play_album_on_dlna": "media",
-    "internal.play_video_on_dlna": "media",
-    "internal.list_radio_favorites": "media",
-    "internal.save_radio_favorite": "media",
-    "internal.remove_radio_favorite": "media",
-    "internal.resolve_room_player": "media",
-}
-
-# A single turn rarely touches many subsystems; cap the pushed/persisted list so
-# an orchestrated fan-out can't bloat the event or the row.
-_MAX_SUBSYSTEMS_PER_TURN = 5
-
-
-def _extract_subsystems_used(tool_results: list) -> list[str]:
-    """Derive the content-free subsystem ids a turn touched, for the kiosk pulse.
-
-    ``mcp.<server>.<tool>`` → ``<server>``; ``internal.<tool>`` → the static
-    ``INTERNAL_SUBSYSTEM_LABELS`` allowlist (unknown internal tools skipped).
-    Deduped, order-preserved, capped at ``_MAX_SUBSYSTEMS_PER_TURN``. Empty when
-    the turn populated no ``agent_tool_results`` (direct-LLM / shortcut paths).
-    """
-    subsystems: list[str] = []
-    seen: set[str] = set()
-    for entry in tool_results:
-        tool_name = entry[0] if isinstance(entry, (tuple, list)) and entry else None
-        if not isinstance(tool_name, str) or not tool_name:
-            continue
-        if tool_name.startswith("mcp."):
-            parts = tool_name.split(".")
-            sub = parts[1] if len(parts) >= 3 and parts[1] else None
-        elif tool_name.startswith("internal."):
-            sub = INTERNAL_SUBSYSTEM_LABELS.get(tool_name)
-        else:
-            sub = None
-        if not sub or sub in seen:
-            continue
-        seen.add(sub)
-        subsystems.append(sub)
-        if len(subsystems) >= _MAX_SUBSYSTEMS_PER_TURN:
-            break
-    return subsystems
+# The kiosk active-subsystem pulse helpers (INTERNAL_SUBSYSTEM_LABELS,
+# extract_subsystems_used, broadcast_turn_activity) moved to
+# ``api.websocket.kiosk_data`` so the voice path (satellite_handler) can emit the
+# same pulse — imported at the emit site below.
 
 
 def _collect_tool_artifacts(tool_results: list) -> list:
@@ -2301,30 +2227,21 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
 
             # Kiosk "active subsystem" pulse: which subsystems this turn touched.
             # Persisted alongside agent_role (durable record + reconnect hydrate)
-            # AND broadcast to the kiosk hub as a content-free turn_activity delta
-            # (role + subsystems + ok). Omitted entirely when there's nothing to
-            # show (no role and no subsystems → a no-op push).
-            subsystems_used = _extract_subsystems_used(agent_tool_results)
+            # AND broadcast to the kiosk hub as a content-free turn_activity delta.
+            from api.websocket.kiosk_data import (
+                broadcast_turn_activity,
+                extract_subsystems_used,
+            )
+
+            subsystems_used = extract_subsystems_used(agent_tool_results)
             if subsystems_used:
                 assistant_metadata["subsystems_used"] = subsystems_used
             turn_role = role.name if role else None
-            if turn_role or subsystems_used:
-                try:
-                    from datetime import UTC, datetime
-
-                    from api.websocket.kiosk_handler import broadcast_kiosk_event
-
-                    await broadcast_kiosk_event(
-                        {
-                            "type": "turn_activity",
-                            "role": turn_role,
-                            "subsystems": subsystems_used,
-                            "ok": action_result.get("success") if action_result else None,
-                            "at": datetime.now(UTC).isoformat(),
-                        }
-                    )
-                except Exception as e:  # noqa: BLE001 — never break the turn on a push
-                    logger.debug(f"kiosk turn_activity broadcast failed: {e}")
+            await broadcast_turn_activity(
+                turn_role,
+                subsystems_used,
+                action_result.get("success") if action_result else None,
+            )
 
             # Typed artifacts (Lane A) produced this turn by the sub-intent /
             # orchestration card path. Persisted as message_metadata["artifacts"]

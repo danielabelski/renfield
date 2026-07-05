@@ -706,6 +706,32 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                     # never reaches the LLM, only the agent prompt builder and the DB.
                     assistant_metadata = _build_assistant_metadata(intent, action_result)
 
+                    # Kiosk active-subsystem pulse (VOICE path — mirrors the web-chat
+                    # emit in chat_handler). Without this a spoken "turn off the light"
+                    # lights nothing on the kiosk; only typed chat commands pulsed. The
+                    # executed intent name is already in ``mcp.<server>.<tool>`` /
+                    # ``internal.<tool>`` form, so the same extractor maps it. A plain
+                    # ``general.conversation`` turn maps to no subsystem → no-op push.
+                    try:
+                        from api.websocket.kiosk_data import (
+                            broadcast_turn_activity,
+                            extract_subsystems_used,
+                        )
+
+                        _intent_name = intent.get("intent") if intent else None
+                        _subs = (
+                            extract_subsystems_used([(_intent_name, action_result)])
+                            if _intent_name
+                            else []
+                        )
+                        await broadcast_turn_activity(
+                            None,
+                            _subs,
+                            action_result.get("success") if action_result else None,
+                        )
+                    except Exception as e:  # noqa: BLE001 — never break the turn on a push
+                        logger.debug(f"kiosk turn_activity (voice) broadcast failed: {e}")
+
                     # Update in-memory conversation history (keep max 5 exchanges = 10 messages)
                     satellite_conversation_history.append({"role": "user", "content": text})
                     satellite_conversation_history.append({

@@ -82,6 +82,122 @@ async def recent_role_activity_entries(
 
 
 # ---------------------------------------------------------------------------
+# Active-subsystem pulse — which subsystem(s) a completed turn touched. Shared by
+# BOTH the web-chat path (chat_handler) AND the voice path (satellite_handler) so
+# a spoken "turn off the light" lights the same kiosk node a typed one does. It
+# lived in chat_handler until the voice path was found to never pulse (the household
+# talks to satellites, not the web chat) — moved here so both can emit it.
+# ---------------------------------------------------------------------------
+
+# Maps the platform-core / ha_glue ``internal.*`` tools (which have no MCP server,
+# hence no natural ring node) onto a kiosk subsystem id. Unknown internal tools
+# are intentionally skipped (no pulse). ``homeassistant`` and ``weather`` are REAL
+# MCP servers (they already render as tool-ring nodes); ``knowledge`` / ``presence``
+# / ``media`` are INTERNAL-ONLY subsystems with no MCP server — the kiosk renders
+# synthetic pulse-only nodes for exactly those three, so this map's internal-only
+# value set MUST stay in sync with the frontend ``INTERNAL_SUBSYSTEM_NODES``
+# (components/kiosk/useKioskModel.ts). Pure Gen-UI formatting tools (render_table /
+# render_list) touch no subsystem → omitted.
+INTERNAL_SUBSYSTEM_LABELS: dict[str, str] = {
+    # knowledge / second brain — RAG, memory, document ingest + maintenance
+    "internal.knowledge_search": "knowledge",
+    "internal.list_my_memories": "knowledge",
+    "internal.forward_attachment_to_paperless": "knowledge",
+    "internal.paperless_commit_upload": "knowledge",
+    "internal.ingest_file": "knowledge",
+    "internal.ingest_status": "knowledge",
+    "internal.reindex_documents": "knowledge",
+    "internal.list_chunkless_documents": "knowledge",
+    # presence
+    "internal.presence_map": "presence",
+    "internal.presence_history": "presence",
+    "internal.get_all_presence": "presence",
+    "internal.get_user_location": "presence",
+    "internal.bluetooth_scan": "presence",
+    # home assistant — device control + spoken announcements via HA speakers
+    "internal.device_action": "homeassistant",
+    "internal.device_controls": "homeassistant",
+    "internal.announce_in_room": "homeassistant",
+    "internal.broadcast_announcement": "homeassistant",
+    # weather (wraps the weather MCP)
+    "internal.weather_widget": "weather",
+    # media — DLNA / radio / server playback orchestration
+    "internal.media_control": "media",
+    "internal.play_radio": "media",
+    "internal.play_in_room": "media",
+    "internal.play_from_server": "media",
+    "internal.play_album_on_dlna": "media",
+    "internal.play_video_on_dlna": "media",
+    "internal.list_radio_favorites": "media",
+    "internal.save_radio_favorite": "media",
+    "internal.remove_radio_favorite": "media",
+    "internal.resolve_room_player": "media",
+}
+
+# A single turn rarely touches many subsystems; cap the pushed/persisted list so
+# an orchestrated fan-out can't bloat the event or the row.
+_MAX_SUBSYSTEMS_PER_TURN = 5
+
+
+def extract_subsystems_used(tool_results: list) -> list[str]:
+    """Derive the content-free subsystem ids a turn touched, for the kiosk pulse.
+
+    Each entry is a ``(tool_name, data)`` pair (only ``tool_name`` is read).
+    ``mcp.<server>.<tool>`` → ``<server>``; ``internal.<tool>`` → the static
+    ``INTERNAL_SUBSYSTEM_LABELS`` allowlist (unknown internal tools skipped).
+    Deduped, order-preserved, capped at ``_MAX_SUBSYSTEMS_PER_TURN``. Empty when a
+    turn ran no tool (direct-LLM / ``general.conversation`` / shortcut paths).
+    """
+    subsystems: list[str] = []
+    seen: set[str] = set()
+    for entry in tool_results:
+        tool_name = entry[0] if isinstance(entry, (tuple, list)) and entry else None
+        if not isinstance(tool_name, str) or not tool_name:
+            continue
+        if tool_name.startswith("mcp."):
+            parts = tool_name.split(".")
+            sub = parts[1] if len(parts) >= 3 and parts[1] else None
+        elif tool_name.startswith("internal."):
+            sub = INTERNAL_SUBSYSTEM_LABELS.get(tool_name)
+        else:
+            sub = None
+        if not sub or sub in seen:
+            continue
+        seen.add(sub)
+        subsystems.append(sub)
+        if len(subsystems) >= _MAX_SUBSYSTEMS_PER_TURN:
+            break
+    return subsystems
+
+
+async def broadcast_turn_activity(
+    role: str | None, subsystems: list[str], ok: bool | None
+) -> None:
+    """Push ONE content-free ``turn_activity`` pulse to the kiosk hub (role +
+    which subsystems this turn touched). No-op when there's nothing to show (no
+    role AND no subsystems), so a plain conversation turn pushes nothing.
+    Fire-and-forget: a hub failure must never break the turn."""
+    if not role and not subsystems:
+        return
+    try:
+        from datetime import UTC, datetime
+
+        from api.websocket.kiosk_handler import broadcast_kiosk_event
+
+        await broadcast_kiosk_event(
+            {
+                "type": "turn_activity",
+                "role": role,
+                "subsystems": subsystems,
+                "ok": ok,
+                "at": datetime.now(UTC).isoformat(),
+            }
+        )
+    except Exception as e:  # noqa: BLE001 — never break a turn on a kiosk push
+        logger.debug(f"kiosk turn_activity broadcast failed: {e}")
+
+
+# ---------------------------------------------------------------------------
 # Ambient kiosk weather tile. Read-only, degrades to None (never an error) when
 # the feature is off or the source is unavailable, so the kiosk hides the tile.
 # ---------------------------------------------------------------------------

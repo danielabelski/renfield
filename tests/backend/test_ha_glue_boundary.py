@@ -79,6 +79,17 @@ ALLOWED_IMPORTERS = frozenset({
     # a platform-only deploy never reaches it. Same lazy-pattern rule as the shims
     # above.
     "services/daypart_service.py",
+    # (2) Lazy, try/except-guarded — build_kiosk_snapshot() pulls the satellite
+    # roster / presence / media-follow / ha_glue config for the /ws/kiosk snapshot
+    # via function-body `from ha_glue.services...` imports inside try blocks (each
+    # degrades to an empty section when ha_glue is absent). Never reached on a
+    # platform-only deploy. Same lazy-pattern rule as the shims above.
+    "api/websocket/kiosk_handler.py",
+    # (2) Lazy, try/except-guarded — emit_continued_handoff_frame() does a
+    # function-body `from ha_glue.services.device_manager import get_device_manager`
+    # inside a try block to broadcast the room-handoff chip; deferred + guarded, so
+    # a platform-only deploy never reaches it. Same lazy-pattern rule as above.
+    "services/conversation_handoff.py",
 })
 
 
