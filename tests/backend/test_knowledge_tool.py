@@ -10,11 +10,15 @@ radio) moved into `ha_glue/services/internal_tools.py`.
 
 import sys
 from contextlib import asynccontextmanager
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+# Imported so `patch("services.document_fact_retrieval.DocumentFactRetrieval")`
+# can resolve the submodule (knowledge_tool imports it lazily inside the
+# flag-gated fact path, so it isn't otherwise loaded at test-collection time).
+import services.document_fact_retrieval  # noqa: F401
 from services.knowledge_tool import knowledge_search
 
 
@@ -242,3 +246,198 @@ class TestKnowledgeSearch:
 
         assert result["success"] is False
         assert "error" in result["message"].lower()
+
+
+# ============================================================================
+# Schicht A fact wiring (internal.knowledge_search folds document_facts in)
+# ============================================================================
+
+
+def _doc_title_row(id, generated_title, title, filename, circle_tier):
+    return SimpleNamespace(
+        id=id,
+        generated_title=generated_title,
+        title=title,
+        filename=filename,
+        circle_tier=circle_tier,
+    )
+
+
+def _mock_db_with_title_rows(rows):
+    """A mock DB whose ``execute(...).all()`` returns fact-source title rows.
+
+    The RAG search is mocked separately (``mock_rag.search``); the only
+    ``db.execute`` call in ``knowledge_search`` is the fact source-title lookup.
+    """
+    mock_db = AsyncMock()
+    result_obj = MagicMock()
+    result_obj.all.return_value = rows
+    mock_db.execute = AsyncMock(return_value=result_obj)
+    return mock_db
+
+
+class TestKnowledgeSearchFacts:
+    """`internal.knowledge_search` folds circle-filtered Schicht A facts into the
+    context + provenance chips when `schicht_a_extraction_enabled` is on."""
+
+    @pytest.mark.unit
+    async def test_facts_injected_and_fact_only_doc_gets_chip(self):
+        """A fact from a document with NO chunk hit is injected into the FAKTEN
+        block AND gets its own source chip."""
+        mock_rag = MagicMock()
+        mock_rag.search = AsyncMock(return_value=[
+            {"chunk": {"content": "chunk of doc 7"},
+             "document": {"id": 7, "filename": "vertrag.pdf", "title": "Vertrag", "circle_tier": 0}},
+        ])
+        facts = [
+            {"document_id": 42, "category": "identifier", "kind": "steuernummer",
+             "value": "114/5876/5293", "normalized_value": "11458765293",
+             "obligation_date": None, "amount_value": None, "amount_currency": None},
+        ]
+        mock_fact_retrieval = MagicMock()
+        mock_fact_retrieval.search = AsyncMock(return_value=facts)
+
+        mock_db = _mock_db_with_title_rows([
+            _doc_title_row(42, "Steuerbescheid 2023", None, "bescheid.pdf", 0),
+        ])
+
+        @asynccontextmanager
+        async def mock_session():
+            yield mock_db
+
+        stubs = _stub_db_and_rag_modules()
+        try:
+            with patch("services.database.AsyncSessionLocal", mock_session, create=True), \
+                 patch("services.rag_service.RAGService", return_value=mock_rag, create=True), \
+                 patch("services.knowledge_tool.settings.schicht_a_extraction_enabled", True), \
+                 patch("services.document_fact_retrieval.DocumentFactRetrieval",
+                       return_value=mock_fact_retrieval, create=True):
+                result = await knowledge_search({"query": "steuernummer"})
+        finally:
+            _teardown_stubs(stubs)
+
+        assert result["success"] is True
+        data = result["data"]
+        assert data["facts_count"] == 1
+        assert data["results_count"] == 1
+        assert "FAKTEN" in data["context"]
+        assert "steuernummer: 114/5876/5293" in data["context"]
+        assert "Steuerbescheid 2023" in data["context"]  # fact source title
+        assert "PASSAGEN" in data["context"]  # chunk passages still present
+        # Both the chunk source (7) and the fact-only source (42) get a chip.
+        assert [s["document_id"] for s in data["sources"]] == [7, 42]
+        assert data["sources"][1]["title"] == "Steuerbescheid 2023"
+        assert data["facts"][0]["kind"] == "steuernummer"
+        mock_fact_retrieval.search.assert_called_once()
+
+    @pytest.mark.unit
+    async def test_facts_without_any_chunks_still_succeed(self):
+        """Facts present but zero chunk hits → success (not empty_result)."""
+        mock_rag = MagicMock()
+        mock_rag.search = AsyncMock(return_value=[])
+        facts = [
+            {"document_id": 5, "category": "obligation", "kind": "zahlungsfrist",
+             "value": "Stromabschlag", "normalized_value": None,
+             "obligation_date": "2026-03-15", "amount_value": 89.5, "amount_currency": "EUR"},
+        ]
+        mock_fact_retrieval = MagicMock()
+        mock_fact_retrieval.search = AsyncMock(return_value=facts)
+
+        mock_db = _mock_db_with_title_rows([
+            _doc_title_row(5, None, "Stadtwerke Rechnung", "sw.pdf", 2),
+        ])
+
+        @asynccontextmanager
+        async def mock_session():
+            yield mock_db
+
+        stubs = _stub_db_and_rag_modules()
+        try:
+            with patch("services.database.AsyncSessionLocal", mock_session, create=True), \
+                 patch("services.rag_service.RAGService", return_value=mock_rag, create=True), \
+                 patch("services.knowledge_tool.settings.schicht_a_extraction_enabled", True), \
+                 patch("services.document_fact_retrieval.DocumentFactRetrieval",
+                       return_value=mock_fact_retrieval, create=True):
+                result = await knowledge_search({"query": "wann muss ich zahlen"})
+        finally:
+            _teardown_stubs(stubs)
+
+        assert result["success"] is True
+        assert result.get("empty_result") is not True
+        data = result["data"]
+        assert data["results_count"] == 0
+        assert data["facts_count"] == 1
+        assert data["context"].startswith("FAKTEN")
+        assert "PASSAGEN" not in data["context"]
+        assert "Frist 2026-03-15" in data["context"]
+        assert "Betrag 89.5 EUR" in data["context"]
+        assert [s["document_id"] for s in data["sources"]] == [5]
+
+    @pytest.mark.unit
+    async def test_fact_doc_overlapping_chunk_is_not_double_chipped(self):
+        """A fact whose document already produced a chunk chip does not add a
+        second chip (deduped by document_id)."""
+        mock_rag = MagicMock()
+        mock_rag.search = AsyncMock(return_value=[
+            {"chunk": {"content": "chunk of doc 7"},
+             "document": {"id": 7, "filename": "bescheid.pdf", "title": "Bescheid", "circle_tier": 0}},
+        ])
+        facts = [
+            {"document_id": 7, "category": "identifier", "kind": "iban",
+             "value": "DE12...", "normalized_value": "DE12",
+             "obligation_date": None, "amount_value": None, "amount_currency": None},
+        ]
+        mock_fact_retrieval = MagicMock()
+        mock_fact_retrieval.search = AsyncMock(return_value=facts)
+        mock_db = _mock_db_with_title_rows([
+            _doc_title_row(7, None, "Bescheid", "bescheid.pdf", 0),
+        ])
+
+        @asynccontextmanager
+        async def mock_session():
+            yield mock_db
+
+        stubs = _stub_db_and_rag_modules()
+        try:
+            with patch("services.database.AsyncSessionLocal", mock_session, create=True), \
+                 patch("services.rag_service.RAGService", return_value=mock_rag, create=True), \
+                 patch("services.knowledge_tool.settings.schicht_a_extraction_enabled", True), \
+                 patch("services.document_fact_retrieval.DocumentFactRetrieval",
+                       return_value=mock_fact_retrieval, create=True):
+                result = await knowledge_search({"query": "iban"})
+        finally:
+            _teardown_stubs(stubs)
+
+        data = result["data"]
+        assert [s["document_id"] for s in data["sources"]] == [7]  # not [7, 7]
+        assert "iban: DE12..." in data["context"]
+
+    @pytest.mark.unit
+    async def test_fact_retrieval_failure_is_swallowed(self):
+        """A fact-retrieval exception never fails the chunk-based answer."""
+        mock_rag = MagicMock()
+        mock_rag.search = AsyncMock(return_value=[
+            {"chunk": {"content": "chunk"}, "document": {"id": 1, "filename": "a.pdf"}},
+        ])
+        mock_fact_retrieval = MagicMock()
+        mock_fact_retrieval.search = AsyncMock(side_effect=RuntimeError("fts blew up"))
+        mock_db = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_session():
+            yield mock_db
+
+        stubs = _stub_db_and_rag_modules()
+        try:
+            with patch("services.database.AsyncSessionLocal", mock_session, create=True), \
+                 patch("services.rag_service.RAGService", return_value=mock_rag, create=True), \
+                 patch("services.knowledge_tool.settings.schicht_a_extraction_enabled", True), \
+                 patch("services.document_fact_retrieval.DocumentFactRetrieval",
+                       return_value=mock_fact_retrieval, create=True):
+                result = await knowledge_search({"query": "x"})
+        finally:
+            _teardown_stubs(stubs)
+
+        assert result["success"] is True
+        assert result["data"]["facts_count"] == 0
+        assert result["data"]["results_count"] == 1

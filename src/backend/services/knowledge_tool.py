@@ -17,7 +17,11 @@ and removes the last pending entry from ALLOWED_IMPORTERS.
 
 from __future__ import annotations
 
+from typing import Any
+
 from loguru import logger
+
+from utils.config import settings
 
 # Tool definition — registered with the agent tool registry by
 # `services/agent_tools.py::_register_internal_tools()`. The name
@@ -28,7 +32,8 @@ KNOWLEDGE_TOOL: dict = {
         "description": (
             "Search the user's local knowledge base (uploaded documents, "
             "invoices, contracts) by semantic similarity. Returns matching "
-            "text passages with source document info."
+            "text passages AND precise extracted facts (Steuernummer, IBAN, "
+            "issuer, obligations/Fristen) with source document info."
         ),
         "parameters": {
             "query": "Search query (required)",
@@ -36,6 +41,79 @@ KNOWLEDGE_TOOL: dict = {
         },
     },
 }
+
+# Facts are short, precise, and few — a small cap keeps the injected context
+# tight and never lets the fact block crowd out the retrieved passages.
+_FACT_SEARCH_TOP_K = 6
+
+
+def _format_fact_line(fact: dict[str, Any], doc_title: str) -> str:
+    """One human-readable line for a Schicht A fact, for the injected context.
+
+    ``kind`` (e.g. ``steuernummer``, ``zahlungsfrist``) is already a meaningful
+    label; fall back to ``category`` then a generic word. Date + amount are
+    appended when present so an obligation reads as a due-date, not a bare value.
+    """
+    label = (fact.get("kind") or fact.get("category") or "Fakt").strip()
+    value = (fact.get("value") or fact.get("normalized_value") or "").strip()
+    parts = [f"{label}: {value}" if value else label]
+    if fact.get("obligation_date"):
+        parts.append(f"Frist {fact['obligation_date']}")
+    amount = fact.get("amount_value")
+    if amount is not None:
+        currency = fact.get("amount_currency") or ""
+        parts.append(f"Betrag {amount} {currency}".strip())
+    return f"- {', '.join(parts)} — Quelle: {doc_title}"
+
+
+async def _retrieve_facts(
+    db: Any, query: str, user_id_int: int | None
+) -> tuple[list[dict], dict[Any, dict]]:
+    """Circle-filtered Schicht A fact search + source-document titles.
+
+    Best-effort throughout: the chunk results are the primary answer, so a fact
+    query or title-lookup failure degrades to ``([], {})`` / generic titles and
+    never fails the knowledge search. Returns the fact rows plus a
+    ``document_id → {title, filename, tier}`` map for the fact provenance chips.
+    """
+    try:
+        from services.document_fact_retrieval import DocumentFactRetrieval
+
+        facts = await DocumentFactRetrieval(db).search(
+            query, asker_id=user_id_int, top_k=_FACT_SEARCH_TOP_K,
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"knowledge_search: fact retrieval failed (ignored): {e}")
+        return [], {}
+
+    doc_ids = {f["document_id"] for f in facts if f.get("document_id") is not None}
+    doc_meta: dict[Any, dict] = {}
+    if doc_ids:
+        try:
+            from sqlalchemy import select
+
+            from models.database import Document
+
+            rows = (await db.execute(
+                select(
+                    Document.id,
+                    Document.generated_title,
+                    Document.title,
+                    Document.filename,
+                    Document.circle_tier,
+                ).where(Document.id.in_(doc_ids))
+            )).all()
+            for r in rows:
+                doc_meta[r.id] = {
+                    "title": r.generated_title or r.title or r.filename or f"Dokument {r.id}",
+                    "filename": r.filename or "",
+                    "tier": r.circle_tier,
+                }
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                f"knowledge_search: fact source-title lookup failed (ignored): {e}"
+            )
+    return facts, doc_meta
 
 
 async def knowledge_search(params: dict) -> dict:
@@ -75,44 +153,99 @@ async def knowledge_search(params: dict) -> dict:
             rag = RAGService(db)
             results = await rag.search(query=query, top_k=top_k, user_id=user_id_int)
 
-        if results:
-            context_parts = []
-            # Structured per-document provenance for the chat "source chips" UI.
-            # rag.search already circle-filtered by user_id, so these only contain
-            # documents the asker may see — no extra permission check needed.
-            # Deduped by document_id (one chip per source document, not per chunk).
-            sources: list[dict] = []
-            seen_doc_ids: set = set()
-            for r in results:
-                doc = r.get("document") if isinstance(r.get("document"), dict) else {}
-                content = (
-                    r.get("chunk", {}).get("content", "")
-                    if isinstance(r.get("chunk"), dict)
-                    else r.get("content", "")
-                )
-                source = doc.get("filename", "") or r.get("filename", "")
-                if content:
-                    context_parts.append(f"[{source}] {content[:500]}")
+            # Schicht A document facts — precise extracted values (Steuernummer,
+            # IBAN, issuer, obligation Fristen) that the chunk path can't answer
+            # crisply ("what's my Steuernummer" retrieves the passage, not the
+            # normalized identifier). Same circle reach as the RAG search
+            # (DocumentFactRetrieval applies the parent-Document 4-branch filter),
+            # so a returned fact is one the asker may see. Gated on the extractor
+            # flag: with it off no facts exist, so we skip the query entirely and
+            # the tool output is byte-identical to the chunk-only behavior.
+            facts: list[dict] = []
+            doc_meta: dict[Any, dict] = {}
+            if settings.schicht_a_extraction_enabled:
+                facts, doc_meta = await _retrieve_facts(db, query, user_id_int)
 
-                doc_id = doc.get("id")
-                if doc_id is not None and doc_id not in seen_doc_ids:
-                    seen_doc_ids.add(doc_id)
-                    sources.append({
-                        "document_id": doc_id,
-                        "filename": source,
-                        "title": doc.get("title") or source or f"Dokument {doc_id}",
-                        "tier": doc.get("circle_tier"),
-                    })
+        context_parts: list[str] = []
+        # Structured per-document provenance for the chat "source chips" UI.
+        # rag.search already circle-filtered by user_id, so these only contain
+        # documents the asker may see — no extra permission check needed.
+        # Deduped by document_id (one chip per source document, not per chunk).
+        sources: list[dict] = []
+        seen_doc_ids: set = set()
+        for r in results:
+            doc = r.get("document") if isinstance(r.get("document"), dict) else {}
+            content = (
+                r.get("chunk", {}).get("content", "")
+                if isinstance(r.get("chunk"), dict)
+                else r.get("content", "")
+            )
+            source = doc.get("filename", "") or r.get("filename", "")
+            if content:
+                context_parts.append(f"[{source}] {content[:500]}")
 
+            doc_id = doc.get("id")
+            if doc_id is not None and doc_id not in seen_doc_ids:
+                seen_doc_ids.add(doc_id)
+                sources.append({
+                    "document_id": doc_id,
+                    "filename": source,
+                    "title": doc.get("title") or source or f"Dokument {doc_id}",
+                    "tier": doc.get("circle_tier"),
+                })
+
+        # Fold facts into the context (a FAKTEN block the agent prefers when it
+        # needs the precise value) + into the provenance chips (fact-only source
+        # documents that produced no chunk hit still get a chip).
+        fact_lines: list[str] = []
+        fact_struct: list[dict] = []
+        for f in facts:
+            did = f.get("document_id")
+            title = (doc_meta.get(did) or {}).get("title") or f"Dokument {did}"
+            fact_lines.append(_format_fact_line(f, title))
+            fact_struct.append({
+                "document_id": did,
+                "category": f.get("category"),
+                "kind": f.get("kind"),
+                "value": f.get("value") or f.get("normalized_value"),
+                "obligation_date": f.get("obligation_date"),
+                "amount_value": f.get("amount_value"),
+                "amount_currency": f.get("amount_currency"),
+            })
+            if did is not None and did not in seen_doc_ids:
+                seen_doc_ids.add(did)
+                meta = doc_meta.get(did) or {}
+                sources.append({
+                    "document_id": did,
+                    "filename": meta.get("filename", ""),
+                    "title": meta.get("title") or f"Dokument {did}",
+                    "tier": meta.get("tier"),
+                })
+
+        if results or facts:
+            # Prefix the passages block only when facts share the context, so the
+            # flag-off / facts-empty output stays byte-identical to before.
+            if fact_lines:
+                blocks = ["FAKTEN (präzise extrahierte Werte):\n" + "\n".join(fact_lines)]
+                if context_parts:
+                    blocks.append("PASSAGEN:\n" + "\n\n".join(context_parts))
+                context = "\n\n".join(blocks)
+            else:
+                context = "\n\n".join(context_parts)
+
+            message = f"Knowledge base results ({len(results)} hits"
+            message += f", {len(facts)} facts)" if facts else ")"
             return {
                 "success": True,
-                "message": f"Knowledge base results ({len(results)} hits)",
+                "message": message,
                 "action_taken": True,
                 "data": {
                     "query": query,
                     "results_count": len(results),
-                    "context": "\n\n".join(context_parts),
+                    "facts_count": len(facts),
+                    "context": context,
                     "sources": sources,
+                    "facts": fact_struct,
                 },
             }
         return {
