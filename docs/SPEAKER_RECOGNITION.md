@@ -174,6 +174,25 @@ Das Speaker Management ist über das Web-Interface unter `/speakers` erreichbar:
 3. Namen und Alias ändern (z.B. "Max Mustermann", "max")
 4. Ab sofort wird der Benutzer korrekt identifiziert
 
+### Löschen vs. Zusammenführen
+
+Auto-Enroll legt für jede unbekannte Stimme ein neues Profil an, sodass sich mit
+der Zeit viele "Unbekannter Sprecher #N" ansammeln (fragmentiert, wenn dieselbe
+Stimme mehrfach nicht sicher gematcht wurde). Zum Aufräumen:
+
+- **Zusammenführen** (`POST /api/speakers/merge`, `source`→`target`): konsolidiert
+  Fragmente. Embeddings, Gesprächs-Zuordnungen (`conversations.speaker_id`) und
+  die User-Verknüpfung werden auf das Ziel **übertragen** (bleiben erhalten). Ist
+  das Ziel bereits mit einem *anderen* User verknüpft, kann die Quell-Verknüpfung
+  wegen der `UNIQUE`-Regel nicht mitwandern und wird gelöst — die Antwort weist
+  darauf hin.
+- **Löschen** (`DELETE /api/speakers/{id}`): entfernt das Profil. Embeddings werden
+  per `ON DELETE CASCADE` mitgelöscht; `conversations.speaker_id` und
+  `users.speaker_id` werden auf `NULL` gesetzt (Gespräch/User-Konto bleiben, nur
+  die Sprecher-Zuordnung entfällt). Die drei FK-Regeln stellt Migration
+  `pc20260705` her — davor scheiterte das Löschen benutzter Sprecher an einem
+  Foreign-Key-Fehler.
+
 ## Logs
 
 ### Erfolgreiche Erkennung
