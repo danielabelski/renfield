@@ -893,4 +893,4 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
             wakeword_config_manager = get_wakeword_config_manager()
             wakeword_config_manager.unsubscribe(websocket)
 
-            await satellite_manager.unregister(satellite_id)
+            await satellite_manager.unregister(satellite_id, websocket=websocket)

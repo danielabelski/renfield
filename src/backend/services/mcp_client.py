@@ -831,6 +831,49 @@ class MCPManager:
         self._tool_index: dict[str, MCPToolInfo] = {}  # namespaced_name -> MCPToolInfo
         self._tool_overrides: dict[str, list[str] | None] = {}  # DB overrides per server
         self._refresh_task: asyncio.Task | None = None
+        # Strong refs to fire-and-forget kiosk tool_health broadcasts scheduled
+        # from _set_connected (a sync funnel called from both sync and async
+        # contexts), so a task isn't GC'd before it runs.
+        self._health_bg_tasks: set[asyncio.Task] = set()
+
+    def _set_connected(self, state: "MCPServerState", connected: bool) -> None:
+        """Single funnel for every server-connection flip.
+
+        Sets ``state.connected`` AND, on an actual TRANSITION (not a redundant
+        re-assign of the same value), fire-and-forget pushes a content-free
+        ``tool_health_changed`` delta to the kiosk hub — so a wall display learns
+        a server dropped or a reconnect healed it within one WS round-trip,
+        instead of decaying frozen tool-health status. Fire-and-forget: a hub
+        failure must never affect MCP operation. Every ``state.connected =`` site
+        routes through here so no transition is missed."""
+        if state.connected == connected:
+            return
+        state.connected = connected
+        # Check for a running loop BEFORE creating the coroutine, so the
+        # config-time / sync path doesn't leave an un-awaited coroutine.
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # no running loop (config-time / sync test path)
+        task = loop.create_task(
+            self._broadcast_tool_health(state.config.name, connected)
+        )
+        self._health_bg_tasks.add(task)
+        task.add_done_callback(self._health_bg_tasks.discard)
+
+    async def _broadcast_tool_health(self, server_name: str, connected: bool) -> None:
+        try:
+            from api.websocket.kiosk_handler import broadcast_kiosk_event
+
+            await broadcast_kiosk_event(
+                {
+                    "type": "tool_health_changed",
+                    "server": server_name,
+                    "connected": connected,
+                }
+            )
+        except Exception as e:
+            logger.debug(f"kiosk tool_health broadcast failed: {e}")
 
     def load_config(self, path: str, only: set[str] | None = None) -> None:
         """Load MCP server configuration from YAML file.
@@ -1072,7 +1115,7 @@ class MCPManager:
 
             state.session = session
             state.exit_stack = exit_stack
-            state.connected = True
+            self._set_connected(state, True)
             state.all_discovered_tools = all_tools
             state.last_error = None
 
@@ -1096,7 +1139,7 @@ class MCPManager:
                 logger.info(f"MCP server '{config.name}' connected: {len(state.tools)} tools")
 
         except Exception as e:
-            state.connected = False
+            self._set_connected(state, False)
             state.last_error = str(e)
 
             # Record failure for exponential backoff
@@ -1206,7 +1249,7 @@ class MCPManager:
             return {"ok": True, "latency_ms": latency, "detail": None}
 
         # Probe failed → mark stale and try one reconnect, then re-probe.
-        state.connected = False
+        self._set_connected(state, False)
         state.last_error = detail
         reconnected = await self._reconnect_server(state)
         if not reconnected:
@@ -1218,7 +1261,7 @@ class MCPManager:
             # Reconnect succeeded but the fresh session still can't list_tools.
             # Don't leave state.connected=True after we've seen evidence of
             # breakage — next caller would try to use a known-bad session.
-            state.connected = False
+            self._set_connected(state, False)
             state.last_error = detail
         return {"ok": ok, "latency_ms": latency, "detail": detail}
 
@@ -1490,7 +1533,7 @@ class MCPManager:
                         f"MCP session died on {namespaced_name}: {type(e).__name__}: {e}; "
                         f"reconnecting and retrying once"
                     )
-                    state.connected = False
+                    self._set_connected(state, False)
                     state.last_error = str(e)
                     reconnected = await self._reconnect_server(state)
                     if not reconnected:
@@ -1499,7 +1542,7 @@ class MCPManager:
                 logger.error(
                     f"MCP tool call failed after reconnect: {namespaced_name}: {e}"
                 )
-                state.connected = False
+                self._set_connected(state, False)
                 state.last_error = str(e)
 
         if result is None:
@@ -1948,7 +1991,7 @@ class MCPManager:
             return
         except Exception as e:
             logger.error(f"MCP tool call failed: {namespaced_name}: {e}")
-            state.connected = False
+            self._set_connected(state, False)
             state.last_error = str(e)
             yield {
                 "success": False,
@@ -2093,7 +2136,7 @@ class MCPManager:
 
                 except Exception as e:
                     logger.warning(f"MCP refresh failed for '{state.config.name}': {e}")
-                    state.connected = False
+                    self._set_connected(state, False)
                     state.last_error = str(e)
             elif not state.connected:
                 # Check if backoff allows reconnection attempt
@@ -2215,7 +2258,7 @@ class MCPManager:
                     await state.exit_stack.__aexit__(None, None, None)
                 except Exception as e:
                     logger.warning(f"MCP shutdown error for '{state.config.name}': {e}")
-            state.connected = False
+            self._set_connected(state, False)
             state.session = None
             state.exit_stack = None
 

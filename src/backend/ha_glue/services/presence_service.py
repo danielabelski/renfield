@@ -443,6 +443,30 @@ class PresenceService:
         for event_name, kwargs in events:
             await run_hooks(event_name, **kwargs)
 
+        # Push ONE content-free presence_changed delta to the kiosk hub — but
+        # only when a room-occupant set actually changed this pass. _pending_events
+        # is populated exclusively by the enter/leave/last-left/first-arrived
+        # branches (already de-bounced by the room-assignment hysteresis), so an
+        # empty list means a bare RSSI tick with no membership change → no push.
+        # This is the §6 presence-chatter guard: we ride the existing transition
+        # signal, never the raw sensor cadence.
+        if events:
+            await self._broadcast_presence_changed()
+
+    async def _broadcast_presence_changed(self):
+        """Fire-and-forget a content-free rooms→occupant-count delta. A hub
+        failure must never disrupt presence tracking."""
+        try:
+            from api.websocket.kiosk_handler import (
+                broadcast_kiosk_event,
+                build_presence_payload,
+            )
+
+            payload = build_presence_payload(self)
+            await broadcast_kiosk_event({"type": "presence_changed", **payload})
+        except Exception as e:
+            logger.debug(f"kiosk presence_changed broadcast failed: {e}")
+
     async def register_voice_presence(
         self,
         user_id: int,
