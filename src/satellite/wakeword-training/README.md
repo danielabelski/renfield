@@ -117,6 +117,39 @@ Results (held-out real ambient): v1 **336/h** → v2 **36/h** → v3 **18/h** @0
 recall steady ~70-75%. Real-voice live test after deploy: **0 false wakes**, the
 storm gone, "Renfield" still detected.
 
+### v4 — audiobook / media-speech hard-negatives (2026-07-06)
+
+v3 was hardened against room *ambient* (idle noise) but never against **continuous
+media speech**. An audiobook playing in the Arbeitszimmer (on the room's HiFiBerry,
+which the satellite's AEC has no reference for) false-fired renfield_de **~24×/day**:
+the model scored the narration up to **95-97%**, woke, and recorded the next words
+as a "command". Audiobooks are the worst case — hours of varied human speech, so a
+phonetic near-miss eventually crosses threshold.
+
+Fix = the same recipe with the audiobook added as a new hard-negative class:
+capture the live audiobook off the HAT (`arecord`, concurrent — no service stop),
+drop the wav(s) into `/work/ambient/` **alongside** the v3 room-ambient (preserve
+it), re-run `gen_hard_negs.py`, retrain (`renfield_de_v4.yaml` = v3 config; only
+the ambient data changed). Capture at the **deployment mic gain** — negatives must
+match what the model actually hears. A/B on the held-out set (now including the
+audiobook): v3 **22.7 FP/h** @0.8 → v4 **0 FP/h**, German recall **69%** @0.8
+(intact). Live after deploy: same audiobook scored **~23%** (was 95-97%), 0 wakes.
+
+**Mic-gain lever, HAT edition:** on the WM8960 HAT the analogue of the XVF3800
+`PP_AGCDESIREDLEVEL` is **`ALC Max Gain`**. At the max (7) the ALC amplified the
+audiobook to peak **0.98** at the mic; cutting it to **4** dropped that to
+**0.09-0.71** and roughly halved the residual activations — applied first, then v4
+finished the job. Persist with `amixer -c <card> sset "ALC Max Gain" 4 && alsactl
+store`, and in `host_vars/satellite-<room>.yml` (`wm8960_alc_max_gain`).
+
+**Deploy gotcha — satellites cache the model by filename.** `ensure_models_available`
+skips the download when `<model_id>.onnx` already exists locally, so a backend roll
+alone does NOT push a new model of the same name. To refresh a bare-metal satellite
+WITHOUT a service restart (SD-card brick risk): move the cached file aside
+(`mv renfield_de.onnx renfield_de.onnx.v3bak`), then `PUT /api/settings/wakeword`
+(broadcasts unconditionally) → the satellite re-runs its config-apply, finds the
+file missing, downloads v4, and `update_config` hot-reloads the running detector.
+
 **Per-satellite mic gain is a first-class FP lever — check it before over-training.**
 The per-room breakdown (`validate_ambient` split by room) was decisive: v3 fired on
 **zero** HAT-mic ambient (peak <0.005) — **100% of residual FP was the one XVF3800
