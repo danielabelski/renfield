@@ -553,7 +553,11 @@
     "enrollSubmit": "Einlernen",
     "enrolling": "Wird eingelernt …",
     "enrollSuccess": "Sprecher erfolgreich eingelernt.",
-    "enrollFailed": "Einlernen fehlgeschlagen."
+    "enrollFailed": "Einlernen fehlgeschlagen.",
+    "enrollDone": "{{name}} wurde eingelernt",
+    "enrollAnother": "Weitere einlernen",
+    "enrollCloseDone": "Schließen",
+    "enrollDisplaced": "Hinweis: Ein anderes Benutzerkonto war mit diesem Sprecher verknüpft — die Verknüpfung wurde entfernt."
   },
   "tasks": {
     "title": "Aufgaben",

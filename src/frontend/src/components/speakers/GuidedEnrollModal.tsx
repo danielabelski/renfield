@@ -100,6 +100,12 @@ export default function GuidedEnrollModal({
 
   const stopRecording = useCallback(() => recorderRef.current?.stop(), []);
   const removeSample = (i: number) => setSamples((s) => s.filter((_, idx) => idx !== i));
+  const resetForm = () => {
+    setName('');
+    setUserId('');
+    setSamples([]);
+    setResult(null);
+  };
 
   const submit = async () => {
     setResult(null);
@@ -118,6 +124,32 @@ export default function GuidedEnrollModal({
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={t('speakers.enrollGuided')}>
+      {result?.ok ? (
+        <div className="space-y-4">
+          <div className="rounded p-4 text-center bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300">
+            <div className="text-3xl mb-1">✓</div>
+            <div className="font-medium">{t('speakers.enrollDone', { name: result.name ?? name })}</div>
+            <div className="text-sm mt-1">
+              {t('speakers.enrollOk', {
+                cohesion: (result.cohesion ?? 0).toFixed(2), accepted: result.accepted,
+              })}
+            </div>
+            {result.displaced_user_ids && result.displaced_user_ids.length > 0 && (
+              <div className="text-xs mt-2 text-amber-600 dark:text-amber-400">
+                {t('speakers.enrollDisplaced')}
+              </div>
+            )}
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" className="btn-secondary" onClick={resetForm}>
+              {t('speakers.enrollAnother')}
+            </button>
+            <button type="button" className="btn-primary" onClick={onClose}>
+              {t('speakers.enrollCloseDone')}
+            </button>
+          </div>
+        </div>
+      ) : (
       <div className="space-y-4">
         <p className="text-sm text-gray-600 dark:text-gray-400">{t('speakers.enrollGuidedHint')}</p>
 
@@ -194,19 +226,9 @@ export default function GuidedEnrollModal({
           </button>
         </div>
 
-        {result && (
-          <div
-            className={`text-sm rounded p-3 ${
-              result.ok
-                ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300'
-                : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300'
-            }`}
-          >
-            {result.ok
-              ? t('speakers.enrollOk', {
-                  cohesion: (result.cohesion ?? 0).toFixed(2), accepted: result.accepted,
-                })
-              : result.reason}
+        {result && !result.ok && (
+          <div className="text-sm rounded p-3 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300">
+            {result.reason}
           </div>
         )}
 
@@ -219,6 +241,7 @@ export default function GuidedEnrollModal({
           </button>
         </div>
       </div>
+      )}
     </Modal>
   );
 }
