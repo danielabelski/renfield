@@ -13,6 +13,7 @@ import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import Badge from '../components/Badge';
 import GuidedEnrollModal from '../components/speakers/GuidedEnrollModal';
+import ReviewBucketSection from '../components/speakers/ReviewBucketSection';
 import { useUsersQuery } from '../api/resources/users';
 import {
   useSpeakersQuery,
@@ -406,6 +407,11 @@ export default function SpeakersPage() {
           <span>{t('speakers.identifySpeaker')}</span>
         </button>
       </div>
+
+      {/* Review bucket (Phase 3b) — self-hiding until controlled recognition captures candidates */}
+      <ReviewBucketSection
+        users={(usersQuery.data ?? []).map((u) => ({ id: u.id, username: u.username }))}
+      />
 
       {/* Speakers List */}
       <div>

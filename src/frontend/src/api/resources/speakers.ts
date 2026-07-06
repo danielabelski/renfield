@@ -49,6 +49,27 @@ export interface ControlledEnrollInput {
   speakerId?: number | null;
 }
 
+/** A review-bucket candidate (Phase 3): an unmatched unknown voice captured
+ * under controlled recognition, awaiting promote/dismiss. */
+export interface SpeakerCandidate {
+  id: number;
+  best_score: number | null;
+  nearest_speaker: string | null;
+  audio_duration_s: number | null;
+  created_at: string | null;
+}
+
+export interface ReviewBucketResponse {
+  total: number;
+  candidates: SpeakerCandidate[];
+}
+
+export interface PromoteCandidatesInput {
+  candidate_ids: number[];
+  name: string;
+  user_id?: number | null;
+}
+
 async function fetchSpeakers(): Promise<Speaker[]> {
   const response = await apiClient.get<Speaker[]>('/api/speakers');
   return response.data ?? [];
@@ -243,5 +264,71 @@ export function useIdentifySpeaker() {
       mutationFn: identifySpeakerRequest,
     },
     'speakers.identificationFailed',
+  );
+}
+
+// --- Phase 3b: review bucket (controlled recognition) ---
+
+async function fetchReviewBucket(): Promise<ReviewBucketResponse> {
+  // limit=200 covers the whole bucket (backend caps retained candidates at
+  // speaker_review_bucket_cap=200), so the shown list never lags `total`.
+  const response = await apiClient.get<ReviewBucketResponse>(
+    '/api/speakers/candidates', { params: { limit: 200 } },
+  );
+  return response.data ?? { total: 0, candidates: [] };
+}
+
+async function promoteCandidatesRequest(
+  input: PromoteCandidatesInput,
+): Promise<ControlledEnrollResult> {
+  const response = await apiClient.post<ControlledEnrollResult>(
+    '/api/speakers/candidates/promote', input,
+  );
+  return response.data;
+}
+
+async function dismissCandidatesRequest(
+  candidate_ids: number[],
+): Promise<{ dismissed: number }> {
+  const response = await apiClient.post<{ dismissed: number }>(
+    '/api/speakers/candidates/dismiss', { candidate_ids },
+  );
+  return response.data;
+}
+
+export function useReviewBucketQuery() {
+  return useApiQuery(
+    {
+      queryKey: keys.speakers.reviewBucket(),
+      queryFn: fetchReviewBucket,
+      staleTime: STALE.DEFAULT,
+    },
+    'speakers.reviewBucketFailed',
+  );
+}
+
+export function usePromoteCandidates() {
+  const queryClient = useQueryClient();
+  return useApiMutation(
+    {
+      mutationFn: promoteCandidatesRequest,
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: keys.speakers.all });
+      },
+    },
+    'speakers.promoteFailed',
+  );
+}
+
+export function useDismissCandidates() {
+  const queryClient = useQueryClient();
+  return useApiMutation(
+    {
+      mutationFn: dismissCandidatesRequest,
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: keys.speakers.reviewBucket() });
+      },
+    },
+    'speakers.dismissFailed',
   );
 }

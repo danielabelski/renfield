@@ -557,7 +557,21 @@
     "enrollDone": "{{name}} wurde eingelernt",
     "enrollAnother": "Weitere einlernen",
     "enrollCloseDone": "Schließen",
-    "enrollDisplaced": "Hinweis: Ein anderes Benutzerkonto war mit diesem Sprecher verknüpft — die Verknüpfung wurde entfernt."
+    "enrollDisplaced": "Hinweis: Ein anderes Benutzerkonto war mit diesem Sprecher verknüpft — die Verknüpfung wurde entfernt.",
+    "reviewBucketTitle": "Überprüfungs-Warteschlange",
+    "reviewBucketHint": "Unbekannte Stimmen, die keinem eingelernten Profil zugeordnet werden konnten. Wählen Sie die Aufnahmen einer Person aus und übernehmen Sie sie als Sprecher — oder verwerfen Sie Rauschen.",
+    "reviewBucketCount": "{{count}} zur Überprüfung",
+    "reviewSelect": "Kandidat {{id}} auswählen",
+    "reviewNearest": "Ähnlichste: {{name}} ({{score}} %)",
+    "reviewNoMatch": "Keine Übereinstimmung",
+    "reviewDismiss": "Verwerfen ({{count}})",
+    "reviewPromote": "Als Sprecher übernehmen ({{count}})",
+    "reviewPromoteTitle": "Kandidaten als Sprecher übernehmen",
+    "reviewPromoteHint": "{{count}} ausgewählte Aufnahme(n) werden zu einem neuen eingelernten Sprecher zusammengeführt (gleiche Kohäsions-Prüfung wie beim Einlernen).",
+    "reviewPromoteSubmit": "Übernehmen",
+    "reviewBucketFailed": "Überprüfungs-Warteschlange konnte nicht geladen werden.",
+    "promoteFailed": "Übernahme fehlgeschlagen.",
+    "dismissFailed": "Verwerfen fehlgeschlagen."
   },
   "tasks": {
     "title": "Aufgaben",
