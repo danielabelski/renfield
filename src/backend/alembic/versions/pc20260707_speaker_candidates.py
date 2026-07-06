@@ -33,7 +33,6 @@ def upgrade() -> None:
             sa.ForeignKey("speakers.id", ondelete="SET NULL"), nullable=True,
         ),
         sa.Column("audio_duration_s", sa.Float(), nullable=True),
-        sa.Column("reviewed", sa.Boolean(), nullable=False, server_default=sa.false()),
         sa.Column("created_at", sa.DateTime(), nullable=True),
     )
     op.create_index("ix_speaker_candidates_best_speaker_id", "speaker_candidates", ["best_speaker_id"])

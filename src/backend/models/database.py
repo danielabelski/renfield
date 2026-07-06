@@ -213,7 +213,6 @@ class SpeakerCandidate(Base):
         Integer, ForeignKey("speakers.id", ondelete="SET NULL"), nullable=True, index=True,
     )
     audio_duration_s = Column(Float, nullable=True)
-    reviewed = Column(Boolean, nullable=False, default=False, server_default="false")
     created_at = Column(DateTime, default=_utcnow, index=True)
 
 

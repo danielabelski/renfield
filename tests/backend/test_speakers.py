@@ -18,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from models.database import Speaker, SpeakerEmbedding
+from models.database import Speaker, SpeakerCandidate, SpeakerEmbedding
 
 # ============================================================================
 # Fixtures
@@ -730,3 +730,39 @@ class TestSpeakerServiceStatusAPI:
         assert response.status_code == 200
         data = response.json()
         assert data["available"] is False
+
+
+class TestSpeakerCandidatesRoutes:
+    """Phase-3 review-bucket admin routes."""
+
+    @pytest.mark.integration
+    async def test_list_candidates_not_shadowed_by_id_route(
+        self, async_client: AsyncClient, db_session: AsyncSession
+    ):
+        # Regression guard: GET /api/speakers/candidates must resolve to the
+        # literal route, NOT GET /{speaker_id} (which would 422 on "candidates").
+        db_session.add(SpeakerCandidate(embedding="x", best_score=0.4, audio_duration_s=3.0))
+        await db_session.commit()
+        response = await async_client.get("/api/speakers/candidates")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] >= 1
+        assert isinstance(data["candidates"], list)
+        assert data["candidates"][0]["best_score"] == 0.4
+
+    @pytest.mark.integration
+    async def test_dismiss_candidates(
+        self, async_client: AsyncClient, db_session: AsyncSession
+    ):
+        c = SpeakerCandidate(embedding="x", best_score=0.3)
+        db_session.add(c)
+        await db_session.commit()
+        cid = c.id
+        response = await async_client.post(
+            "/api/speakers/candidates/dismiss", json={"candidate_ids": [cid]}
+        )
+        assert response.status_code == 200
+        assert response.json()["dismissed"] == 1
+        gone = (await db_session.execute(
+            select(SpeakerCandidate).where(SpeakerCandidate.id == cid))).scalar_one_or_none()
+        assert gone is None

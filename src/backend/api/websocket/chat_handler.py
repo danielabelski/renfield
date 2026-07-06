@@ -1136,7 +1136,8 @@ async def websocket_endpoint(
                     from services.speaker_resolver import resolve_speaker_from_embedding
                     async with AsyncSessionLocal() as spk_session:
                         speaker_info = await resolve_speaker_from_embedding(
-                            spk_session, msg_speaker_embedding
+                            spk_session, msg_speaker_embedding,
+                            audio_duration_s=msg.speaker_audio_duration_s,
                         )
                     if speaker_info and speaker_info.get("speaker_id"):
                         logger.info(

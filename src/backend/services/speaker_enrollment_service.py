@@ -244,8 +244,12 @@ async def promote_candidates(
         )).scalar_one_or_none() is None:
             return {"ok": False, "reason": f"user {user_id} not found", "accepted": 0}
 
+    # FOR UPDATE: lock the candidate rows so two concurrent promotes of the same
+    # ids can't each build a full speaker from them (the second would find them
+    # already consumed → too-few → rejected, instead of a duplicate profile).
     cands = (await db.execute(
         select(SpeakerCandidate).where(SpeakerCandidate.id.in_(candidate_ids))
+        .with_for_update()
     )).scalars().all()
     svc = get_speaker_service()
     embeddings = [
@@ -280,13 +284,11 @@ async def promote_candidates(
     for emb in embeddings:
         db.add(SpeakerEmbedding(speaker_id=speaker.id, embedding=svc.embedding_to_base64(emb)))
 
-    displaced: list[int] = []
+    # Link the user to the brand-new speaker (a user maps to exactly one speaker —
+    # this moves the link off any prior one). No displaced-user report here: the
+    # speaker is freshly created, so nobody else is linked to IT (unlike the
+    # re-enroll path in enroll_speaker_controlled).
     if user_id is not None:
-        displaced = list((await db.execute(
-            select(User.id).where(User.speaker_id == speaker.id, User.id != user_id)
-        )).scalars().all())
-        await db.execute(update(User).where(User.speaker_id == speaker.id)
-                         .values(speaker_id=None).execution_options(synchronize_session=False))
         await db.execute(update(User).where(User.id == user_id)
                          .values(speaker_id=speaker.id).execution_options(synchronize_session=False))
 
@@ -300,13 +302,10 @@ async def promote_candidates(
         f"🎙️ Promoted {len(embeddings)} candidate(s) → enrolled speaker '{name}' "
         f"(id={speaker.id}, cohesion {cohesion:.2f}, user_id={user_id})"
     )
-    result: dict[str, Any] = {
+    return {
         "ok": True, "speaker_id": speaker.id, "name": name,
         "cohesion": round(cohesion, 3), "accepted": len(embeddings),
     }
-    if displaced:
-        result["displaced_user_ids"] = displaced
-    return result
 
 
 async def _unique_alias(db: AsyncSession, name: str) -> str:

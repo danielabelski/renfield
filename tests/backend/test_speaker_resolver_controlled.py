@@ -123,6 +123,16 @@ class TestControlledMiss:
         assert await _candidates(db_session) == []       # too short → not captured
         assert await _unknown_count(db_session) == 0
 
+    async def test_nonfinite_embedding_rejected(self, db_session, _on):
+        # A NaN wire embedding must not land a NaN best_score in the bucket
+        # (which would serialize as invalid JSON from GET /candidates).
+        await _seed(db_session, "Anna", _A)
+        nan = np.full(_DIM, np.nan, dtype=np.float32)
+        info = await resolve_speaker_from_embedding(
+            db_session, nan, audio_duration_s=3.0)
+        assert info["speaker_id"] is None
+        assert await _candidates(db_session) == []
+
     async def test_review_bucket_capped(self, db_session, _on, monkeypatch):
         from utils.config import settings
         monkeypatch.setattr(settings, "speaker_review_bucket_cap", 3)

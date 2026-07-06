@@ -86,7 +86,11 @@ async def resolve_speaker_from_embedding(
     else:
         embedding_array = embedding.astype(np.float32, copy=False)
 
-    if embedding_array.size == 0:
+    # A non-finite wire embedding (NaN/inf) would make every cosine NaN — the
+    # match silently fails AND, under controlled mode, a NaN best_score lands in
+    # the review bucket and later serializes as bare `NaN` (invalid JSON) from
+    # GET /candidates. Reject it up front, same guard as the enrollment path.
+    if embedding_array.size == 0 or not np.all(np.isfinite(embedding_array)):
         return _empty_speaker_info()
 
     speaker_info = _empty_speaker_info()
