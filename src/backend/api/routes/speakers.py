@@ -227,6 +227,46 @@ async def list_speakers(db: AsyncSession = Depends(get_db), _user: User = Depend
     ]
 
 
+@router.get("/candidates")
+async def list_candidates(
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.SPEAKERS_ALL)),
+):
+    """Review bucket (Phase-3): unmatched unknown voices captured from passive
+    turns, newest first, with the nearest enrolled profile for context.
+
+    Declared BEFORE GET /{speaker_id} so the literal path isn't shadowed by the
+    int path param (which would 422 on "candidates")."""
+    rows = (await db.execute(
+        select(
+            SpeakerCandidate.id, SpeakerCandidate.best_score,
+            SpeakerCandidate.best_speaker_id, SpeakerCandidate.audio_duration_s,
+            SpeakerCandidate.created_at, Speaker.name.label("nearest_name"),
+        )
+        .select_from(SpeakerCandidate)
+        .outerjoin(Speaker, Speaker.id == SpeakerCandidate.best_speaker_id)
+        .order_by(SpeakerCandidate.created_at.desc())
+        .limit(min(max(limit, 1), 500))
+    )).all()
+    total = (await db.execute(
+        select(func.count(SpeakerCandidate.id))
+    )).scalar_one()
+    return {
+        "total": total,
+        "candidates": [
+            {
+                "id": r.id,
+                "best_score": round(r.best_score, 3) if r.best_score is not None else None,
+                "nearest_speaker": r.nearest_name,
+                "audio_duration_s": r.audio_duration_s,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ],
+    }
+
+
 @router.get("/{speaker_id}", response_model=SpeakerResponse)
 async def get_speaker(
     speaker_id: int,
