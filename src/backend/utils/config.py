@@ -189,6 +189,15 @@ class Settings(BaseSettings):
     speaker_enroll_min_duration_s: float = 2.0
     speaker_enroll_min_samples: int = 3
     speaker_enroll_min_cohesion: float = 0.5
+    # Phase 3 (controlled recognition, docs/design/speaker-enrollment-redesign.md).
+    # Dark by default → passive recognition unchanged. When ON: identify a turn
+    # against ENROLLED reference profiles only, require the best match to beat the
+    # runner-up by `speaker_match_min_margin`, do NOT auto-enrol on a miss (a
+    # quality-passing unknown goes to the review bucket instead), and never
+    # reinforce a reference profile from a passive turn (references are immutable).
+    speaker_controlled_enrollment_enabled: bool = False
+    speaker_match_min_margin: float = 0.1       # best must beat 2nd-best by this
+    speaker_review_bucket_cap: int = 200        # max retained review candidates
     # Per-user vocabulary corpus capture (Phase B-3 follow-up). Confirmed-
     # speaker transcripts are appended to speaker_vocabulary_corpus and a
     # daily batch job rebuilds the per-user vocab table for STT bias.

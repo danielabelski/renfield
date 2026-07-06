@@ -13,7 +13,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from models.database import Conversation, Speaker, SpeakerEmbedding, User
+from models.database import Conversation, Speaker, SpeakerCandidate, SpeakerEmbedding, User
 from models.permissions import Permission
 from services.auth_service import require_permission
 from services.database import get_db
@@ -72,6 +72,16 @@ class VerifyResponse(BaseModel):
 class MergeSpeakersRequest(BaseModel):
     source_speaker_id: int
     target_speaker_id: int
+
+
+class PromoteCandidatesRequest(BaseModel):
+    candidate_ids: list[int]
+    name: str
+    user_id: int | None = None
+
+
+class DismissCandidatesRequest(BaseModel):
+    candidate_ids: list[int]
 
 
 class MergeSpeakersResponse(BaseModel):
@@ -472,6 +482,36 @@ async def enroll_controlled(
         db, name=name, samples=samples, user_id=user_id, speaker_id=speaker_id,
     )
     return result
+
+
+@router.post("/candidates/promote")
+async def promote_candidates_route(
+    request: PromoteCandidatesRequest,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.SPEAKERS_ALL)),
+):
+    """Promote selected review-bucket candidates to a named enrolled speaker."""
+    from services.speaker_enrollment_service import promote_candidates
+
+    return await promote_candidates(
+        db, candidate_ids=request.candidate_ids, name=request.name, user_id=request.user_id,
+    )
+
+
+@router.post("/candidates/dismiss")
+async def dismiss_candidates(
+    request: DismissCandidatesRequest,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permission(Permission.SPEAKERS_ALL)),
+):
+    """Discard review-bucket candidates (not a real voice / not worth enrolling)."""
+    if request.candidate_ids:
+        await db.execute(
+            delete(SpeakerCandidate).where(SpeakerCandidate.id.in_(request.candidate_ids))
+            .execution_options(synchronize_session=False)
+        )
+        await db.commit()
+    return {"dismissed": len(request.candidate_ids)}
 
 
 @router.post("/{speaker_id}/enroll", response_model=EnrollResponse)

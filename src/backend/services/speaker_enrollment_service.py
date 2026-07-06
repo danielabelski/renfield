@@ -25,10 +25,10 @@ from typing import Any
 
 import numpy as np
 from loguru import logger
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import Speaker, SpeakerEmbedding, User
+from models.database import Speaker, SpeakerCandidate, SpeakerEmbedding, User
 from services.speaker_service import get_speaker_service
 from utils.config import settings
 
@@ -218,6 +218,94 @@ async def enroll_speaker_controlled(
     }
     if displaced:
         result["displaced_user_ids"] = displaced  # a prior user↔speaker link was moved
+    return result
+
+
+async def promote_candidates(
+    db: AsyncSession,
+    *,
+    candidate_ids: list[int],
+    name: str,
+    user_id: int | None = None,
+) -> dict[str, Any]:
+    """Promote review-bucket candidates (Phase-3) to a named enrolled speaker.
+
+    Same cohesion/count gates as a fresh enrollment (the candidates are already
+    voice-server ONNX embeddings, so no re-embed). On success the promoted
+    candidates are consumed (deleted). Returns the same result shape as
+    ``enroll_speaker_controlled`` (never raises for a gate failure).
+    """
+    name = (name or "").strip()
+    if not name:
+        return {"ok": False, "reason": "name is required", "accepted": 0}
+    if user_id is not None:
+        if (await db.execute(
+            select(User.id).where(User.id == user_id)
+        )).scalar_one_or_none() is None:
+            return {"ok": False, "reason": f"user {user_id} not found", "accepted": 0}
+
+    cands = (await db.execute(
+        select(SpeakerCandidate).where(SpeakerCandidate.id.in_(candidate_ids))
+    )).scalars().all()
+    svc = get_speaker_service()
+    embeddings = [
+        np.asarray(svc.embedding_from_base64(c.embedding), dtype=np.float32) for c in cands
+    ]
+    embeddings = [e for e in embeddings if e.size and np.all(np.isfinite(e))]
+    if len(embeddings) < settings.speaker_enroll_min_samples:
+        return {
+            "ok": False,
+            "reason": (
+                f"select >= {settings.speaker_enroll_min_samples} candidates "
+                f"(got {len(embeddings)} usable)"
+            ),
+            "accepted": len(embeddings),
+        }
+
+    cohesion = _cohesion(embeddings)
+    if not np.isfinite(cohesion) or cohesion < settings.speaker_enroll_min_cohesion:
+        return {
+            "ok": False,
+            "reason": (
+                f"candidates don't cohere (mean cosine {cohesion:.2f} < "
+                f"{settings.speaker_enroll_min_cohesion}) — likely different voices; "
+                f"select ones that belong together"
+            ),
+            "accepted": len(embeddings), "cohesion": round(cohesion, 3),
+        }
+
+    speaker = Speaker(name=name, alias=await _unique_alias(db, name), enrolled=True)
+    db.add(speaker)
+    await db.flush()
+    for emb in embeddings:
+        db.add(SpeakerEmbedding(speaker_id=speaker.id, embedding=svc.embedding_to_base64(emb)))
+
+    displaced: list[int] = []
+    if user_id is not None:
+        displaced = list((await db.execute(
+            select(User.id).where(User.speaker_id == speaker.id, User.id != user_id)
+        )).scalars().all())
+        await db.execute(update(User).where(User.speaker_id == speaker.id)
+                         .values(speaker_id=None).execution_options(synchronize_session=False))
+        await db.execute(update(User).where(User.id == user_id)
+                         .values(speaker_id=speaker.id).execution_options(synchronize_session=False))
+
+    # consume the promoted candidates
+    await db.execute(
+        delete(SpeakerCandidate).where(SpeakerCandidate.id.in_([c.id for c in cands]))
+        .execution_options(synchronize_session=False)
+    )
+    await db.commit()
+    logger.info(
+        f"🎙️ Promoted {len(embeddings)} candidate(s) → enrolled speaker '{name}' "
+        f"(id={speaker.id}, cohesion {cohesion:.2f}, user_id={user_id})"
+    )
+    result: dict[str, Any] = {
+        "ok": True, "speaker_id": speaker.id, "name": name,
+        "cohesion": round(cohesion, 3), "accepted": len(embeddings),
+    }
+    if displaced:
+        result["displaced_user_ids"] = displaced
     return result
 
 
