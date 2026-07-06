@@ -502,6 +502,18 @@ class MediaFollowService:
                 return uid
         return None
 
+    def playing_renderer_in_room(self, room_id: int) -> str | None:
+        """The DLNA renderer name of media actively PLAYING in a room, else None.
+
+        Used by duck-on-listen (Phase 4) to find the echo source to duck while a
+        satellite in that room is listening.
+        """
+        uid = self._find_playing_user_in_room(room_id)
+        if uid is None:
+            return None
+        session = self.get_session(uid)
+        return session.renderer_name if session else None
+
     def _cleanup_expired_sessions(self) -> None:
         """Remove suspended sessions that have exceeded the timeout."""
         now = time.time()

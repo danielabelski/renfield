@@ -383,6 +383,33 @@
         dest: /etc/udev/rules.d/99-respeaker-xvf3800.rules
         mode: "0644"
 
+    # --- XVF3800 on-chip DSP tuning (softened for biometric embeddings) ---
+    # The chip boots to conference defaults (AGC-pumped + aggressive DNN-NS +
+    # conference mix tap) which distort ECAPA speaker embeddings. Apply a softened
+    # profile (tamed AGC, higher NS floor, ASR beam tap) and persist it to the
+    # chip's OWN flash so it survives reboots. Empty `xvf3800_tuning` = leave
+    # firmware defaults. See docs/design/speaker-enrollment-redesign.md Phase 4.
+    - name: Apply XVF3800 DSP tuning
+      tags: [driver, config, audio]
+      when:
+        - hat_type == "xvf3800-usb"
+        - xvf3800_tuning | default({}) | length > 0
+      block:
+        - name: Set XVF3800 DSP params (RAM)
+          ansible.builtin.command:
+            argv: ["{{ xvf_host_path }}", "{{ item.key }}", "{{ item.value | string }}"]
+            chdir: "{{ satellite_base_dir }}/bin"
+          loop: "{{ xvf3800_tuning | dict2items }}"
+          loop_control:
+            label: "{{ item.key }} = {{ item.value }}"
+          changed_when: true
+
+        - name: Persist XVF3800 config to chip flash
+          ansible.builtin.command:
+            argv: ["{{ xvf_host_path }}", "save_configuration", "1"]
+            chdir: "{{ satellite_base_dir }}/bin"
+          changed_when: true
+
     # --- Flush handlers (reboot if driver was installed) ---
 
     - name: Reboot now if driver was installed

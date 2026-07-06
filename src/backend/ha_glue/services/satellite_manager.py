@@ -142,6 +142,9 @@ class SatelliteManager:
         self._pending_snapshots: dict[str, asyncio.Future] = {}
         self._pending_bt_scans: dict[str, asyncio.Future] = {}
         self._pending_irk_captures: dict[str, asyncio.Future] = {}
+        # Strong refs for fire-and-forget duck-on-listen hooks (a bare create_task
+        # can be GC'd mid-flight — see the boot-reconnect strand fix).
+        self._duck_bg_tasks: set[asyncio.Task] = set()
 
         # Configuration - use settings from config
         from utils.config import settings
@@ -410,6 +413,19 @@ class SatelliteManager:
         broadcast is fire-and-forget: a hub failure must never break voice.
         """
         sat.state = state
+
+        # Duck-on-listen (Phase 4): lower room DLNA media while a satellite listens
+        # so the far-field mic doesn't capture the room's own audio (no AEC
+        # reference for a networked speaker); restore when the turn ends. Fire-and-
+        # forget + best-effort — it must never block or break voice.
+        from ha_glue.utils.config import ha_glue_settings
+
+        if ha_glue_settings.duck_on_listen_enabled and sat.room_id is not None:
+            if state == SatelliteState.LISTENING:
+                self._spawn_duck(sat.room_id, sat.room, duck=True)
+            elif state == SatelliteState.IDLE:
+                self._spawn_duck(sat.room_id, sat.room, duck=False)
+
         try:
             from api.websocket.kiosk_handler import broadcast_kiosk_event
 
@@ -424,6 +440,20 @@ class SatelliteManager:
             )
         except Exception as e:
             logger.debug(f"kiosk satellite_state broadcast failed: {e}")
+
+    def _spawn_duck(self, room_id: int, room_name: str | None, duck: bool) -> None:
+        """Fire-and-forget duck (True) or restore (False) of room media, holding a
+        strong ref so the task isn't GC'd mid-flight."""
+        try:
+            from ha_glue.services.duck_service import get_duck_service
+
+            ds = get_duck_service()
+            coro = ds.duck_room(room_id, room_name) if duck else ds.restore_room(room_id)
+            task = asyncio.create_task(coro)
+            self._duck_bg_tasks.add(task)
+            task.add_done_callback(self._duck_bg_tasks.discard)
+        except Exception as e:
+            logger.debug(f"duck-on-listen spawn failed for room {room_id}: {e}")
 
     async def _broadcast_satellite_liveness(
         self, satellite_id: str, room: str | None, room_id: int | None, online: bool
