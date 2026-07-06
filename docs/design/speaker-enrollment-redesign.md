@@ -1,6 +1,7 @@
 # Speaker Enrollment Redesign — controlled enrollment over ambient auto-enroll
 
 **Status:** Phases 0–3 BUILT (dark by default), 2026-07-06. Phase 4 (upstream capture / XVF3800) still research.
+**Successor:** what controlled enrollment structurally cannot fix (short-turn text-independent matching, wakeword-speaker ≠ command-speaker) is designed in [`voice-identity-wakeword-verification.md`](voice-identity-wakeword-verification.md) (reviewed 2026-07-06).
 **Trigger:** prod investigation found speaker recognition operating near its noise floor (38 fragmented "Unbekannter Sprecher", self-reinforcing profile pollution). See the measured evidence below.
 
 **Build status (2026-07-06):**

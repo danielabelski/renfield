@@ -1,0 +1,28 @@
+# Synthetic meeting script — placeholder names only (committable fixture).
+# Format: "Speaker: sentence". Lines starting with # are ignored.
+# ~4 speakers, project status meeting, deliberately includes casual deadline
+# talk (Schicht-A gate material) and short interjections (hard for diarization).
+Anna: Guten Morgen zusammen, dann fangen wir mal an mit dem Projektstatus.
+Ben: Morgen Anna. Von meiner Seite ist der Prototyp für die Datenanbindung fertig.
+Clara: Kurze Zwischenfrage, ist das schon die Version mit der neuen Schnittstelle?
+Ben: Ja, genau die. Die alte Anbindung habe ich komplett rausgeworfen.
+Anna: Sehr gut. Clara, wie sieht es bei der Dokumentation aus?
+Clara: Die Dokumentation ist zu etwa achtzig Prozent fertig, mir fehlen noch die Kapitel zur Installation und zum Betrieb.
+David: Dazu kann ich was beisteuern, ich habe letzte Woche die Betriebsanleitung für den Testbetrieb geschrieben.
+Clara: Perfekt, dann übernehme ich die Abschnitte von dir.
+Anna: Wir sollten die Dokumentation bis Freitag abschließen, damit die Abnahme nächste Woche starten kann.
+Ben: Freitag wird knapp, aber machbar, wenn David mir bei den Diagrammen hilft.
+David: Klar, mache ich. Ich schicke dir heute Nachmittag einen Terminvorschlag.
+Anna: Gut. Nächstes Thema, das Budget für die zweite Projektphase.
+Clara: Da warte ich noch auf die Rückmeldung vom Einkauf, die wollten sich bis Mittwoch melden.
+Anna: Dann lass uns das am Donnerstag noch einmal kurz besprechen.
+Ben: Einverstanden.
+David: Passt für mich.
+Clara: Von mir aus auch, ich lade dann zum Donnerstagstermin ein.
+Anna: Wunderbar. Gibt es sonst noch Punkte, die wir heute klären müssen?
+Ben: Nur eine Kleinigkeit, der Testserver war gestern Abend kurz nicht erreichbar, das sollten wir beobachten.
+David: Das war vermutlich das Wartungsfenster vom Rechenzentrum, ich prüfe das nachher.
+Anna: Danke David. Dann sind wir durch für heute, danke euch allen.
+Clara: Danke, bis Donnerstag.
+Ben: Tschüss zusammen.
+David: Bis dann.
