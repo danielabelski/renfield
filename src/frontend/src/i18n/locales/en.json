@@ -557,7 +557,21 @@
     "enrollDone": "{{name}} enrolled",
     "enrollAnother": "Enroll another",
     "enrollCloseDone": "Close",
-    "enrollDisplaced": "Note: another user account was linked to this speaker; that link was removed."
+    "enrollDisplaced": "Note: another user account was linked to this speaker; that link was removed.",
+    "reviewBucketTitle": "Review queue",
+    "reviewBucketHint": "Unknown voices that matched no enrolled profile. Select the recordings that belong to one person and promote them to a speaker — or dismiss noise.",
+    "reviewBucketCount": "{{count}} to review",
+    "reviewSelect": "Select candidate {{id}}",
+    "reviewNearest": "Nearest: {{name}} ({{score}}%)",
+    "reviewNoMatch": "No match",
+    "reviewDismiss": "Dismiss ({{count}})",
+    "reviewPromote": "Promote to speaker ({{count}})",
+    "reviewPromoteTitle": "Promote candidates to a speaker",
+    "reviewPromoteHint": "{{count}} selected recording(s) will be merged into one new enrolled speaker (same cohesion check as enrollment).",
+    "reviewPromoteSubmit": "Promote",
+    "reviewBucketFailed": "Could not load the review queue.",
+    "promoteFailed": "Promotion failed.",
+    "dismissFailed": "Dismiss failed."
   },
   "tasks": {
     "title": "Tasks",

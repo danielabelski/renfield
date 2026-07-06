@@ -46,6 +46,7 @@ export const keys = {
     list: () => ['speakers', 'list'] as const,
     detail: (id: number) => ['speakers', 'detail', id] as const,
     embeddings: (id: number) => ['speakers', id, 'embeddings'] as const,
+    reviewBucket: () => ['speakers', 'review-bucket'] as const,
   },
   intents: {
     all: ['intents'] as const,
