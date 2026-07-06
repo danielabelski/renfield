@@ -1,0 +1,4 @@
+# Real room recordings live here for local eval runs — voices are personal
+# data and are NEVER committed (two-tier fixture policy, eng-review 2026-07-06).
+*
+!.gitignore

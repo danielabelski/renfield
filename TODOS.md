@@ -313,6 +313,27 @@ The hybrid extractor (deterministic Steuernummer/IBAN with whitespace normalizat
 
 ## P3 — Conditional / on signal
 
+### Satellite meeting recording ("Renfield, starte Meeting-Aufnahme")
+
+**WHAT:** A satellite (primarily the XVF3800-equipped ones) records long-form meeting audio on voice command and pushes it into the meeting-transcription upload path (`POST /api/meetings/transcribe`). Own phase, deliberately kept OUT of the §2 diarization build (eng-review decision D15, 2026-07-06).
+
+**WHY:** Removes the manual two-step (record on phone → upload). The XVF3800 beamforming array is likely the best microphone in the house for multi-speaker capture.
+
+**PROS:**
+- Rounds out the meeting feature into a hands-free product experience
+- The diarization spike already produces the decision data (phone-in-table-center vs XVF3800 test recording comparison)
+
+**CONS:**
+- A real standalone work package: new WS protocol messages (start/stop/stream long-form audio), Pi-side storage/streaming for hours of audio, LED recording indicator, consent UX (§6 of the meeting plan — recording indicator is legally load-bearing, not cosmetic)
+
+**CONTEXT:** §2 is upload-first; the authoritative design (`docs/design/meeting-transcription.md`) lists this under "Explicitly NOT in §2". Start from the spike's capture-comparison measurements (`bin/run_diarization_eval.py`).
+
+**DEPENDS ON:**
+- §2 meeting transcription built (spike gates passed)
+- Spike capture comparison showing XVF3800 audio is diarizable
+
+**SOURCE:** /plan-eng-review 2026-07-06 (D15 + Outside-Voice finding "nobody records the meeting")
+
 ### ~~Command Center — Phase 3 kiosk mode~~ ✅ SHIPPED 2026-07 · ⚠️ admin board DECOMMISSIONED 2026-07
 Origin: 2026-06-27, sparked by the "Apex" (Reznikov Engineering) radial mission-control UI. Design doc + on-brand React prototype landed on `docs/command-center`; cinematic video mockups in `renfield-video/`. **Primary source: `docs/design/command-center.md`.**
 
@@ -513,6 +534,20 @@ PRD is unaffected (separate cluster, separate ConfigMap, `usu-mcp` actually runn
 - 4-8 weeks of v1 usage signal (after Brain Review Queue ships in Phase 2 of v1)
 
 **SOURCE:** `~/.gstack/projects/ebongard-renfield/evdb-main-design-20260419-190713-second-brain-circles.md` design-review Pass 7
+
+---
+
+### Speaker-profile + wakeword-template in-memory cache (P3, measure first)
+
+**WHAT:** Cache enrolled speaker centroids and (user, keyword) wakeword templates in process memory (invalidated on enroll/promote/delete/merge) instead of a DB load per voice turn.
+
+**WHY:** `speaker_resolver.resolve_speaker_from_embedding` loads all known speakers on every turn, and A1 wakeword verification adds a template load per wakeword detection. At 3-person household scale this is milliseconds — an optimization, not a flaw — but it becomes measurable if profile counts or turn rates grow.
+
+**CONTEXT:** Flagged in the 2026-07-06 `/plan-eng-review` of `docs/design/voice-identity-wakeword-verification.md` (Section 4, perf). Deliberately NOT built with A1 per the measure-first rule. Invalidation hooks belong in `SpeakerEnrollmentService` mutations (enroll/promote/dismiss) and the speaker delete/merge paths fixed in `pc20260705`.
+
+**DEPENDS ON:** A1 (wakeword verification) having shipped — else only the resolver path exists; and a measured per-turn cost worth removing.
+
+**SOURCE:** `docs/design/voice-identity-wakeword-verification.md` eng review D15
 
 ---
 

@@ -1,0 +1,150 @@
+{
+  "sample_rate": 16000,
+  "engine": "say",
+  "segments": [
+    {
+      "speaker": "Anna",
+      "start": 0.6,
+      "end": 4.873,
+      "text": "Guten Morgen zusammen, dann fangen wir mal an mit dem Projektstatus."
+    },
+    {
+      "speaker": "Ben",
+      "start": 5.473,
+      "end": 11.023,
+      "text": "Morgen Anna. Von meiner Seite ist der Prototyp für die Datenanbindung fertig."
+    },
+    {
+      "speaker": "Clara",
+      "start": 11.623,
+      "end": 16.127,
+      "text": "Kurze Zwischenfrage, ist das schon die Version mit der neuen Schnittstelle?"
+    },
+    {
+      "speaker": "Ben",
+      "start": 16.727,
+      "end": 21.734,
+      "text": "Ja, genau die. Die alte Anbindung habe ich komplett rausgeworfen."
+    },
+    {
+      "speaker": "Anna",
+      "start": 22.334,
+      "end": 26.294,
+      "text": "Sehr gut. Clara, wie sieht es bei der Dokumentation aus?"
+    },
+    {
+      "speaker": "Clara",
+      "start": 26.894,
+      "end": 34.796,
+      "text": "Die Dokumentation ist zu etwa achtzig Prozent fertig, mir fehlen noch die Kapitel zur Installation und zum Betrieb."
+    },
+    {
+      "speaker": "David",
+      "start": 35.396,
+      "end": 42.305,
+      "text": "Dazu kann ich was beisteuern, ich habe letzte Woche die Betriebsanleitung für den Testbetrieb geschrieben."
+    },
+    {
+      "speaker": "Clara",
+      "start": 42.905,
+      "end": 46.162,
+      "text": "Perfekt, dann übernehme ich die Abschnitte von dir."
+    },
+    {
+      "speaker": "Anna",
+      "start": 46.762,
+      "end": 52.788,
+      "text": "Wir sollten die Dokumentation bis Freitag abschließen, damit die Abnahme nächste Woche starten kann."
+    },
+    {
+      "speaker": "Ben",
+      "start": 53.388,
+      "end": 58.362,
+      "text": "Freitag wird knapp, aber machbar, wenn David mir bei den Diagrammen hilft."
+    },
+    {
+      "speaker": "David",
+      "start": 58.962,
+      "end": 64.315,
+      "text": "Klar, mache ich. Ich schicke dir heute Nachmittag einen Terminvorschlag."
+    },
+    {
+      "speaker": "Anna",
+      "start": 64.915,
+      "end": 69.026,
+      "text": "Gut. Nächstes Thema, das Budget für die zweite Projektphase."
+    },
+    {
+      "speaker": "Clara",
+      "start": 69.626,
+      "end": 75.112,
+      "text": "Da warte ich noch auf die Rückmeldung vom Einkauf, die wollten sich bis Mittwoch melden."
+    },
+    {
+      "speaker": "Anna",
+      "start": 75.712,
+      "end": 79.215,
+      "text": "Dann lass uns das am Donnerstag noch einmal kurz besprechen."
+    },
+    {
+      "speaker": "Ben",
+      "start": 79.815,
+      "end": 81.189,
+      "text": "Einverstanden."
+    },
+    {
+      "speaker": "David",
+      "start": 81.789,
+      "end": 83.014,
+      "text": "Passt für mich."
+    },
+    {
+      "speaker": "Clara",
+      "start": 83.614,
+      "end": 87.693,
+      "text": "Von mir aus auch, ich lade dann zum Donnerstagstermin ein."
+    },
+    {
+      "speaker": "Anna",
+      "start": 88.293,
+      "end": 92.472,
+      "text": "Wunderbar. Gibt es sonst noch Punkte, die wir heute klären müssen?"
+    },
+    {
+      "speaker": "Ben",
+      "start": 93.072,
+      "end": 100.286,
+      "text": "Nur eine Kleinigkeit, der Testserver war gestern Abend kurz nicht erreichbar, das sollten wir beobachten."
+    },
+    {
+      "speaker": "David",
+      "start": 100.886,
+      "end": 106.34,
+      "text": "Das war vermutlich das Wartungsfenster vom Rechenzentrum, ich prüfe das nachher."
+    },
+    {
+      "speaker": "Anna",
+      "start": 106.94,
+      "end": 110.709,
+      "text": "Danke David. Dann sind wir durch für heute, danke euch allen."
+    },
+    {
+      "speaker": "Clara",
+      "start": 111.309,
+      "end": 113.307,
+      "text": "Danke, bis Donnerstag."
+    },
+    {
+      "speaker": "Ben",
+      "start": 113.907,
+      "end": 115.243,
+      "text": "Tschüss zusammen."
+    },
+    {
+      "speaker": "David",
+      "start": 115.843,
+      "end": 116.801,
+      "text": "Bis dann."
+    }
+  ]
+}

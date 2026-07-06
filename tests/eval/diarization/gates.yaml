@@ -1,0 +1,25 @@
+# Diarization spike gates — FIXED 2026-07-06 during /plan-eng-review, BEFORE the
+# first measurement (D12 / outside-voice amendment 5). Do not tune these to fit
+# a run; a gate change needs its own reviewed decision.
+gates:
+  # Share of overlapping speech frames attributed to the wrong speaker after
+  # optimal cluster->reference mapping (Hungarian). Above this, transcripts are
+  # not trustworthy enough to ship §2 at all.
+  attribution_error_rate_max: 0.20
+
+  # Processing cost ceiling: 60 min of audio must finish in <= 30 GPU-minutes
+  # (diarization + ASR combined), else the serialized-batch deployment shape
+  # (D5) starves the box.
+  gpu_seconds_per_audio_minute_max: 30
+
+  # AUTO-MATCH gate (D12): per-cluster ECAPA separation on meeting-length audio,
+  # same_cluster_cosine_mean - cross_cluster_cosine_p95, in the voice-server
+  # ONNX space. Below this, auto-match is NOT built — pseudonyms + one-click
+  # human labeling remain the product. (Context: short chat turns measured
+  # same-speaker ~0.28 vs cross p95 ~0.22 — separation 0.06, unusable.)
+  auto_match_separation_min: 0.15
+
+  # Live satellite STT p95 latency during a running batch job, relative to the
+  # idle baseline (probe-live-stt baseline vs during). Above 2x, escalate per
+  # the ladder in docs/design/meeting-transcription.md (night-window first).
+  live_stt_p95_factor_max: 2.0
