@@ -68,6 +68,10 @@ describe('GuidedEnrollModal', () => {
     const arg = mutateAsync.mock.calls[0][0];
     expect(arg.name).toBe('Eduard');
     expect(arg.samples).toHaveLength(3);
+
+    // success shows a clear done-state with a Close button (unique to that state)
+    await waitFor(() =>
+      screen.getByRole('button', { name: /^close$|^schließen$/i }));
   });
 
   it('shows the rejection reason when the samples do not cohere', async () => {

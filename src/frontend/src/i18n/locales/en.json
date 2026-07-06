@@ -553,7 +553,11 @@
     "enrollSubmit": "Enroll",
     "enrolling": "Enrolling…",
     "enrollSuccess": "Speaker enrolled successfully.",
-    "enrollFailed": "Enrollment failed."
+    "enrollFailed": "Enrollment failed.",
+    "enrollDone": "{{name}} enrolled",
+    "enrollAnother": "Enroll another",
+    "enrollCloseDone": "Close",
+    "enrollDisplaced": "Note: another user account was linked to this speaker; that link was removed."
   },
   "tasks": {
     "title": "Tasks",
