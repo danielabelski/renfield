@@ -113,6 +113,16 @@ class HaGlueSettings(BaseSettings):
     media_follow_suspend_timeout: float = 600.0                # Seconds before suspended session expires
     media_follow_resume_delay: float = 2.0                     # Delay before resuming in new room
 
+    # === Duck-on-listen (docs/design/speaker-enrollment-redesign.md Phase 4, item 4) ===
+    # When a room's satellite is LISTENING, duck the volume of media playing in
+    # that room over DLNA so the far-field mic doesn't capture the room's own
+    # audio (the XVF3800 has no AEC reference for a networked speaker). Restore on
+    # turn end. Dark by default. The industry-standard 'duck the source' answer to
+    # AEC-with-an-external-loudspeaker.
+    duck_on_listen_enabled: bool = False                       # Opt-in
+    duck_on_listen_volume: int = 20                            # Duck target volume 0-100 (low = removes the echo source)
+    duck_on_listen_max_seconds: float = 30.0                   # Safety: restore even if the turn never returns to IDLE
+
     # === Radio (TuneIn) ===
     radio_enabled: bool = False
     tunein_partner_id: str = ""
