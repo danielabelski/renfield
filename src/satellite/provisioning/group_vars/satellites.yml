@@ -162,6 +162,16 @@ satellite_python_packages:
 # XVF3800 LED control
 xvf_host_path: "/opt/renfield-satellite/bin/xvf_host"
 
+# XVF3800 on-chip DSP tuning (map of xvf_host CMD -> value, applied + persisted to
+# the chip flash during provisioning; see provision.yml + docs/design/speaker-
+# enrollment-redesign.md Phase 4). Empty = leave firmware/conference defaults.
+# Override per-satellite in host_vars. Softened profile for biometric embeddings
+# reduces AGC pumping + DNN-NS timbre distortion that hurt ECAPA speaker matching.
+# NOTE: on/off params must be 1/0, NOT YAML true/false (the task string-casts the
+# value and xvf_host rejects "True"/"False"). Provisioning is infrequent, so
+# re-writing the chip flash on each run is a non-issue for flash endurance.
+xvf3800_tuning: {}
+
 # Enviro pHAT
 enviro_phat_enabled: false
 
