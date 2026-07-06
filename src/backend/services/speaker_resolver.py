@@ -20,11 +20,11 @@ from typing import Any
 
 import numpy as np
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from models.database import Speaker, SpeakerEmbedding
+from models.database import Speaker, SpeakerCandidate, SpeakerEmbedding
 from services.speaker_service import get_speaker_service
 from utils.config import settings
 
@@ -69,8 +69,12 @@ async def resolve_speaker_from_embedding(
     docs/design/speaker-enrollment-redesign.md.
     """
     gating = settings.speaker_quality_gating_enabled
+    controlled = settings.speaker_controlled_enrollment_enabled
+    # The duration quality gate is active under EITHER Phase-0 gating or Phase-3
+    # controlled recognition (the review bucket must not fill with short/noisy turns).
+    quality_active = gating or controlled
     too_short = (
-        gating
+        quality_active
         and audio_duration_s is not None
         and audio_duration_s < settings.speaker_recognition_min_duration_s
     )
@@ -82,7 +86,11 @@ async def resolve_speaker_from_embedding(
     else:
         embedding_array = embedding.astype(np.float32, copy=False)
 
-    if embedding_array.size == 0:
+    # A non-finite wire embedding (NaN/inf) would make every cosine NaN — the
+    # match silently fails AND, under controlled mode, a NaN best_score lands in
+    # the review bucket and later serializes as bare `NaN` (invalid JSON) from
+    # GET /candidates. Reject it up front, same guard as the enrollment path.
+    if embedding_array.size == 0 or not np.all(np.isfinite(embedding_array)):
         return _empty_speaker_info()
 
     speaker_info = _empty_speaker_info()
@@ -99,6 +107,9 @@ async def resolve_speaker_from_embedding(
         for speaker in all_speakers:
             if not speaker.embeddings:
                 continue
+            # Phase-3: identify against ENROLLED reference profiles ONLY.
+            if controlled and not speaker.enrolled:
+                continue
             speakers_with_embeddings.append(speaker)
             recent = sorted(
                 speaker.embeddings,
@@ -107,24 +118,50 @@ async def resolve_speaker_from_embedding(
             )[:MAX_EMBEDDINGS_PER_SPEAKER]
             decoded = [service.embedding_from_base64(emb.embedding) for emb in recent]
             if decoded:
-                # Phase-0: L2-normalize each embedding before averaging so the
-                # centroid isn't dominated by larger-norm samples (raw ECAPA
-                # norms vary ~250-410). Off = legacy raw mean.
-                if gating:
+                # L2-normalize each embedding before averaging so the centroid
+                # isn't dominated by larger-norm samples (raw ECAPA norms vary
+                # ~250-410). Off = legacy raw mean.
+                if quality_active:
                     decoded = [_l2_normalize(d) for d in decoded]
                 averaged = np.mean(decoded, axis=0)
                 known_speakers.append((speaker.id, speaker.name, averaged))
 
         identified: Speaker | None = None
         confidence = 0.0
+        best_score = 0.0
+        best_speaker_id: int | None = None
         if known_speakers:
-            match = service.identify_speaker(embedding_array, known_speakers)
-            if match:
-                speaker_id, _name, confidence = match
-                for s in speakers_with_embeddings:
-                    if s.id == speaker_id:
-                        identified = s
-                        break
+            if controlled:
+                # Margin-gated match: the best enrolled profile must clear the
+                # threshold AND beat the runner-up by `speaker_match_min_margin`
+                # (near-noise-floor cosines don't cleanly separate — the margin
+                # guards against a coin-flip between two profiles).
+                scored = sorted(
+                    (
+                        (service.compute_similarity(embedding_array, centroid), sid, name)
+                        for sid, name, centroid in known_speakers
+                    ),
+                    key=lambda x: x[0], reverse=True,
+                )
+                best_score, best_speaker_id, _ = scored[0]
+                runner_up = scored[1][0] if len(scored) > 1 else -1.0
+                if (
+                    best_score >= settings.speaker_recognition_threshold
+                    and (best_score - runner_up) >= settings.speaker_match_min_margin
+                ):
+                    confidence = best_score
+                    for s in speakers_with_embeddings:
+                        if s.id == best_speaker_id:
+                            identified = s
+                            break
+            else:
+                match = service.identify_speaker(embedding_array, known_speakers)
+                if match:
+                    speaker_id, _name, confidence = match
+                    for s in speakers_with_embeddings:
+                        if s.id == speaker_id:
+                            identified = s
+                            break
 
         if identified:
             speaker_info = {
@@ -143,8 +180,27 @@ async def resolve_speaker_from_embedding(
                 not gating
                 or confidence >= settings.speaker_continuous_learning_min_confidence
             )
-            if settings.speaker_continuous_learning and not too_short and strong_enough:
+            # Phase-3 keeps reference profiles IMMUTABLE (no passive reinforcement).
+            if (
+                settings.speaker_continuous_learning
+                and not controlled
+                and not too_short
+                and strong_enough
+            ):
                 await _append_embedding(db_session, identified.id, embedding_array, service)
+
+        elif controlled:
+            # Phase-3: do NOT auto-enrol on a miss (no more polluting "Unbekannter
+            # Sprecher"). A quality-passing unknown goes to the review bucket for
+            # the admin to promote or dismiss; a too-short one is dropped.
+            if not too_short:
+                await _capture_candidate(
+                    db_session, embedding_array, best_score, best_speaker_id,
+                    audio_duration_s, service,
+                )
+                logger.info(f"🎤 Unknown voice → review bucket (best match {best_score:.2f})")
+            else:
+                logger.info("🎤 Unknown voice, turn too short — skipped (Phase-3)")
 
         elif settings.speaker_auto_enroll and not too_short:
             unknown_count = sum(
@@ -230,3 +286,40 @@ async def _append_embedding(
         await db_session.commit()
     except Exception as e:
         logger.warning(f"Continuous-learning append failed for speaker {speaker_id}: {e}")
+
+
+async def _capture_candidate(
+    db_session: AsyncSession,
+    embedding: np.ndarray,
+    best_score: float,
+    best_speaker_id: int | None,
+    audio_duration_s: float | None,
+    service,
+) -> None:
+    """Store an unmatched voice in the review bucket (Phase-3), capped to the
+    newest ``speaker_review_bucket_cap`` rows. Best-effort — never fails a turn."""
+    try:
+        db_session.add(SpeakerCandidate(
+            embedding=service.embedding_to_base64(embedding),
+            best_score=float(best_score),
+            best_speaker_id=best_speaker_id,
+            audio_duration_s=audio_duration_s,
+        ))
+        await db_session.flush()
+        cap = settings.speaker_review_bucket_cap
+        total = (await db_session.execute(
+            select(func.count(SpeakerCandidate.id))
+        )).scalar_one()
+        if total > cap:
+            stale = (await db_session.execute(
+                select(SpeakerCandidate.id)
+                .order_by(SpeakerCandidate.created_at.asc())
+                .limit(total - cap)
+            )).scalars().all()
+            await db_session.execute(
+                delete(SpeakerCandidate).where(SpeakerCandidate.id.in_(stale))
+                .execution_options(synchronize_session=False)
+            )
+        await db_session.commit()
+    except Exception as e:
+        logger.warning(f"Review-bucket capture failed: {e}")

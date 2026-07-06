@@ -1,7 +1,14 @@
 # Speaker Enrollment Redesign — controlled enrollment over ambient auto-enroll
 
-**Status:** DESIGN / proposed (2026-07-05). Not yet built.
+**Status:** Phases 0–3 BUILT (dark by default), 2026-07-06. Phase 4 (upstream capture / XVF3800) still research.
 **Trigger:** prod investigation found speaker recognition operating near its noise floor (38 fragmented "Unbekannter Sprecher", self-reinforcing profile pollution). See the measured evidence below.
+
+**Build status (2026-07-06):**
+- **Phase 0** (quality gating: L2-normalize before averaging, passive min-duration gate, confidence-gated continuous-learning) — SHIPPED dark (`speaker_quality_gating_enabled`).
+- **Phase 1** (controlled multi-sample ONNX enrollment + cohesion gate + user-link + purge script) — SHIPPED (`services/speaker_enrollment_service.py`, `POST /api/speakers/enroll`, `bin/purge_unknown_speakers.py`).
+- **Phase 2** (guided multi-take frontend flow) — SHIPPED (`components/speakers/GuidedEnrollModal.tsx`).
+- **Phase 3** (controlled recognition + review bucket) — BUILT dark (`speaker_controlled_enrollment_enabled`): identify against ENROLLED profiles only, margin gate (`speaker_match_min_margin`), reference profiles immutable (no passive reinforcement), and a miss routes a quality-passing unknown to the `speaker_candidates` review bucket (capped `speaker_review_bucket_cap`) instead of auto-enrolling. Admin API `GET/POST /api/speakers/candidates{,/promote,/dismiss}` (SPEAKERS_ALL). Migration `pc20260707`. **Not yet flipped on** — pending the recalibration measurement (set threshold + margin from enrolled same/diff separation) and the Phase-3b review UI.
+- **Phase 4** — research only (see §5 / XVF3800 detail).
 
 ---
 

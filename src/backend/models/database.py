@@ -198,6 +198,24 @@ class SpeakerEmbedding(Base):
     speaker = relationship("Speaker", back_populates="embeddings")
 
 
+class SpeakerCandidate(Base):
+    """Review-bucket candidate: an unmatched (unknown) voice embedding captured
+    under controlled recognition (Phase 3) instead of auto-enrolling a polluting
+    "Unbekannter Sprecher". The admin reviews these and either promotes them to a
+    named enrolled speaker or dismisses them. Migration pc20260707.
+    See docs/design/speaker-enrollment-redesign.md."""
+    __tablename__ = "speaker_candidates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    embedding = Column(Text, nullable=False)         # Base64-encoded ONNX embedding
+    best_score = Column(Float, nullable=True)        # cosine to the nearest enrolled profile
+    best_speaker_id = Column(
+        Integer, ForeignKey("speakers.id", ondelete="SET NULL"), nullable=True, index=True,
+    )
+    audio_duration_s = Column(Float, nullable=True)
+    created_at = Column(DateTime, default=_utcnow, index=True)
+
+
 class SpeakerVocabularyCorpus(Base):
     """Raw confirmed-speaker transcripts mined for per-user STT bias.
 

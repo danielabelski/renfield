@@ -221,6 +221,16 @@ class WSChatMessage(BaseModel):
         min_length=192,
         max_length=192,
     )
+    # Duration of the utterance the embedding was computed from. The voice-server
+    # already has it (whisper_service/voice.py pass it on their resolver paths);
+    # the frontend forwards it here so the chat-WS voice path can apply the same
+    # short-turn quality gate (Phase-0 / Phase-3). Nullable — when absent the gate
+    # can't fire, which is the pre-existing behavior on this path.
+    speaker_audio_duration_s: float | None = Field(
+        default=None,
+        description="Duration (s) of the utterance the speaker embedding came from",
+        ge=0.0,
+    )
 
 
 # =============================================================================
