@@ -37,8 +37,11 @@ export default function ReviewBucketSection({ users }: ReviewBucketSectionProps)
   const total = bucket.data?.total ?? 0;
   const selectedIds = useMemo(() => Array.from(selected), [selected]);
 
-  // Self-hiding: nothing to review (the flag is dark by default) → render nothing.
-  if (!bucket.isLoading && !bucket.errorMessage && total === 0) return null;
+  // Self-hiding: render nothing while loading OR when the bucket is empty (the
+  // flag is dark by default, so the empty case is the norm — hiding during the
+  // fetch too avoids a "Review queue" card flashing on every Speakers-page load).
+  // An error still shows so a broken endpoint isn't swallowed.
+  if (!bucket.errorMessage && (bucket.isLoading || total === 0)) return null;
 
   const toggle = (id: number) =>
     setSelected((s) => {
@@ -57,21 +60,29 @@ export default function ReviewBucketSection({ users }: ReviewBucketSectionProps)
 
   const submitPromote = async () => {
     setResult(null);
-    const res = await promote.mutateAsync({
-      candidate_ids: selectedIds,
-      name: name.trim(),
-      user_id: userId === '' ? null : Number(userId),
-    });
-    setResult(res);
-    if (res.ok) {
-      setSelected(new Set());
-      setPromoteOpen(false);
+    try {
+      const res = await promote.mutateAsync({
+        candidate_ids: selectedIds,
+        name: name.trim(),
+        user_id: userId === '' ? null : Number(userId),
+      });
+      setResult(res);
+      if (res.ok) {
+        setSelected(new Set());
+        setPromoteOpen(false);
+      }
+    } catch {
+      // HTTP/network failure — surfaced via promote.errorMessage in the modal.
     }
   };
 
   const dismissSelected = async () => {
-    await dismiss.mutateAsync(selectedIds);
-    setSelected(new Set());
+    try {
+      await dismiss.mutateAsync(selectedIds);
+      setSelected(new Set());
+    } catch {
+      // HTTP/network failure — surfaced via dismiss.errorMessage below.
+    }
   };
 
   const canPromote = name.trim().length > 0 && selectedIds.length > 0 && !promote.isPending;
@@ -132,6 +143,12 @@ export default function ReviewBucketSection({ users }: ReviewBucketSectionProps)
             ))}
           </ul>
 
+          {dismiss.errorMessage && (
+            <div className="text-sm rounded p-3 mt-2 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300">
+              {dismiss.errorMessage}
+            </div>
+          )}
+
           <div className="flex items-center justify-end gap-2 pt-3">
             <button
               type="button"
@@ -191,11 +208,11 @@ export default function ReviewBucketSection({ users }: ReviewBucketSectionProps)
             </select>
           </div>
 
-          {result && !result.ok && (
+          {(result && !result.ok) || promote.errorMessage ? (
             <div className="text-sm rounded p-3 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300">
-              {result.reason}
+              {result && !result.ok ? result.reason : promote.errorMessage}
             </div>
-          )}
+          ) : null}
 
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" className="btn-secondary" onClick={() => setPromoteOpen(false)}>

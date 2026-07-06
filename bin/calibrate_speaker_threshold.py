@@ -11,12 +11,13 @@ recommends them.
 
 It reads the ENROLLED speakers' stored embeddings (voice-server ONNX space, the
 same the resolver matches against), L2-normalizes each (mirroring the resolver's
-`quality_active` centroid), and computes two distributions:
+`quality_active` centroid), and computes two distributions the SAME way the
+resolver scores a live turn — cosine(sample, profile_centroid):
 
-  * same-speaker: pairwise cosine WITHIN each enrolled profile (how tightly one
-    person's own samples cohere),
-  * different-speaker: cosine between each PAIR of enrolled profile centroids
-    (how far apart two people are).
+  * same-speaker: each held-out sample vs its OWN profile's leave-one-out
+    centroid (how a genuine new turn scores against the person's profile),
+  * different-speaker: each sample vs every OTHER profile's centroid (how an
+    impostor scores against a profile).
 
 A clean separation means `same` sits well above `different`; the recommended
 threshold falls in the gap and the margin is a fraction of it. Needs >= 2
@@ -34,7 +35,6 @@ import argparse
 import asyncio
 import json
 import sys
-from itertools import combinations
 from pathlib import Path
 
 import numpy as np
@@ -86,14 +86,26 @@ async def _collect() -> dict:
 
 
 def _analyze(profiles: list[dict]) -> dict:
-    # same-speaker: pairwise cosine within each profile (>=2 samples)
+    # Mirror how the resolver actually scores a turn: cosine(turn_embedding,
+    # profile_centroid). So the two distributions must be sample-vs-centroid, not
+    # sample-vs-sample or centroid-vs-centroid (both smoothed differently and
+    # miscalibrated vs live scoring):
+    #   same     = a held-out sample vs its OWN profile's leave-one-out centroid
+    #              (how a genuine new turn scores against the person's profile),
+    #   different = a sample vs every OTHER profile's full centroid
+    #              (how an impostor scores against a profile).
     same: list[float] = []
-    for p in profiles:
-        same.extend(_cos(a, b) for a, b in combinations(p["embs"], 2))
-    # different-speaker: centroid-vs-centroid across profile pairs
     diff: list[float] = []
-    for a, b in combinations(profiles, 2):
-        diff.append(_cos(a["centroid"], b["centroid"]))
+    for p in profiles:
+        embs = p["embs"]
+        for j, e in enumerate(embs):
+            rest = [_l2(embs[k]) for k in range(len(embs)) if k != j]
+            if rest:  # needs >= 2 samples in this profile
+                same.append(_cos(e, np.mean(rest, axis=0)))
+            for q in profiles:
+                if q is p:
+                    continue
+                diff.append(_cos(e, q["centroid"]))
 
     out: dict = {
         "enrolled_speakers": len(profiles),
@@ -106,8 +118,8 @@ def _analyze(profiles: list[dict]) -> dict:
     if len(profiles) < 2 or not same:
         out["recommendation"] = None
         out["note"] = (
-            "Need >= 2 enrolled speakers (each with >= 2 samples) to recommend a "
-            "threshold. Enroll the household via /speakers, then re-run."
+            "Need >= 2 enrolled speakers, at least one with >= 2 samples, to recommend "
+            "a threshold. Enroll the household via /speakers, then re-run."
         )
         return out
 
@@ -115,25 +127,27 @@ def _analyze(profiles: list[dict]) -> dict:
     diff_high = _pct(diff, 95)   # an impostor should stay below this
     gap = same_low - diff_high
     if gap > 0:
-        threshold = round(diff_high + gap / 2, 3)          # middle of the clean gap
-        margin = round(min(gap / 2, 0.15), 3)              # half the gap, capped
-        verdict = "clean separation"
+        out["recommendation"] = {
+            "speaker_recognition_threshold": round(diff_high + gap / 2, 3),  # middle of the gap
+            "speaker_match_min_margin": round(min(gap / 2, 0.15), 3),        # half the gap, capped
+            "separation_gap": round(gap, 3),
+            "verdict": "clean separation",
+        }
     else:
-        # overlap: profiles aren't separable at these samples — fall back to a
-        # conservative point above the different-speaker mass and flag it.
-        threshold = round(diff_high, 3)
-        margin = 0.1
-        verdict = (
-            "OVERLAP — enrolled profiles are not cleanly separable (same-speaker "
-            "p5 <= different-speaker p95). Re-enroll noisy profiles or add samples; "
-            "the recommended threshold is a floor, expect misses/confusions."
-        )
-    out["recommendation"] = {
-        "speaker_recognition_threshold": threshold,
-        "speaker_match_min_margin": margin,
-        "separation_gap": round(gap, 3),
-        "verdict": verdict,
-    }
+        # Overlap: the profiles are NOT separable at these samples (a genuine turn
+        # can score below an impostor). Emit NO number — any threshold here either
+        # rejects real users or accepts impostors. Recommend re-enrolling instead.
+        out["recommendation"] = {
+            "speaker_recognition_threshold": None,
+            "speaker_match_min_margin": None,
+            "separation_gap": round(gap, 3),
+            "verdict": (
+                "OVERLAP — enrolled profiles are not cleanly separable (same-speaker "
+                "p5 <= different-speaker p95). No threshold is safe; re-enroll noisy "
+                "profiles or add samples, then re-run. Do NOT flip controlled "
+                "recognition on until this shows a clean separation."
+            ),
+        }
     return out
 
 
@@ -162,6 +176,9 @@ def _print(report: dict) -> None:
         print(f"\n  ⚠️  {report.get('note')}")
         return
     print(f"\n  → {rec['verdict']} (gap = {rec['separation_gap']})")
+    if rec["speaker_recognition_threshold"] is None:
+        print("  → no threshold recommended (see verdict)")
+        return
     print(f"  → recommended  speaker_recognition_threshold = {rec['speaker_recognition_threshold']}")
     print(f"  → recommended  speaker_match_min_margin      = {rec['speaker_match_min_margin']}")
 

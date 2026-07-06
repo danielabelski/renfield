@@ -270,7 +270,11 @@ export function useIdentifySpeaker() {
 // --- Phase 3b: review bucket (controlled recognition) ---
 
 async function fetchReviewBucket(): Promise<ReviewBucketResponse> {
-  const response = await apiClient.get<ReviewBucketResponse>('/api/speakers/candidates');
+  // limit=200 covers the whole bucket (backend caps retained candidates at
+  // speaker_review_bucket_cap=200), so the shown list never lags `total`.
+  const response = await apiClient.get<ReviewBucketResponse>(
+    '/api/speakers/candidates', { params: { limit: 200 } },
+  );
   return response.data ?? { total: 0, candidates: [] };
 }
 
