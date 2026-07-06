@@ -372,6 +372,24 @@ class WhisperService:
             }
 
             do_speaker_recog = settings.speaker_recognition_enabled and db_session is not None
+            # P0 fail-loud guard (voice-identity design): this method is the
+            # in-process path, so its embeddings come from SpeechBrain — a
+            # different representation space than the voice-server ONNX model
+            # that produced every wire-path embedding. Writing/comparing them
+            # against the same speaker tables silently corrupts identity, so
+            # unless explicitly opted in we skip speaker recognition here
+            # (transcription is unaffected) and say so loudly.
+            if do_speaker_recog and not settings.speaker_inprocess_embeddings_enabled:
+                from utils.metrics import record_speaker_inprocess_embedding_blocked
+
+                logger.warning(
+                    "🚫 In-process SpeechBrain speaker recognition refused: "
+                    "speaker_inprocess_embeddings_enabled is off (voice-server "
+                    "ONNX is the only supported embedding space). Transcribing "
+                    "without speaker identification."
+                )
+                record_speaker_inprocess_embedding_blocked("whisper")
+                do_speaker_recog = False
 
             # Run STT and speaker-embedding extraction in PARALLEL when speaker
             # recognition is enabled. Both are I/O-bound (model inference in

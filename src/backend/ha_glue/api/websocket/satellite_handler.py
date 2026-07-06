@@ -11,6 +11,7 @@ This module handles:
 """
 
 import asyncio
+import json
 from datetime import date
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
@@ -158,6 +159,12 @@ async def satellite_websocket(
 
     satellite_id = None
 
+    # C1 binary/Opus transport state (docs/design/voice-identity-wakeword-
+    # verification.md §4). `opus_decoders` is created at register time only
+    # when the satellite requested opus AND the backend accepted it, so a
+    # legacy JSON/PCM satellite never allocates any of this.
+    opus_decoders = None
+
     # Conversation history tracking for satellite (in-memory per connection)
     satellite_conversation_history: list[dict] = []
     satellite_history_loaded = False
@@ -165,13 +172,60 @@ async def satellite_websocket(
 
     try:
         while True:
-            data = await websocket.receive_json()
+            raw = await websocket.receive()
+            if raw.get("type") == "websocket.disconnect":
+                raise WebSocketDisconnect(raw.get("code") or 1000)
 
-            # Rate limiting
+            # Rate limiting (applies to text AND binary frames)
             rate_key = satellite_id if satellite_id else ip_address
             allowed, rate_reason = rate_limiter.check(rate_key)
             if not allowed:
                 await send_ws_error(websocket, WSErrorCode.RATE_LIMITED, rate_reason)
+                continue
+
+            # C1: binary audio frame (Opus, decoded at the backend edge so
+            # everything downstream keeps its PCM contract)
+            raw_bytes = raw.get("bytes")
+            if raw_bytes is not None:
+                from ha_glue.services.opus_transport import BinaryFrameError, parse_audio_frame
+
+                if opus_decoders is None:
+                    await send_ws_error(
+                        websocket, WSErrorCode.PROTOCOL_ERROR,
+                        "binary audio frames were not negotiated (register with audio_codec=opus)",
+                    )
+                    continue
+                if len(raw_bytes) > settings.ws_max_message_size:
+                    await send_ws_error(
+                        websocket, WSErrorCode.MESSAGE_TOO_LARGE,
+                        f"Binary frame too large (max: {settings.ws_max_message_size} bytes)",
+                    )
+                    continue
+                try:
+                    bin_session_id, bin_sequence, opus_packets = parse_audio_frame(raw_bytes)
+                    pcm_bytes = opus_decoders.decode(bin_session_id, opus_packets)
+                except BinaryFrameError as e:
+                    await send_ws_error(websocket, WSErrorCode.PROTOCOL_ERROR, str(e))
+                    continue
+                except Exception as e:
+                    logger.warning(f"⚠️ Opus decode failed for {satellite_id}: {e}")
+                    await send_ws_error(websocket, WSErrorCode.PROTOCOL_ERROR, "opus decode failed")
+                    continue
+
+                success, error = satellite_manager.buffer_audio_bytes(
+                    bin_session_id, pcm_bytes, bin_sequence
+                )
+                if not success:
+                    if "buffer full" in error.lower():
+                        await satellite_manager.end_session(bin_session_id, reason="buffer_full")
+                        opus_decoders.drop(bin_session_id)
+                    await send_ws_error(websocket, WSErrorCode.BUFFER_FULL, error)
+                continue
+
+            try:
+                data = json.loads(raw.get("text") or "")
+            except (json.JSONDecodeError, TypeError):
+                await send_ws_error(websocket, WSErrorCode.INVALID_MESSAGE, "invalid JSON frame")
                 continue
 
             msg_type = data.get("type", "")
@@ -221,6 +275,28 @@ async def satellite_websocket(
                             code=WSAuthError.UNAUTHORIZED, reason=reject_reason
                         )
                         return
+
+                # C1 codec negotiation: the satellite advertises audio_codec
+                # in its capabilities; the backend accepts opus only when the
+                # fleet flag is on AND libopus is importable, else answers
+                # pcm and the satellite keeps the legacy JSON path. A legacy
+                # satellite (no audio_codec key) is untouched.
+                negotiated_codec = "pcm"
+                requested_codec = str(capabilities.get("audio_codec") or "pcm").lower()
+                if requested_codec == "opus":
+                    from ha_glue.services.opus_transport import OPUS_AVAILABLE, SessionOpusDecoders
+
+                    if settings.satellite_opus_enabled and OPUS_AVAILABLE:
+                        negotiated_codec = "opus"
+                        opus_decoders = SessionOpusDecoders()
+                    else:
+                        reason = (
+                            "satellite_opus_enabled is off" if not settings.satellite_opus_enabled
+                            else "opuslib/libopus not available in the backend image"
+                        )
+                        logger.info(
+                            f"🎛️ Satellite '{satellite_id}' requested opus → downgraded to pcm ({reason})"
+                        )
 
                 # Update connection limiter with actual satellite_id
                 connection_limiter.add_connection(ip_address, satellite_id)
@@ -286,7 +362,7 @@ async def satellite_websocket(
                 # satellite reconnecting mid-night comes up already dimmed.
                 from ha_glue.services.led_dimming_service import get_led_dimming_service
 
-                await websocket.send_json({
+                register_ack = {
                     "type": "register_ack",
                     "success": success,
                     "config": wakeword_config.to_satellite_config(),
@@ -294,7 +370,12 @@ async def satellite_websocket(
                     "protocol_version": settings.ws_protocol_version,
                     "model_download_url": "/api/settings/wakeword/models",
                     "led_brightness": get_led_dimming_service().get_current_led_brightness(),
-                })
+                }
+                # Only satellites that advertised a codec get the negotiation
+                # answer — a legacy register keeps a byte-identical ack.
+                if "audio_codec" in capabilities:
+                    register_ack["audio_codec"] = negotiated_codec
+                await websocket.send_json(register_ack)
                 logger.info(f"📡 Satellite {satellite_id} registered from {room}")
 
                 # Push known BLE + Classic BT MACs to satellite for presence scanning
@@ -396,6 +477,11 @@ async def satellite_websocket(
                 if image_b64:
                     logger.info(f"📸 Image received with audio_end ({len(image_b64)} chars base64)")
                 logger.info(f"🔚 Audio ended for session {session_id} (reason: {reason})")
+
+                # Opus decoders are stateful and per-session — drop on end so
+                # state can never bleed into a later session with the same id.
+                if opus_decoders is not None:
+                    opus_decoders.drop(session_id)
 
                 # Update state to processing
                 await satellite_manager.set_session_state(session_id, SatelliteState.PROCESSING)

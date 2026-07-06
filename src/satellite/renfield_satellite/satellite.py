@@ -227,6 +227,7 @@ class Satellite:
             register_timeout=self.config.server.register_timeout,
             enrollment_token=self.config.server.enrollment_token,
             language=self.config.satellite.language,
+            audio_codec=self.config.audio.codec,
             # Real hardware capabilities so the fleet page reflects THIS
             # device, not a hardcoded "3 LEDs" for every satellite.
             # hat_type is an Ansible host_var, not in the runtime config;

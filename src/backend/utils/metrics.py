@@ -41,6 +41,7 @@ _budget_reductions_total = None
 _output_guard_violations_total = None
 _auth_provider_unreachable_total = None
 _kg_conflation_candidates = None
+_speaker_inprocess_embedding_blocked_total = None
 
 
 def _init_metrics():
@@ -56,6 +57,7 @@ def _init_metrics():
     global _budget_reductions_total, _output_guard_violations_total
     global _auth_provider_unreachable_total
     global _kg_conflation_candidates
+    global _speaker_inprocess_embedding_blocked_total
 
     if _metrics_initialized:
         return
@@ -172,6 +174,17 @@ def _init_metrics():
             "errored or timed out (fail-open). A non-zero rate means a "
             "provider is silently down.",
             ["provider_id"],
+        )
+
+        _speaker_inprocess_embedding_blocked_total = Counter(
+            "renfield_speaker_inprocess_embedding_blocked_total",
+            "In-process (SpeechBrain) speaker-embedding use refused because "
+            "speaker_inprocess_embeddings_enabled is off. SpeechBrain and the "
+            "voice-server ONNX model do NOT share a representation space; a "
+            "non-zero rate means a caller would have written/compared "
+            "cross-space embeddings (P0 of "
+            "docs/design/voice-identity-wakeword-verification.md).",
+            ["path"],
         )
 
         _metrics_initialized = True
@@ -299,6 +312,18 @@ def record_auth_provider_unreachable(provider_id: str):
     if not _metrics_initialized:
         return
     _auth_provider_unreachable_total.labels(provider_id=provider_id).inc()
+
+
+def record_speaker_inprocess_embedding_blocked(path: str):
+    """Record a refused in-process (SpeechBrain) speaker-embedding use.
+
+    `path` names the blocked seam ("whisper", "route_enroll",
+    "route_identify", "route_verify") so a dashboard shows WHERE the
+    cross-space attempt came from.
+    """
+    if not _metrics_initialized:
+        return
+    _speaker_inprocess_embedding_blocked_total.labels(path=path).inc()
 
 
 def record_output_guard_violation(violation: str):

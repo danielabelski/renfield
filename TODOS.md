@@ -150,7 +150,7 @@ If ui_sweep noise shows up in real use, mark original sweep row `superseded=true
 ### Satellite — audio pipeline improvements
 - **Primary source:** `src/satellite/TECHNICAL_DEBT.md` §Future TODOs
 - **High priority:** audio preprocessing (noise reduction) on backend for resource-constrained satellites — alternative: XVF3800 hardware AEC (see `docs/XVF3800_SATELLITE.md`)
-- **Medium priority:** Opus audio compression (~50% bandwidth) · echo cancellation (software WebRTC APM or XVF3800)
+- **Medium priority:** ~~Opus audio compression (~50% bandwidth)~~ ✅ BUILT as C1 of `docs/design/voice-identity-wakeword-verification.md` (binary WS frames + backend-edge decode; dark: `SATELLITE_OPUS_ENABLED` + satellite `audio.codec: opus`) · echo cancellation (software WebRTC APM or XVF3800)
 - **Low priority:** 4-mic beamforming extension · custom wake-word training
 
 ### Presence / Media-Follow — room-switch latency (~1-2 min on a genuine move)

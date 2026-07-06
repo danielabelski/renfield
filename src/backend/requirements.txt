@@ -50,6 +50,9 @@ soundfile>=0.12.0       # Audio file I/O
 speechbrain>=1.0.0      # Speaker embedding extraction
 torchaudio>=2.0.0       # Audio processing for SpeechBrain
 
+# Satellite binary audio transport (C1, voice-identity design)
+opuslib>=3.0.1          # Opus decode at the WS edge (needs libopus0 in the image)
+
 # Wake Word Detection (Optional - Server-Side Fallback)
 # Uncomment to enable server-side wake word detection
 # openwakeword>=0.5.0
