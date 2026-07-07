@@ -114,7 +114,10 @@ RUN pip install \
 RUN rm -rf /opt/venv/lib/python3.12/site-packages/onnxruntime \
            /opt/venv/lib/python3.12/site-packages/onnxruntime-*.dist-info \
            /opt/venv/lib/python3.12/site-packages/onnxruntime_gpu-*.dist-info \
- && pip install --no-cache-dir "onnxruntime-gpu>=1.20"
+ && pip install --no-cache-dir "onnxruntime-gpu>=1.20,<1.27"
+# ^ Cap <1.27: 1.27.0 moved the PyPI wheel to CUDA 13 (libcudart.so.13); the
+#   base is nvidia/cuda:12.6.3 (libcudart.so.12). Keep both this reinstall and
+#   requirements.txt on the CUDA-12 line (1.26.x) or warmup CrashLoops.
 
 COPY voice_server /app/voice_server
 COPY scripts /app/scripts
