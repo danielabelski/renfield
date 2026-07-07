@@ -119,6 +119,8 @@ class Satellite:
             beamforming=self.config.audio.beamforming.enabled,
             mic_spacing=self.config.audio.beamforming.mic_spacing,
             steering_angle=self.config.audio.beamforming.steering_angle,
+            combine=self.config.audio.combine,
+            select_channel=self.config.audio.select_channel,
         )
 
         # Audio playback (sync + async wrapper for non-blocking TTS)

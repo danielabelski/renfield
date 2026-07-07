@@ -44,6 +44,18 @@ audio:
   physical_mics: {{ audio_physical_mics | default(audio_channels) }}
   device: "{{ audio_device }}"
   playback_device: "{{ audio_playback_device }}"
+  # Stereo→mono combine (docs/design/satellite-audio-combine-pipeline.md).
+  # Emitted only when set in host_vars; unset = the satellite auto-derives the
+  # legacy behavior (beamforming→beamform, channels>1→select ch0/ch1, else
+  # passthrough) so un-reprovisioned sats stay byte-identical. The XVF3800 sets
+  # combine=select + select_channel=0 to keep its processed beam (ch0) instead
+  # of letting ALSA downmix beam+AEC-residual to silence.
+{% if audio_combine is defined %}
+  combine: "{{ audio_combine }}"
+{% endif %}
+{% if audio_select_channel is defined %}
+  select_channel: {{ audio_select_channel }}
+{% endif %}
   beamforming:
     enabled: {{ beamforming_enabled | lower }}
 {% if beamforming_enabled %}
