@@ -67,65 +67,9 @@ class TestBinaryFrameFormat:
             opus_transport.build_audio_frame("s", 1, [b""])
 
 
-# =============================================================================
-# C1 opus decode (skipped when opuslib/libopus is absent in the test image)
-# =============================================================================
-
-@pytest.mark.skipif(not opus_transport.OPUS_AVAILABLE, reason="opuslib not installed")
-class TestSessionOpusDecoders:
-    @pytest.mark.unit
-    def test_decode_roundtrip_silence(self):
-        import opuslib
-
-        enc = opuslib.Encoder(
-            opus_transport.SAMPLE_RATE, opus_transport.CHANNELS, opuslib.APPLICATION_VOIP
-        )
-        forty_ms = opus_transport.SAMPLE_RATE * 40 // 1000
-        packet = enc.encode(b"\x00\x00" * forty_ms, forty_ms)
-
-        decoders = opus_transport.SessionOpusDecoders()
-        pcm = decoders.decode("sess-1", [packet, packet])
-        # two 40 ms windows of 16-bit mono
-        assert len(pcm) == 2 * forty_ms * 2
-
-    @pytest.mark.unit
-    def test_drop_is_idempotent(self):
-        decoders = opus_transport.SessionOpusDecoders()
-        decoders.drop("never-seen")  # must not raise
-
-    @pytest.mark.unit
-    def test_has_tracks_allocation_and_drop(self):
-        import opuslib
-
-        enc = opuslib.Encoder(
-            opus_transport.SAMPLE_RATE, opus_transport.CHANNELS, opuslib.APPLICATION_VOIP
-        )
-        forty_ms = opus_transport.SAMPLE_RATE * 40 // 1000
-        packet = enc.encode(b"\x00\x00" * forty_ms, forty_ms)
-
-        decoders = opus_transport.SessionOpusDecoders()
-        assert not decoders.has("sess-1")
-        decoders.decode("sess-1", [packet])
-        assert decoders.has("sess-1")
-        decoders.drop("sess-1")
-        assert not decoders.has("sess-1")
-
-    @pytest.mark.unit
-    def test_decode_amplification_capped(self):
-        """A frame whose packets decode past the per-frame cap raises
-        BinaryFrameError instead of allocating unbounded PCM (DoS guard)."""
-        import opuslib
-
-        enc = opuslib.Encoder(
-            opus_transport.SAMPLE_RATE, opus_transport.CHANNELS, opuslib.APPLICATION_VOIP
-        )
-        forty_ms = opus_transport.SAMPLE_RATE * 40 // 1000
-        packet = enc.encode(b"\x00\x00" * forty_ms, forty_ms)
-        # Each packet decodes to 40 ms; the cap is 1 s → ~25 packets. 200 is
-        # comfortably over, so decode must abort partway with the cap error.
-        decoders = opus_transport.SessionOpusDecoders()
-        with pytest.raises(opus_transport.BinaryFrameError):
-            decoders.decode("sess-dos", [packet] * 200)
+# Opus DECODE moved off the backend to the voice-server (design D6, C2 Phase 1).
+# The decode tests now live in voice-server/tests (test_opus_decode.py). The
+# backend only PARSES frames + buffers/forwards packets — covered below.
 
 
 # =============================================================================
@@ -189,8 +133,43 @@ class TestBufferAudioRegression:
     @pytest.mark.unit
     async def test_has_session(self, manager):
         """The C1 binary path validates the session via has_session BEFORE
-        allocating an Opus decoder (leak guard)."""
+        buffering Opus packets (leak guard)."""
         assert not manager.has_session("ghost")
+
+    @pytest.mark.unit
+    async def test_opus_packets_buffer_and_blob_roundtrip(self, manager):
+        """C2 Phase 1: the backend buffers raw Opus packets (no decode) and
+        serializes them to the `[uint16 len][packet]` blob it forwards to the
+        voice-server. Blob framing must round-trip the exact packets."""
+        import struct
+
+        sid = await self._session(manager)
+        pkts_a = [b"\x01\x02\x03", b"\xff" * 40]
+        pkts_b = [b"\xaa\xbb"]
+        ok, err = manager.buffer_opus_packets(sid, pkts_a, 1)
+        assert ok, err
+        ok, err = manager.buffer_opus_packets(sid, pkts_b, 2)
+        assert ok, err
+
+        blob = manager.get_opus_blob(sid)
+        # Reparse the blob framing and confirm packet order/content preserved.
+        parsed, offset = [], 0
+        while offset < len(blob):
+            (plen,) = struct.unpack_from(">H", blob, offset)
+            offset += 2
+            parsed.append(blob[offset : offset + plen])
+            offset += plen
+        assert parsed == pkts_a + pkts_b
+
+    @pytest.mark.unit
+    async def test_opus_buffer_rejects_unknown_session_and_overflow(self, manager):
+        ok, err = manager.buffer_opus_packets("nope", [b"\x00\x00"], 1)
+        assert not ok and "Unknown session" in err
+
+        sid = await self._session(manager)
+        big = b"\x00" * (settings.ws_max_audio_buffer_size + 1)
+        ok, err = manager.buffer_opus_packets(sid, [big], 1)
+        assert not ok and "buffer full" in err.lower()
         sid = await self._session(manager)
         assert manager.has_session(sid)
 
@@ -263,3 +242,41 @@ class TestInprocessEmbeddingGuard:
 
         assert result["text"] == "hallo welt"
         extract_mock.assert_awaited_once()
+
+
+# =============================================================================
+# C2 Phase 1: is_opus routes STT to the voice-server /stt-opus endpoint
+# =============================================================================
+
+class TestOpusSttRouting:
+    """The backend forwards the raw Opus blob to /stt-opus (decode on the
+    voice-server, design D6) and container/WAV bytes to /stt — selected by
+    the is_opus flag, never decoded in-process."""
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("is_opus", [True, False])
+    async def test_routes_by_is_opus(self, monkeypatch, is_opus):
+        import services.voice_server_client as vsc
+        import services.whisper_service as ws
+
+        monkeypatch.setattr(settings, "voice_server_url", "http://voice-server:8000")
+        monkeypatch.setattr(ws, "_get_service_token", lambda: "svc-token")
+        stt_opus_mock = AsyncMock(return_value={"text": "opus hallo", "speaker_embedding": None})
+        stt_mock = AsyncMock(return_value={"text": "wav hallo", "speaker_embedding": None})
+        monkeypatch.setattr(vsc, "stt_opus", stt_opus_mock)
+        monkeypatch.setattr(vsc, "stt", stt_mock)
+
+        service = ws.WhisperService.__new__(ws.WhisperService)
+        result = await service.transcribe_bytes_with_speaker(
+            b"\x01\x02\x03blob", filename="satellite_audio.opus", db_session=None,
+            language="de", is_opus=is_opus,
+        )
+
+        if is_opus:
+            stt_opus_mock.assert_awaited_once()
+            stt_mock.assert_not_awaited()
+            assert result["text"] == "opus hallo"
+        else:
+            stt_mock.assert_awaited_once()
+            stt_opus_mock.assert_not_awaited()
+            assert result["text"] == "wav hallo"

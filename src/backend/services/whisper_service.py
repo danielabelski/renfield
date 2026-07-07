@@ -254,7 +254,7 @@ class WhisperService:
             logger.warning(f"⚠️ Preprocessing failed, using original audio: {e}")
             return None
 
-    async def transcribe_bytes(self, audio_bytes: bytes, filename: str = "audio.wav", language: str = None, initial_prompt: str | None = None) -> str:
+    async def transcribe_bytes(self, audio_bytes: bytes, filename: str = "audio.wav", language: str = None, initial_prompt: str | None = None, is_opus: bool = False) -> str:
         """
         Audio aus Bytes transkribieren.
 
@@ -273,8 +273,12 @@ class WhisperService:
         """
         if settings.voice_server_url:
             return await self._transcribe_bytes_via_voice_server(
-                audio_bytes, filename=filename, language=language
+                audio_bytes, filename=filename, language=language, is_opus=is_opus
             )
+
+        if is_opus:
+            logger.error("opus STT requested but no voice_server_url configured")
+            return ""
 
         # Temporäre Datei erstellen
         with tempfile.NamedTemporaryFile(suffix=Path(filename).suffix, delete=False) as tmp:
@@ -293,9 +297,13 @@ class WhisperService:
         *,
         filename: str = "audio.wav",
         language: str = None,
+        is_opus: bool = False,
     ) -> str:
-        """Delegate STT to the voice-server pod (B.4.c thin-client path)."""
+        """Delegate STT to the voice-server pod (B.4.c thin-client path).
+
+        is_opus → /stt-opus (opuslib decode on the voice-server, design D6)."""
         from services.voice_server_client import VoiceServerError, stt as vs_stt
+        from services.voice_server_client import stt_opus as vs_stt_opus
 
         # Caller passes the bearer token implicitly via FastAPI Depends
         # in the route layer; this method is reachable from non-route
@@ -303,13 +311,16 @@ class WhisperService:
         # mint a service-account token from the platform secret_key.
         token = _get_service_token()
         try:
-            result = await vs_stt(
-                audio_bytes,
-                filename=filename,
-                content_type=_content_type_for_filename(filename),
-                language=language,
-                auth_token=token,
-            )
+            if is_opus:
+                result = await vs_stt_opus(audio_bytes, language=language, auth_token=token)
+            else:
+                result = await vs_stt(
+                    audio_bytes,
+                    filename=filename,
+                    content_type=_content_type_for_filename(filename),
+                    language=language,
+                    auth_token=token,
+                )
         except VoiceServerError as e:
             logger.error(f"voice-server STT failed: {e}")
             return ""
@@ -609,25 +620,24 @@ class WhisperService:
         db_session=None,
         language: str = None,
         initial_prompt: str | None = None,
+        is_opus: bool = False,
     ) -> dict:
         """
         Transcribe audio bytes and identify speaker.
 
         Args:
-            audio_bytes: Raw audio bytes
+            audio_bytes: Raw audio bytes (a WAV/container, OR — when is_opus —
+                the satellite's raw Opus packet blob).
             filename: Original filename
             db_session: Optional async database session
             language: Optional language code (e.g., 'de', 'en'). Falls back to default_language.
             initial_prompt: Per-request bias string.
+            is_opus: The bytes are raw Opus packets → route to the voice-server's
+                /stt-opus (opuslib decode there, design D6). Requires a
+                voice-server; there is no in-process opus decode path.
 
         Returns:
             Same as transcribe_with_speaker
-
-        B.4.c.2: when settings.voice_server_url is configured, this method
-        delegates STT to the voice-server pod and resolves the speaker
-        via services.speaker_resolver. Same return shape as the legacy
-        in-process path so existing callers (`/api/voice/stt`) don't
-        change.
         """
         if settings.voice_server_url:
             return await self._transcribe_bytes_with_speaker_via_voice_server(
@@ -635,7 +645,15 @@ class WhisperService:
                 filename=filename,
                 db_session=db_session,
                 language=language,
+                is_opus=is_opus,
             )
+
+        if is_opus:
+            # No in-process opus decode; opus is only negotiated when a
+            # voice-server exists, so this is unreachable in practice.
+            logger.error("opus STT requested but no voice_server_url configured")
+            return {"text": "", "speaker_id": None, "speaker_name": None,
+                    "speaker_alias": None, "speaker_confidence": 0.0, "is_new_speaker": False}
 
         with tempfile.NamedTemporaryFile(suffix=Path(filename).suffix, delete=False) as tmp:
             tmp.write(audio_bytes)
@@ -653,21 +671,30 @@ class WhisperService:
         filename: str = "audio.wav",
         db_session=None,
         language: str = None,
+        is_opus: bool = False,
     ) -> dict:
-        """Delegate STT + resolve speaker via wire embedding (B.4.c)."""
+        """Delegate STT + resolve speaker via wire embedding (B.4.c).
+
+        is_opus → send the raw Opus packet blob to /stt-opus (decode on the
+        voice-server, design D6); else send the container/WAV to /stt.
+        """
         from services.database import AsyncSessionLocal
         from services.speaker_resolver import resolve_speaker_from_embedding
         from services.voice_server_client import VoiceServerError, stt as vs_stt
+        from services.voice_server_client import stt_opus as vs_stt_opus
 
         token = _get_service_token()
         try:
-            result = await vs_stt(
-                audio_bytes,
-                filename=filename,
-                content_type=_content_type_for_filename(filename),
-                language=language,
-                auth_token=token,
-            )
+            if is_opus:
+                result = await vs_stt_opus(audio_bytes, language=language, auth_token=token)
+            else:
+                result = await vs_stt(
+                    audio_bytes,
+                    filename=filename,
+                    content_type=_content_type_for_filename(filename),
+                    language=language,
+                    auth_token=token,
+                )
         except VoiceServerError as e:
             logger.error(f"voice-server STT failed: {e}")
             return {

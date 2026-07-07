@@ -18,9 +18,7 @@ from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from loguru import logger
 
 from ha_glue.services.opus_transport import (
-    OPUS_AVAILABLE,
     BinaryFrameError,
-    SessionOpusDecoders,
     parse_audio_frame,
 )
 from models.websocket_messages import WSErrorCode
@@ -165,11 +163,11 @@ async def satellite_websocket(
 
     satellite_id = None
 
-    # C1 binary/Opus transport state (docs/design/voice-identity-wakeword-
-    # verification.md §4). `opus_decoders` is created at register time only
-    # when the satellite requested opus AND the backend accepted it, so a
-    # legacy JSON/PCM satellite never allocates any of this.
-    opus_decoders = None
+    # C1/C2 binary Opus transport. Set True at register when the satellite
+    # requested opus AND the backend accepted it; then binary frames buffer
+    # raw packets (backend does NOT decode — forwarded to the voice-server at
+    # audio_end, design D6). A legacy JSON/PCM satellite leaves this False.
+    opus_mode = False
 
     # Conversation history tracking for satellite (in-memory per connection)
     satellite_conversation_history: list[dict] = []
@@ -189,11 +187,12 @@ async def satellite_websocket(
                 await send_ws_error(websocket, WSErrorCode.RATE_LIMITED, rate_reason)
                 continue
 
-            # C1: binary audio frame (Opus, decoded at the backend edge so
-            # everything downstream keeps its PCM contract)
+            # C1/C2: binary audio frame (Opus). The backend does NOT decode —
+            # it buffers the raw packets and forwards them to the voice-server
+            # at audio_end, where decode belongs (media layer, design D6).
             raw_bytes = raw.get("bytes")
             if raw_bytes is not None:
-                if opus_decoders is None:
+                if not opus_mode:
                     await send_ws_error(
                         websocket, WSErrorCode.PROTOCOL_ERROR,
                         "binary audio frames were not negotiated (register with audio_codec=opus)",
@@ -211,33 +210,17 @@ async def satellite_websocket(
                     await send_ws_error(websocket, WSErrorCode.PROTOCOL_ERROR, str(e))
                     continue
 
-                # Validate the session BEFORE allocating/advancing a stateful
-                # decoder — otherwise a straggler/stale/rotating session id
-                # would leak a decoder per frame (never drop()ed).
                 if not satellite_manager.has_session(bin_session_id):
-                    opus_decoders.drop(bin_session_id)  # reap any stale decoder
                     await send_ws_error(
                         websocket, WSErrorCode.SESSION_ERROR,
                         f"unknown session {bin_session_id}",
                     )
                     continue
 
-                try:
-                    pcm_bytes = opus_decoders.decode(bin_session_id, opus_packets)
-                except Exception as e:
-                    # Poisoned/oversized frame or a mid-frame decode error: the
-                    # decoder is now desynced from the buffered audio, so drop
-                    # it — the next frame re-creates a clean one.
-                    opus_decoders.drop(bin_session_id)
-                    logger.warning(f"⚠️ Opus decode failed for {satellite_id}: {e}")
-                    await send_ws_error(websocket, WSErrorCode.PROTOCOL_ERROR, "opus decode failed")
-                    continue
-
-                success, error = satellite_manager.buffer_audio_bytes(
-                    bin_session_id, pcm_bytes, bin_sequence
+                success, error = satellite_manager.buffer_opus_packets(
+                    bin_session_id, opus_packets, bin_sequence
                 )
                 if not success:
-                    opus_decoders.drop(bin_session_id)
                     if "buffer full" in error.lower():
                         await satellite_manager.end_session(bin_session_id, reason="buffer_full")
                         await send_ws_error(websocket, WSErrorCode.BUFFER_FULL, error)
@@ -316,13 +299,17 @@ async def satellite_websocket(
                 negotiated_codec = "pcm"
                 requested_codec = str(capabilities.get("audio_codec") or "pcm").lower()
                 if requested_codec == "opus":
-                    if settings.satellite_opus_enabled and OPUS_AVAILABLE:
+                    # Decode happens on the voice-server (design D6), so opus
+                    # requires a voice-server to be configured — not backend
+                    # opuslib. Without one, the in-process whisper path can't
+                    # decode opus, so downgrade to pcm.
+                    if settings.satellite_opus_enabled and settings.voice_server_url:
                         negotiated_codec = "opus"
-                        opus_decoders = SessionOpusDecoders()
+                        opus_mode = True
                     else:
                         reason = (
                             "satellite_opus_enabled is off" if not settings.satellite_opus_enabled
-                            else "opuslib/libopus not available in the backend image"
+                            else "no voice_server_url configured (opus decodes on the voice-server)"
                         )
                         logger.info(
                             f"🎛️ Satellite '{satellite_id}' requested opus → downgraded to pcm ({reason})"
@@ -508,23 +495,23 @@ async def satellite_websocket(
                     logger.info(f"📸 Image received with audio_end ({len(image_b64)} chars base64)")
                 logger.info(f"🔚 Audio ended for session {session_id} (reason: {reason})")
 
-                # Opus decoders are stateful and per-session — drop on end so
-                # state can never bleed into a later session with the same id.
-                if opus_decoders is not None:
-                    opus_decoders.drop(session_id)
-
                 # Update state to processing
                 await satellite_manager.set_session_state(session_id, SatelliteState.PROCESSING)
 
-                # Get audio buffer
-                audio_bytes = satellite_manager.get_audio_buffer(session_id)
+                # Pull the buffered audio. Backend no longer decodes opus (moved
+                # to the voice-server, design D6): an opus session buffered raw
+                # packets → forward the packet blob; else it's legacy PCM.
+                opus_blob = satellite_manager.get_opus_blob(session_id) if opus_mode else None
+                audio_bytes = None if opus_blob is not None else satellite_manager.get_audio_buffer(session_id)
 
-                if not audio_bytes:
+                if opus_blob is None and not audio_bytes:
                     logger.warning(f"⚠️ No audio buffered for session {session_id}")
                     await satellite_manager.end_session(session_id, reason="no_audio")
                     continue
 
-                logger.info(f"🎵 Processing {len(audio_bytes)} bytes of audio")
+                _size = len(opus_blob) if opus_blob is not None else len(audio_bytes)
+                _kind = "opus (decode on voice-server)" if opus_blob is not None else "pcm"
+                logger.info(f"🎵 Processing {_size} bytes of {_kind}")
 
                 # Get satellite's configured language + room context
                 satellite_info = satellite_manager.get_satellite_by_session(session_id)
@@ -537,18 +524,27 @@ async def satellite_websocket(
                     whisper = get_whisper_service()
                     await asyncio.to_thread(whisper.load_model)  # No-op if already loaded
 
-                    # Create WAV file with proper header
-                    import io
-                    import wave
-                    wav_buffer = io.BytesIO()
-                    with wave.open(wav_buffer, 'wb') as wav_file:
-                        wav_file.setnchannels(1)
-                        wav_file.setsampwidth(2)  # 16-bit
-                        wav_file.setframerate(16000)
-                        wav_file.writeframes(audio_bytes)
-
-                    wav_bytes = wav_buffer.getvalue()
-                    logger.info(f"📦 Created WAV: {len(wav_bytes)} bytes")
+                    # Prepare the STT payload. Opus → forward the raw packet blob
+                    # to the voice-server's /stt-opus (decode there). PCM → wrap
+                    # in a WAV for the /stt (ffmpeg) path. Both yield the same
+                    # {text, speaker_embedding} downstream.
+                    if opus_blob is not None:
+                        stt_audio = opus_blob
+                        stt_filename = "satellite_audio.opus"
+                        stt_is_opus = True
+                    else:
+                        import io
+                        import wave
+                        wav_buffer = io.BytesIO()
+                        with wave.open(wav_buffer, 'wb') as wav_file:
+                            wav_file.setnchannels(1)
+                            wav_file.setsampwidth(2)  # 16-bit
+                            wav_file.setframerate(16000)
+                            wav_file.writeframes(audio_bytes)
+                        stt_audio = wav_buffer.getvalue()
+                        stt_filename = "satellite_audio.wav"
+                        stt_is_opus = False
+                        logger.info(f"📦 Created WAV: {len(stt_audio)} bytes")
 
                     # Transcribe with speaker recognition (if enabled)
                     speaker_name = None
@@ -578,11 +574,12 @@ async def satellite_websocket(
                                 db_session=db_session,
                             )
                             result = await whisper.transcribe_bytes_with_speaker(
-                                wav_bytes,
-                                filename="satellite_audio.wav",
+                                stt_audio,
+                                filename=stt_filename,
                                 db_session=db_session,
                                 language=satellite_language,
                                 initial_prompt=initial_prompt,
+                                is_opus=stt_is_opus,
                             )
                             text = result.get("text", "")
                             speaker_name = result.get("speaker_name")
@@ -602,10 +599,11 @@ async def satellite_websocket(
                                 db_session=db_session,
                             )
                         text = await whisper.transcribe_bytes(
-                            wav_bytes,
-                            "satellite_audio.wav",
+                            stt_audio,
+                            stt_filename,
                             language=satellite_language,
                             initial_prompt=initial_prompt,
+                            is_opus=stt_is_opus,
                         )
 
                     if not text or not text.strip():

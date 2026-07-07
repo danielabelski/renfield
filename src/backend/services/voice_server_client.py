@@ -74,6 +74,40 @@ async def stt(
     return resp.json()
 
 
+async def stt_opus(
+    opus_blob: bytes,
+    *,
+    language: str | None = None,
+    auth_token: str,
+    timeout_s: float = DEFAULT_TIMEOUT_S,
+) -> dict[str, Any]:
+    """POST a satellite's raw Opus packet blob to /api/voice/stt-opus.
+
+    The blob is the C1 `[uint16 len][packet]…` framing; the voice-server decodes
+    it with opuslib (decode lives on the media layer, design D6). Same return
+    shape as stt(): {text, language, speaker_embedding?, audio_duration_s}.
+    """
+    url = f"{_base_url()}/api/voice/stt-opus"
+    headers = {"Authorization": f"Bearer {auth_token}"}
+    files = {"audio": ("satellite_audio.opus", opus_blob, "application/octet-stream")}
+    data: dict[str, Any] = {}
+    if language:
+        data["language"] = language
+
+    async with httpx.AsyncClient(timeout=timeout_s) as client:
+        try:
+            resp = await client.post(url, headers=headers, files=files, data=data)
+        except httpx.HTTPError as e:
+            raise VoiceServerError(f"voice-server STT-opus unreachable: {e}") from e
+
+    if resp.status_code != 200:
+        raise VoiceServerError(
+            f"voice-server STT-opus returned {resp.status_code}: {resp.text[:300]}"
+        )
+
+    return resp.json()
+
+
 async def tts(
     text: str,
     *,
