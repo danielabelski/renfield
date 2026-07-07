@@ -81,7 +81,7 @@ These matter for Renfield but are out-of-scope for Reva by design:
 3. **Backend-side preprocessing for resource-constrained satellites.** Already on `src/satellite/TECHNICAL_DEBT.md` ("Medium priority: Audio Preprocessing auf Backend verschieben"). Pi Zero 2 W can offload noise reduction. Scoped for Phase B (Section 4) — touches the satellite firmware contract, so it shouldn't be smuggled into Phase A's backend-only blast radius.
 4. **Wake-word path.** Reva explicitly excludes this; Renfield's satellite already runs OpenWakeWord. Reason the Reva framing of "push-to-talk minimum" doesn't fit Renfield.
 5. **Household privacy framing.** Reva's GDPR section talks about individual-performance attribution. Renfield's equivalent: voice metadata of one family member not bleeding into another's `Speaker` profile during auto-enrollment. Already handled at the speaker-service level but worth re-verifying after the swap.
-6. **Opus compression for satellite uplink.** **DELIVERED** as C1 of `docs/design/voice-identity-wakeword-verification.md` (binary WS frames + backend-edge decode, dark: `SATELLITE_OPUS_ENABLED` + satellite `audio.codec: opus`). Was on the satellite tech-debt list ("~50% bandwidth"); separate from the STT/TTS upgrades below.
+6. **Opus compression for satellite uplink.** **DELIVERED** as C1 of `docs/design/voice-identity-wakeword-verification.md` (binary WS frames; decode on the voice-server via `/api/voice/stt-opus` since C2 Phase 1, dark: `SATELLITE_OPUS_ENABLED` + satellite `audio.codec: opus`). Was on the satellite tech-debt list ("~50% bandwidth"); separate from the STT/TTS upgrades below.
 
 ---
 
