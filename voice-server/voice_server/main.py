@@ -36,6 +36,19 @@ async def lifespan(app: FastAPI):
         settings.auth_mode,
     )
 
+    # Fail LOUD at boot if the image can't decode satellite opus — otherwise a
+    # skewed deploy (backend negotiates opus, this image lacks libopus) would
+    # only surface as a 503 on the first satellite utterance. /stt-opus still
+    # 503s per-request; this just makes the misconfiguration obvious at startup.
+    from voice_server.services.opus_decode import OPUSLIB_AVAILABLE
+
+    if not OPUSLIB_AVAILABLE:
+        logger.warning(
+            "opuslib/libopus NOT available — /api/voice/stt-opus will 503. "
+            "If any satellite negotiates opus (SATELLITE_OPUS_ENABLED), rebuild "
+            "this image with libopus0 + opuslib."
+        )
+
     # Lazy-load heavy services to keep cold-start visible in logs.
     from voice_server.services.speaker_service import SpeakerService
     from voice_server.services.stt_service import STTService

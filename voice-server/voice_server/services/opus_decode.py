@@ -15,22 +15,45 @@ decode, relocated here (the media layer) per design D6.
 
 from __future__ import annotations
 
+import logging
 import struct
 
 import numpy as np
+
+from voice_server.config import settings
+
+logger = logging.getLogger(__name__)
 
 SAMPLE_RATE = 16000
 CHANNELS = 1
 # An Opus packet decodes to at most 120 ms; ours are 40 ms.
 _MAX_FRAME_SAMPLES = SAMPLE_RATE * 120 // 1000
-# Decode-amplification guard: a body of tiny packets each declaring 120 ms could
-# decode to gigabytes. Bound the whole utterance to 60 s of 16-bit mono (~1.9 MB)
-# — far above any real turn (max_recording_seconds ~20 s), fixed allocation.
-_MAX_DECODED_BYTES = SAMPLE_RATE * 2 * 60
+
+# opuslib is a ctypes wrapper over libopus; both must be present in the image.
+# Compute availability once at import so the app can fail LOUD at startup on a
+# skewed deploy (opus negotiated by the backend, but this image lacks the codec)
+# instead of silently 500-ing the first satellite utterance.
+try:
+    import opuslib  # noqa: F401
+
+    OPUSLIB_AVAILABLE = True
+except Exception:  # pragma: no cover - exercised only on a broken image
+    OPUSLIB_AVAILABLE = False
 
 
 class OpusDecodeError(ValueError):
     """Malformed packet framing or a decode failure / cap breach."""
+
+
+class OpusUnavailableError(RuntimeError):
+    """opuslib/libopus is not installed in this image (skewed deploy)."""
+
+
+def _max_decoded_bytes() -> int:
+    """Decode-amplification ceiling in bytes of 16-bit mono PCM. Read from
+    settings each call (not a module constant) so it is env-tunable and a test
+    can shrink it. NOT a recording cap — see settings.opus_max_decoded_seconds."""
+    return SAMPLE_RATE * 2 * settings.opus_max_decoded_seconds
 
 
 def parse_opus_packets(blob: bytes) -> list[bytes]:
@@ -58,18 +81,35 @@ def decode_opus_packets_to_pcm(blob: bytes) -> np.ndarray:
     downstream STT + speaker embed are identical whether the source was a
     container (ffmpeg) or raw opus (here).
 
-    Raises OpusDecodeError on malformed framing, a decode failure, or if the
-    decoded audio exceeds the amplification cap.
+    A single corrupt packet does NOT discard the whole utterance: it is skipped
+    with a warning (opus's own packet-loss concealment territory) so one bad
+    frame can't wipe a long diary entry; only an utterance where EVERY packet
+    fails raises. Also raises OpusDecodeError on malformed framing or if the
+    decoded audio exceeds the amplification cap, and OpusUnavailableError if the
+    image lacks libopus (fail-loud on a skewed deploy, not a silent empty text).
     """
-    import opuslib  # local import: keeps module import-safe if libopus is absent
+    if not OPUSLIB_AVAILABLE:
+        raise OpusUnavailableError(
+            "opuslib/libopus not installed — cannot decode satellite opus"
+        )
 
     packets = parse_opus_packets(blob)
     dec = opuslib.Decoder(SAMPLE_RATE, CHANNELS)
+    cap = _max_decoded_bytes()
     pcm = bytearray()
+    decoded, skipped = 0, 0
     for packet in packets:
-        pcm += dec.decode(packet, _MAX_FRAME_SAMPLES)
-        if len(pcm) > _MAX_DECODED_BYTES:
-            raise OpusDecodeError(
-                f"decoded PCM exceeds cap ({len(pcm)} > {_MAX_DECODED_BYTES})"
-            )
+        try:
+            pcm += dec.decode(packet, _MAX_FRAME_SAMPLES)
+        except Exception as e:  # opuslib.OpusError on a corrupt packet
+            skipped += 1
+            logger.warning("skipping undecodable opus packet: %s", e)
+            continue
+        decoded += 1
+        if len(pcm) > cap:
+            raise OpusDecodeError(f"decoded PCM exceeds cap ({len(pcm)} > {cap})")
+    if decoded == 0:
+        raise OpusDecodeError(f"no opus packet decoded ({skipped} corrupt)")
+    if skipped:
+        logger.warning("opus decode salvaged %d packet(s), dropped %d", decoded, skipped)
     return np.frombuffer(bytes(pcm), dtype=np.int16).astype(np.float32) / 32768.0

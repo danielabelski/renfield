@@ -27,7 +27,11 @@ from pydantic import BaseModel
 
 from voice_server.auth import AuthError, authenticate
 from voice_server.services.audio_oneshot import OneshotDecodeError, decode_audio_to_pcm
-from voice_server.services.opus_decode import OpusDecodeError, decode_opus_packets_to_pcm
+from voice_server.services.opus_decode import (
+    OpusDecodeError,
+    OpusUnavailableError,
+    decode_opus_packets_to_pcm,
+)
 from voice_server.services.speaker_service import SpeakerService
 from voice_server.services.stt_service import STTService
 from voice_server.services.tts_service import TTSService
@@ -108,12 +112,14 @@ async def stt_opus_endpoint(
         raise HTTPException(status_code=400, detail="empty audio")
     try:
         pcm = decode_opus_packets_to_pcm(blob)
+    except OpusUnavailableError as e:
+        # Skewed deploy: the backend negotiated opus but this image lacks
+        # libopus. 503 (not 400/500) makes the operator error unambiguous.
+        logger.error("STT opus decode unavailable — image lacks libopus: %s", e)
+        raise HTTPException(status_code=503, detail="opus decode unavailable") from e
     except OpusDecodeError as e:
         logger.warning("STT opus decode failed: %s", e)
         raise HTTPException(status_code=400, detail=f"opus decode failed: {e}") from e
-    except Exception as e:  # opuslib/libopus missing or a decoder crash
-        logger.error("STT opus decode error: %s", e)
-        raise HTTPException(status_code=500, detail="opus decode unavailable") from e
 
     if pcm.size == 0:
         raise HTTPException(status_code=400, detail="empty PCM after opus decode")

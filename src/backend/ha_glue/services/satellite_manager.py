@@ -14,7 +14,6 @@ Features:
 
 import asyncio
 import base64
-import struct
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -24,6 +23,7 @@ from typing import Any
 from fastapi import WebSocket
 from loguru import logger
 
+from ha_glue.services.opus_transport import frame_packets
 from utils.config import settings
 
 
@@ -431,15 +431,11 @@ class SatelliteManager:
     def get_opus_blob(self, session_id: str) -> bytes | None:
         """Serialize a session's buffered Opus packets to the `[uint16 len][packet]`
         framing the voice-server /api/voice/stt-opus endpoint decodes. None if no
-        packets."""
+        packets. Framing owned by opus_transport (single source of wire format)."""
         session = self.sessions.get(session_id)
         if not session or not session.opus_packets:
             return None
-        out = bytearray()
-        for p in session.opus_packets:
-            out += struct.pack(">H", len(p))
-            out += p
-        return bytes(out)
+        return frame_packets(session.opus_packets)
 
     def has_session(self, session_id: str) -> bool:
         """Whether a session id is currently active (cheap membership test).

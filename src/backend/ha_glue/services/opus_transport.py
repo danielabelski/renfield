@@ -75,6 +75,20 @@ def parse_audio_frame(data: bytes) -> tuple[str, int, list[bytes]]:
     return session_id, sequence, packets
 
 
+def frame_packets(packets: list[bytes]) -> bytes:
+    """Serialize opus packets to the `[uint16 len][packet]…` body — the single
+    owner of that framing. Used both inside a binary WS frame (build_audio_frame)
+    and standalone as the blob the backend forwards to the voice-server
+    (satellite_manager.get_opus_blob), so the wire format lives in one place."""
+    out = bytearray()
+    for p in packets:
+        if not p or len(p) > 0xFFFF:
+            raise BinaryFrameError("opus packet length must be 1..65535 bytes")
+        out += struct.pack(">H", len(p))
+        out += p
+    return bytes(out)
+
+
 def build_audio_frame(session_id: str, sequence: int, packets: list[bytes]) -> bytes:
     """Build a FRAME_AUDIO_OPUS frame (shared with tests; the satellite has
     its own mirror implementation to stay dependency-free)."""
@@ -86,10 +100,6 @@ def build_audio_frame(session_id: str, sequence: int, packets: list[bytes]) -> b
     out.append(len(sid))
     out += sid
     out += struct.pack(">I", sequence & 0xFFFFFFFF)
-    for p in packets:
-        if not p or len(p) > 0xFFFF:
-            raise BinaryFrameError("opus packet length must be 1..65535 bytes")
-        out += struct.pack(">H", len(p))
-        out += p
+    out += frame_packets(packets)
     return bytes(out)
 
