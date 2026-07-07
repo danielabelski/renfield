@@ -44,6 +44,10 @@ audio:
   physical_mics: {{ audio_physical_mics | default(audio_channels) }}
   device: "{{ audio_device }}"
   playback_device: "{{ audio_playback_device }}"
+  # C1 audio uplink codec: "pcm" (legacy base64-in-JSON, default) or "opus"
+  # (binary WS frames; needs libopus0 + opuslib on the Pi AND the backend's
+  # SATELLITE_OPUS_ENABLED — negotiated at register, degrades to pcm otherwise).
+  codec: "{{ audio_codec | default('pcm') }}"
   beamforming:
     enabled: {{ beamforming_enabled | lower }}
 {% if beamforming_enabled %}

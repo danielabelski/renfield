@@ -525,6 +525,19 @@
         name: cryptography
         virtualenv: "{{ satellite_venv }}"
 
+    # opuslib is only used when audio.codec: opus (C1 binary transport). It
+    # imports fine without libopus0 at import time but no-ops the codec, so a
+    # missing lib degrades to pcm (graceful). Tagged `app` for the same reason
+    # as cryptography above: a code-only `--tags app` deploy must not silently
+    # drop it, or a satellite that later enables opus stays on pcm forever. Needs
+    # the libopus0 system package (in satellite_system_packages, `[system]` tag).
+    - name: Ensure opuslib in venv (C1 Opus transport — also on app deploys)
+      tags: [python, app]
+      become_user: "{{ ansible_user }}"
+      ansible.builtin.pip:
+        name: opuslib
+        virtualenv: "{{ satellite_venv }}"
+
     - name: Install openwakeword (--no-deps for Python 3.13+ compat)
       tags: [python]
       become_user: "{{ ansible_user }}"

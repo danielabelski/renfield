@@ -125,6 +125,7 @@ satellite_system_packages:
   - libasound2-dev
   - libasound2-plugins
   - libopenblas0
+  - libopus0            # runtime lib for opuslib (C1 binary Opus transport)
   - libmpv-dev
   - mpv
   - libsamplerate0

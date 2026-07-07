@@ -146,6 +146,13 @@ data:
 
   # Satellites
   SATELLITE_LATEST_VERSION: "1.3.0"
+  # C1 binary Opus transport (docs/design/voice-identity-wakeword-verification.md).
+  # Backend-wide "accept opus when a satellite requests it" — safe fleet-wide
+  # because it is gated per-satellite by the register handshake (a satellite
+  # only streams opus if its own audio.codec: opus is set AND this is on).
+  # Enabled 2026-07-07 for the Fitnessraum (XVF3800) canary; all other
+  # satellites keep the legacy base64-PCM path until re-provisioned.
+  SATELLITE_OPUS_ENABLED: "true"
 
   # Persist ML model caches (EasyOCR ~/.EasyOCR, HuggingFace ~/.cache/huggingface,
   # Torch ~/.cache/torch, whisper ~/.cache/whisper) across pod restarts by
