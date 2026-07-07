@@ -613,10 +613,19 @@ angezeigt). Rollout gestaffelt: dark → Flotte einschreiben → `…_ENABLED=tr
 ```bash
 # C1 binärer Opus-Transport (dark). Aus (Default): ein Satellit, der beim
 # register audio_codec=opus anbietet, bekommt "pcm" zurück und bleibt auf dem
-# Legacy-base64-PCM-JSON-Pfad — Flottenverhalten byte-identisch. An (und
-# opuslib/libopus0 im Backend-Image): der Satellit streamt binäre WS-Frames,
-# das Backend dekodiert am Edge zu PCM (STT/Speaker-Pfade + voice-server-API
-# unverändert). Satellit-Seite: satellite.yaml audio.codec: "opus".
+# Legacy-base64-PCM-JSON-Pfad — Flottenverhalten byte-identisch. An: der Satellit
+# streamt binäre WS-Frames; das Backend puffert die rohen Opus-Pakete und leitet
+# sie an den Voice-Server (/api/voice/stt-opus) weiter, der sie dort dekodiert
+# (Opus-Decode liegt seit C2 Phase 1 auf der Media-Schicht, nicht mehr im Backend;
+# opuslib/libopus0 sind aus dem Backend-Image entfernt). STT/Speaker-Pfade
+# unverändert. Setzt voice_server_url voraus. Satellit-Seite: satellite.yaml
+# audio.codec: "opus".
+#
+# DEPLOY-INVARIANTE: Vor dem Aktivieren MUSS das Voice-Server-Image opuslib +
+# libopus0 enthalten (seit C2 Phase 1 im voice-server Dockerfile/requirements).
+# Fehlt es (Image-Skew), antwortet /api/voice/stt-opus mit 503 statt still leerem
+# Transkript, und der Voice-Server loggt beim Start eine Warnung. Also: erst
+# Voice-Server neu bauen/ausrollen, dann SATELLITE_OPUS_ENABLED=true.
 SATELLITE_OPUS_ENABLED=false
 
 # P0 Fail-loud-Fallback: das In-Process-SpeechBrain-ECAPA und das

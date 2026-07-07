@@ -33,6 +33,7 @@ RUN apt-get -o Acquire::AllowInsecureRepositories=true \
  && apt-get install -y --allow-unauthenticated --no-install-recommends \
         python3.12 python3.12-venv python3-pip \
         ffmpeg ca-certificates curl \
+        libopus0 \
  && rm -rf /var/lib/apt/lists/*
 
 RUN python3.12 -m venv /opt/venv
@@ -88,6 +89,7 @@ RUN pip install \
         "python-multipart>=0.0.18" \
         httpx>=0.27 \
         ffmpeg-python>=0.2 \
+        opuslib>=3.0.1 \
         prometheus-client>=0.20 \
         loguru>=0.7 \
         piper-tts>=1.3.0

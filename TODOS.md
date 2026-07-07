@@ -150,33 +150,22 @@ If ui_sweep noise shows up in real use, mark original sweep row `superseded=true
 ### Satellite — audio pipeline improvements
 - **Primary source:** `src/satellite/TECHNICAL_DEBT.md` §Future TODOs
 - **High priority:** audio preprocessing (noise reduction) on backend for resource-constrained satellites — alternative: XVF3800 hardware AEC (see `docs/XVF3800_SATELLITE.md`)
-- **Medium priority:** ~~Opus audio compression (~50% bandwidth)~~ ✅ BUILT as C1 (binary WS frames, dark: `SATELLITE_OPUS_ENABLED` + satellite `audio.codec: opus`) — **but decode must move backend→voice-server before fleet rollout, see the C1 decode TODO below** · echo cancellation (software WebRTC APM or XVF3800)
+- **Medium priority:** ~~Opus audio compression (~50% bandwidth)~~ ✅ BUILT as C1 (binary WS frames, dark: `SATELLITE_OPUS_ENABLED` + satellite `audio.codec: opus`); ✅ decode moved backend→voice-server (C2 Phase 1) · echo cancellation (software WebRTC APM or XVF3800)
 - **Low priority:** 4-mic beamforming extension · custom wake-word training
 
-### C1 Opus — move decode from the backend to the voice-server (BLOCKS fleet rollout)
+### ~~C1 Opus — move decode from the backend to the voice-server~~ ✅ DONE (C2 Phase 1, 2026-07-07)
 
-**WHAT:** The merged C1 code decodes Opus→PCM in the **backend WS handler**
-(`ha_glue/services/opus_transport.py`). Move that decode to the **voice-server**
-(short-term: backend forwards Opus bytes to it; long-term: satellite audio
-re-points at the voice-server streaming endpoint — the C2 direction).
+**RESOLVED:** decode moved off the backend WS handler onto the voice-server.
+`ha_glue/services/opus_transport.py` is now a pure wire-format module; the backend
+buffers the raw `[uint16 len][packet]` blob (`satellite_manager`) and forwards it
+to the new voice-server `POST /api/voice/stt-opus`, where
+`voice_server/services/opus_decode.py` owns the one-shot opuslib decode →
+float32 mono 16 kHz PCM. opuslib/libopus0 removed from the backend image. Opus
+decode now lives on the media layer alongside the browser `/ws/voice` ffmpeg
+path — C1 is the on-ramp to C2 as intended. Still dark (`SATELLITE_OPUS_ENABLED`);
+the blocker on fleet rollout is cleared. Tests: backend 23/23 + voice-server 7/7.
 
-**WHY:** Opus→PCM is media processing; the backend is the *orchestration* layer.
-Phase B deliberately moved STT/TTS/embeddings onto the voice-server, which
-*already* ffmpeg-decodes browser opus (`/ws/voice`). Backend-edge decode
-re-introduces media DSP into the backend, splits "decode opus" across two
-components by client type, and would be moved again for C2 anyway. D6 of
-`docs/design/voice-identity-wakeword-verification.md` was **amended (PR #930)** to
-make this the target; the merged backend decode is an explicit **dark stopgap**.
-
-**BLOCKER:** C1 must NOT roll out to any satellite fleet-wide until decode moves —
-do it while it's still one small, reversible module with zero satellites
-depending on it. C1 is currently dark (`SATELLITE_OPUS_ENABLED`; no sat negotiates
-opus). Reframes C1 as the on-ramp to C2, not a backend detour.
-
-**DEPENDS ON:** touches the same voice-server + satellite audio path as C2
-(streaming `/ws/voice`); best done together with (or just before) C2.
-
-**SOURCE:** architectural review 2026-07-07; `docs/design/voice-identity-wakeword-verification.md` §4 C1 / §5a D6 / §8; PRs #927 (merged code), #928 (provisioning, held), #930 (D6 amendment).
+**SOURCE:** architectural review 2026-07-07; `docs/design/voice-identity-wakeword-verification.md` §4 C1 / §5a D6 / §8; PRs #927 (merged C1), #928 (provisioning, held), #930 (D6 amendment), C2 Phase 1 (this decode move).
 
 ---
 

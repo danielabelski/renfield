@@ -58,6 +58,13 @@ class Settings(BaseSettings):
     # Max concurrent /ws/voice sessions (review M4) — bounds GPU STT/TTS abuse.
     max_concurrent_sessions: int = 16
 
+    # Opus decode-amplification guard for the satellite /stt-opus path. Bounds a
+    # single decoded utterance so a body of tiny packets each declaring 120 ms
+    # can't decode to gigabytes. NOT a recording cap — set generously so a long
+    # spoken diary entry is never truncated (project rule: no voice max-recording
+    # cap). 1800 s ≈ 57.6 MB of 16-bit mono PCM per request.
+    opus_max_decoded_seconds: int = 1800
+
     @model_validator(mode="after")
     def _fail_closed_on_default_key(self) -> "Settings":
         """Security (review M4): refuse to start when local JWT auth is enforced

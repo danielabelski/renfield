@@ -23,6 +23,7 @@ from typing import Any
 from fastapi import WebSocket
 from loguru import logger
 
+from ha_glue.services.opus_transport import frame_packets
 from utils.config import settings
 
 
@@ -115,6 +116,12 @@ class SatelliteSession:
     state: SatelliteState
     audio_chunks: list[bytes] = field(default_factory=list)
     audio_sequence: int = 0
+    # C1/C2: raw Opus packets for an opus-negotiated connection. The backend
+    # buffers packets here (does NOT decode — decode moved to the voice-server,
+    # design D6) and ships them at audio_end. Mutually exclusive with
+    # audio_chunks (PCM), which the legacy base64/pcm path uses.
+    opus_packets: list[bytes] = field(default_factory=list)
+    opus_bytes: int = 0
     started_at: float = field(default_factory=time.time)
     transcription: str | None = None
     response_text: str | None = None
@@ -395,6 +402,40 @@ class SatelliteManager:
         session.audio_sequence = sequence
 
         return True, ""
+
+    def buffer_opus_packets(
+        self, session_id: str, packets: list[bytes], sequence: int
+    ) -> tuple[bool, str]:
+        """Buffer raw Opus packets for an opus-negotiated session (C2 Phase 1).
+
+        The backend does NOT decode — it forwards the packets to the voice-server
+        at audio_end (decode moved to the media layer, design D6). Size-capped on
+        total compressed bytes (Opus at 16 kHz ~ a few KB/s, so this bounds a
+        very long or malicious stream well below the PCM cap).
+        """
+        if session_id not in self.sessions:
+            logger.warning(f"⚠️ Opus audio for unknown session: {session_id}")
+            return False, "Unknown session"
+        session = self.sessions[session_id]
+        added = sum(len(p) for p in packets)
+        # Reuse the PCM buffer cap as the ceiling — compressed opus is far
+        # smaller, so this is a generous but bounded guard.
+        if session.opus_bytes + added > settings.ws_max_audio_buffer_size:
+            logger.warning(f"⚠️ Opus buffer full for session {session_id}: {session.opus_bytes} bytes")
+            return False, f"Audio buffer full (max: {settings.ws_max_audio_buffer_size} bytes)"
+        session.opus_packets.extend(packets)
+        session.opus_bytes += added
+        session.audio_sequence = sequence
+        return True, ""
+
+    def get_opus_blob(self, session_id: str) -> bytes | None:
+        """Serialize a session's buffered Opus packets to the `[uint16 len][packet]`
+        framing the voice-server /api/voice/stt-opus endpoint decodes. None if no
+        packets. Framing owned by opus_transport (single source of wire format)."""
+        session = self.sessions.get(session_id)
+        if not session or not session.opus_packets:
+            return None
+        return frame_packets(session.opus_packets)
 
     def has_session(self, session_id: str) -> bool:
         """Whether a session id is currently active (cheap membership test).

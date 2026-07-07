@@ -27,6 +27,11 @@ from pydantic import BaseModel
 
 from voice_server.auth import AuthError, authenticate
 from voice_server.services.audio_oneshot import OneshotDecodeError, decode_audio_to_pcm
+from voice_server.services.opus_decode import (
+    OpusDecodeError,
+    OpusUnavailableError,
+    decode_opus_packets_to_pcm,
+)
 from voice_server.services.speaker_service import SpeakerService
 from voice_server.services.stt_service import STTService
 from voice_server.services.tts_service import TTSService
@@ -84,6 +89,49 @@ async def stt_endpoint(
     if pcm.size == 0:
         raise HTTPException(status_code=400, detail="empty PCM after decode")
 
+    return await _transcribe_and_embed(request, pcm, language)
+
+
+@router.post("/api/voice/stt-opus", response_model=STTResponse)
+async def stt_opus_endpoint(
+    request: Request,
+    audio: UploadFile = File(...),
+    language: str | None = Form(default=None),
+    _user: dict = Depends(_require_token),
+) -> STTResponse:
+    """Transcribe a satellite's raw Opus packets (C1 transport).
+
+    The satellite ships bare libopus packets (no container) that ffmpeg can't
+    parse, so /api/voice/stt (ffmpeg auto-detect) can't take them. This sibling
+    decodes the C1 `[uint16 len][packet]…` framing with opuslib, then runs the
+    same STT + embed path. Decode moved here (media layer) from the backend
+    (voice-identity C2 Phase 1, design D6).
+    """
+    blob = await audio.read()
+    if not blob:
+        raise HTTPException(status_code=400, detail="empty audio")
+    try:
+        pcm = decode_opus_packets_to_pcm(blob)
+    except OpusUnavailableError as e:
+        # Skewed deploy: the backend negotiated opus but this image lacks
+        # libopus. 503 (not 400/500) makes the operator error unambiguous.
+        logger.error("STT opus decode unavailable — image lacks libopus: %s", e)
+        raise HTTPException(status_code=503, detail="opus decode unavailable") from e
+    except OpusDecodeError as e:
+        logger.warning("STT opus decode failed: %s", e)
+        raise HTTPException(status_code=400, detail=f"opus decode failed: {e}") from e
+
+    if pcm.size == 0:
+        raise HTTPException(status_code=400, detail="empty PCM after opus decode")
+
+    return await _transcribe_and_embed(request, pcm, language)
+
+
+async def _transcribe_and_embed(
+    request: Request, pcm: np.ndarray, language: str | None
+) -> STTResponse:
+    """Shared STT + speaker-embed tail for both the container (/stt) and raw-opus
+    (/stt-opus) paths — identical once we have float32 16 kHz mono PCM."""
     stt: STTService = request.app.state.stt
     speaker: SpeakerService = request.app.state.speaker
 
@@ -92,9 +140,8 @@ async def stt_endpoint(
         text_parts.append(seg.text)
     text = " ".join(t.strip() for t in text_parts if t.strip())
     # Pull the auto-detected language from the side-channel set by
-    # transcribe_stream. Falls back to the requested language, then
-    # to the service default. Reflects what faster-whisper actually
-    # detected on the audio rather than echoing the request.
+    # transcribe_stream. Falls back to the requested language, then to the
+    # service default — reflects what faster-whisper actually detected.
     detected_language = stt.last_language or language or "de"
 
     embedding: list[float] | None = None

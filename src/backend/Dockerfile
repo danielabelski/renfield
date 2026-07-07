@@ -115,7 +115,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsndfile1 \
     libportaudio2 \
     libgomp1 \
-    libopus0 \
     espeak-ng \
     poppler-utils \
     wget \
