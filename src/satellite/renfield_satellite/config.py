@@ -79,6 +79,24 @@ class AudioConfig:
     use_arecord: bool = False  # Use arecord subprocess (required for AC108 4-mic + onnxruntime)
     device: str = "plughw:1,0"  # ReSpeaker default
     playback_device: str = "plughw:1,0"
+    # Stereo→mono combine (docs/design/satellite-audio-combine-pipeline.md).
+    # The wakeword/STT need one mono channel; how the native multi-channel
+    # capture is reduced to it depends on the hardware:
+    #   beamform    — delay-and-sum of raw mics (2-mic HAT)
+    #   select      — keep one channel, drop the rest (XVF3800 processed beam,
+    #                 AC108 mic channel) — the others are residual/reference,
+    #                 NOT mics, so downmixing them is wrong (it cancels to
+    #                 silence on the XVF3800 — the Fitnessraum wakeword-deaf
+    #                 incident)
+    #   passthrough — already mono, emit as-is
+    # None = auto-derive from the legacy signals so un-reprovisioned sats stay
+    # byte-identical: beamforming.enabled→beamform, channels>1→select, else
+    # passthrough.
+    combine: Optional[str] = None
+    # Which channel `select` keeps. None = legacy default resolved by the
+    # capture backend (AC108 4-mic → ch1, its ch0 is the silent reference;
+    # everything else → ch0). Set explicitly per hardware (XVF3800 → 0).
+    select_channel: Optional[int] = None
     # Upstream audio transport codec (C1, voice-identity design): "pcm"
     # (legacy base64-in-JSON, default) or "opus" (binary WS frames; needs
     # opuslib + a backend with satellite_opus_enabled — negotiated at
@@ -318,6 +336,8 @@ def load_config(config_path: Optional[str] = None) -> Config:
         config.audio.device = aud.get("device", config.audio.device)
         config.audio.playback_device = aud.get("playback_device", config.audio.playback_device)
         config.audio.codec = aud.get("codec", config.audio.codec)
+        config.audio.combine = aud.get("combine", config.audio.combine)
+        config.audio.select_channel = aud.get("select_channel", config.audio.select_channel)
 
         # Beamforming config
         if "beamforming" in aud:

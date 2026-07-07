@@ -145,11 +145,21 @@ aplay -D plughw:XVF3800,0 test.wav
 audio:
   device: "plughw:XVF3800,0"    # USB-Geraetename (stabil ueber Reboots)
   playback_device: "plughw:XVF3800,0"  # Speaker-Ausgang ueber selben USB
-  channels: 1                    # Kanal 0 = vorverarbeitetes Mono-Audio
+  channels: 2                    # BEIDE HW-Kanaele holen (0=Beam, 1=ASR/Residual)
+  combine: "select"              # NICHT downmixen — genau EINEN Kanal waehlen
+  select_channel: 0              # Kanal 0 = vorverarbeiteter Beam (sauberes Sprachsignal)
   use_arecord: false             # Nicht noetig — kein AC108 Kernel-Crash
   beamforming:
     enabled: false               # XVF3800 macht 3-Beam in Hardware
 ```
+
+> ⚠️ **NICHT `channels: 1` verwenden.** Der XVF3800 liefert **Stereo** (Kanal 0 =
+> Beam, Kanal 1 = ASR/AEC-Residual — KEIN zweites Mikrofon). Bei `channels: 1`
+> mischt ALSA die beiden Kanaele zu Mono zusammen (`default`-Plug-Downmix), und
+> Beam + Residual **loeschen sich zu Stille aus** — der Wakeword bekommt kein
+> Signal (Fitnessraum-Vorfall 2026-07-07). Stattdessen beide Kanaele erfassen
+> (`channels: 2`) und den Beam **auswaehlen** (`combine: select`,
+> `select_channel: 0`). Details: `docs/design/satellite-audio-combine-pipeline.md`.
 
 **`.asoundrc`** — Optional, fuer stabilen Geraete-Alias:
 
@@ -176,11 +186,13 @@ ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="2886", ATTR{idProduct}=="0037"
 
 ### Aenderungen im Code
 
-**Keine Code-Aenderungen noetig.** Der bestehende Satellite-Code funktioniert unveraendert:
+`capture.py` erfasst `channels: 2` und reduziert per `combine: select` /
+`select_channel: 0` auf den Beam (Kanal 0) — dieselbe Capture→Combine→Mono-
+Pipeline wie die 2-Mic-HAT-Beamforming-Stufe (`docs/design/satellite-audio-
+combine-pipeline.md`). Downstream unveraendert:
 
-- `capture.py` oeffnet das ALSA-Geraet via PyAudio → empfaengt S16_LE/16kHz/Mono
-- Wake Word Detection, VAD, WebSocket Streaming — alles identisch
-- Nur die YAML-Config muss angepasst werden (Device-Name)
+- Wake Word Detection, VAD, WebSocket Streaming — alles identisch (Mono S16/16kHz)
+- Der Combine-Schritt ist config-getrieben; kein XVF3800-Sonderfall im Code
 
 ### LED-Steuerung
 
@@ -201,7 +213,9 @@ Fuer Ansible (`provisioning/inventory.yml`) ein neues HAT-Profil:
 hat_type: "xvf3800-usb"         # Neues Profil
 audio_device: "plughw:XVF3800,0"
 audio_playback_device: "plughw:XVF3800,0"
-audio_channels: 1
+audio_channels: 2                # Stereo erfassen, dann Beam auswaehlen
+audio_combine: "select"
+audio_select_channel: 0          # Kanal 0 = vorverarbeiteter Beam
 use_arecord: false
 beamforming_enabled: false       # Hardware-Beamforming
 led_type: "none"                 # Oder "apa102" fuer separaten LED-Streifen
