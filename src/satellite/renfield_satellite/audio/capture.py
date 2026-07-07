@@ -134,6 +134,12 @@ class AudioCapture:
         if self.combine not in ("beamform", "select", "passthrough"):
             print(f"Unknown audio combine '{self.combine}', falling back to select")
             self.combine = "select" if channels > 1 else "passthrough"
+        # passthrough only makes sense for a single channel — on a multi-channel
+        # device it would emit the raw interleaved frame and feed the wakeword
+        # 2x/4x garbage. Force select so a misconfig can't silently deafen it.
+        if self.combine == "passthrough" and channels > 1:
+            print(f"combine=passthrough invalid for {channels}ch — using select")
+            self.combine = "select"
         self.select_channel = (
             select_channel if select_channel is not None
             else (1 if channels >= 4 else 0)

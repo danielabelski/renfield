@@ -73,6 +73,21 @@ class TestEffectiveCombineResolution:
         cap = AudioCapture(channels=2, combine="bogus")
         assert cap.combine == "select"
 
+    @pytest.mark.satellite
+    def test_passthrough_on_multichannel_forced_to_select(self):
+        # A misconfig (passthrough + channels>1) must NOT leak interleaved
+        # multi-channel to the wakeword — it's forced to select.
+        cap = AudioCapture(channels=2, combine="passthrough")
+        assert cap.combine == "select"
+        buf = _interleave([100, 200], [-1, -2])
+        out = np.frombuffer(cap._stereo_to_mono(buf), dtype=np.int16)
+        assert list(out) == [100, 200]  # mono ch0, not the 4-sample stereo frame
+
+    @pytest.mark.satellite
+    def test_passthrough_stays_for_mono(self):
+        cap = AudioCapture(channels=1, combine="passthrough")
+        assert cap.combine == "passthrough"
+
 
 class TestStereoToMonoS16:
     """The PyAudio consumer path (S16)."""
