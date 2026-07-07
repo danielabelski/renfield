@@ -79,6 +79,8 @@ class AudioCapture:
         beamforming: bool = False,
         mic_spacing: float = 0.058,  # ReSpeaker 2-Mics: 58mm
         steering_angle: float = 0.0,  # 0 = front-facing
+        combine: Optional[str] = None,
+        select_channel: Optional[int] = None,
     ):
         """
         Initialize audio capture.
@@ -94,6 +96,14 @@ class AudioCapture:
             beamforming: Enable beamforming (requires channels=2)
             mic_spacing: Microphone spacing in meters (default 58mm for ReSpeaker)
             steering_angle: Target direction in degrees (0=front)
+            combine: Stereo→mono reduction: "beamform" | "select" |
+                "passthrough". None = auto-derive (beamforming→beamform,
+                channels>1→select, else passthrough) for back-compat.
+            select_channel: When combine="select", keep this channel and drop
+                the rest. None = legacy default (AC108 4-mic→ch1, else ch0).
+                The XVF3800 selects ch0 (its processed beam) rather than let
+                ALSA downmix beam+residual to silence.
+                See docs/design/satellite-audio-combine-pipeline.md.
         """
         self.sample_rate = sample_rate
         self.chunk_size = chunk_size
@@ -107,6 +117,33 @@ class AudioCapture:
             print("Beamforming enabled: switching to stereo capture")
 
         self.channels = channels
+
+        # Stereo→mono combine (docs/design/satellite-audio-combine-pipeline.md).
+        # Resolve the effective mode + channel from the legacy signals when not
+        # given explicitly, so un-reprovisioned sats stay byte-identical:
+        #   combine: beamforming→"beamform", channels>1→"select", else "passthrough"
+        #   select_channel: AC108 4-mic→ch1 (ch0 is its silent reference), else ch0
+        if combine is not None:
+            self.combine = combine
+        elif beamforming:
+            self.combine = "beamform"
+        elif channels > 1:
+            self.combine = "select"
+        else:
+            self.combine = "passthrough"
+        if self.combine not in ("beamform", "select", "passthrough"):
+            print(f"Unknown audio combine '{self.combine}', falling back to select")
+            self.combine = "select" if channels > 1 else "passthrough"
+        self.select_channel = (
+            select_channel if select_channel is not None
+            else (1 if channels >= 4 else 0)
+        )
+        if not 0 <= self.select_channel < max(1, channels):
+            print(
+                f"select_channel {self.select_channel} out of range for "
+                f"{channels}ch — clamping to 0"
+            )
+            self.select_channel = 0
 
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -327,10 +364,12 @@ class AudioCapture:
             self._running = False
 
     def _arecord_capture_loop(self):
-        """Read from arecord pipe, convert 4ch/S32_LE → mono S16_LE.
+        """Read from arecord pipe, convert Nch/S32_LE → mono S16_LE.
 
-        Each frame is channels * 4 bytes (S32_LE). We extract channel 0
-        and shift right by 16 to convert 32-bit to 16-bit samples.
+        Each frame is channels * 4 bytes (S32_LE). Channel selection uses the
+        shared _select_mono (combine="select" for the arecord/AC108 backend;
+        select_channel defaults to ch1 for a 4-mic AC108 — ch0 is its silent
+        reference), then shift right by 16 to convert 32-bit to 16-bit.
         """
         frame_bytes = self.channels * 4  # S32_LE = 4 bytes per sample
         chunk_bytes = self.chunk_size * frame_bytes
@@ -342,10 +381,10 @@ class AudioCapture:
                 if not data or len(data) < chunk_bytes:
                     break
 
-                # Convert multi-channel S32_LE to mono S16_LE
-                # AC108 4-mic: channel 0 is silent (reference), mics are on ch1-3
+                # Convert multi-channel S32_LE to mono S16_LE via the shared
+                # channel selector, then downshift 32→16 bit.
                 s32 = np.frombuffer(data, dtype=np.int32)
-                ch = s32[1::self.channels] if self.channels >= 4 else s32[::self.channels]
+                ch = self._select_mono(s32)
                 s16 = (ch >> 16).astype(np.int16)
 
                 try:
@@ -433,18 +472,33 @@ class AudioCapture:
         finally:
             pass
 
+    def _select_mono(self, samples: np.ndarray) -> np.ndarray:
+        """Keep the configured channel from an interleaved multi-channel array,
+        dropping the rest (dtype preserved).
+
+        Shared by the S16 PyAudio path and the S32 arecord path so the channel
+        choice lives in ONE place. The non-selected channels are residual /
+        reference signals (XVF3800 AEC residual, AC108 silent reference), NOT
+        mics — downmixing them is wrong (see the combine design doc).
+        """
+        return samples[self.select_channel::self.channels]
+
     def _stereo_to_mono(self, audio_bytes: bytes) -> bytes:
-        """Convert interleaved multi-channel S16_LE to mono.
+        """Reduce interleaved multi-channel S16_LE to mono per the combine mode.
 
         Runs in the CONSUMER thread (via self._consumer_transform), never in the
-        capture read loop. Applies DAS beamforming when a beamformer is configured,
-        otherwise extracts channel 0 (per the official ReSpeaker HAT examples).
+        capture read loop, so heavy numpy can't delay stream.read() (an I2S
+        overflow can crash the kernel on Pi Zero 2 W).
+          beamform    → DAS of the raw mics (2-mic HAT)
+          select      → keep self.select_channel (XVF3800 processed beam, etc.)
+          passthrough → already mono
         """
-        if self.channels <= 1:
+        if self.channels <= 1 or self.combine == "passthrough":
             return audio_bytes
-        if self._beamformer:
+        if self.combine == "beamform" and self._beamformer:
             return self._beamformer.process_bytes(audio_bytes)
-        return np.frombuffer(audio_bytes, dtype=np.int16)[::self.channels].tobytes()
+        samples = np.frombuffer(audio_bytes, dtype=np.int16)
+        return self._select_mono(samples).tobytes()
 
     def _audio_consumer_loop(self):
         """Consumer thread — processes queued audio and calls callback.
