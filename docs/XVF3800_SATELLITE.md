@@ -216,7 +216,7 @@ Durch den XVF3800 werden folgende offene Punkte adressiert:
 | Audio Preprocessing auf Backend verschieben | **Unnoetig** — XVF3800 macht es in Hardware |
 | Echo Cancellation | **Geloest** — Hardware-AEC auf dem Chip |
 | 4-Mic Beamforming | **Geloest** — Hardware 3-Beam auf dem Chip |
-| Opus Audio Compression | Weiterhin sinnvoll fuer Bandbreiten-Optimierung |
+| Opus Audio Compression | **Geliefert** — C1 (binärer WS-Transport, `SATELLITE_OPUS_ENABLED` + satellite `audio.codec: opus`, dark); Backend dekodiert am Edge. Siehe `docs/design/voice-identity-wakeword-verification.md` |
 
 ---
 
