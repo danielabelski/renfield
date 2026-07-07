@@ -15,6 +15,7 @@ from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
 from renfield_satellite import __version__
+from renfield_satellite.audio.opus_codec import OpusChunkEncoder, build_audio_frame
 
 try:
     import websockets
@@ -307,6 +308,13 @@ class WebSocketClient:
                 "ping_interval": self._ping_interval,
                 "ping_timeout": self._ping_timeout,
             }
+
+            # Opus frames are already compressed, so per-message-deflate only
+            # burns CPU on the Pi Zero 2 W (and the backend) for ~zero size
+            # win in the hot audio path — disable it when streaming binary
+            # audio. Legacy JSON satellites keep the library default.
+            if self._requested_audio_codec == "opus":
+                connect_kwargs["compression"] = None
 
             # Pass auth token via header instead of URL query parameter
             if self._auth_token:
@@ -846,16 +854,15 @@ class WebSocketClient:
 
         self._audio_sequence += 1
 
-        # C1 binary path: encode to Opus and ship a binary frame. Any encoder
-        # failure downgrades this CONNECTION to pcm (fail-safe, logged once) —
-        # the backend accepts both concurrently, so mid-stream fallback is safe.
+        # C1 binary path: encode to Opus and ship a binary frame. ENCODE
+        # failures (bad packet, corrupt encoder) downgrade this CONNECTION to
+        # pcm and re-send THIS chunk as JSON below — the backend accepts both.
+        # TRANSPORT failures on send (ConnectionClosed) must NOT be swallowed
+        # as an encode error: they propagate out exactly like the legacy
+        # _send() path so the reconnect loop handles them.
         if self._negotiated_audio_codec == "opus":
+            frame = None
             try:
-                from renfield_satellite.audio.opus_codec import (
-                    OpusChunkEncoder,
-                    build_audio_frame,
-                )
-
                 if self._opus_encoder is None or self._opus_session_id != session_id:
                     # Fresh stateful encoder per session — state must not
                     # bleed across utterances.
@@ -863,15 +870,18 @@ class WebSocketClient:
                     self._opus_session_id = session_id
                 packets = self._opus_encoder.encode_chunk(audio_bytes)
                 if packets:
-                    await self._ws.send(
-                        build_audio_frame(session_id, self._audio_sequence, packets)
-                    )
-                return
+                    frame = build_audio_frame(session_id, self._audio_sequence, packets)
             except Exception as e:
                 print(f"Opus encode failed ({e}) — falling back to pcm for this connection")
                 self._negotiated_audio_codec = "pcm"
                 self._opus_encoder = None
                 self._opus_session_id = None
+            else:
+                # Encode OK: send outside the try so a ConnectionClosed here
+                # is a transport error, not a spurious pcm downgrade.
+                if frame is not None:
+                    await self._ws.send(frame)
+                return
 
         await self._send({
             "type": "audio",
@@ -905,8 +915,6 @@ class WebSocketClient:
             and self._opus_session_id == session_id
         ):
             try:
-                from renfield_satellite.audio.opus_codec import build_audio_frame
-
                 packets = self._opus_encoder.flush_padded()
                 if packets:
                     self._audio_sequence += 1

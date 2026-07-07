@@ -44,13 +44,6 @@ class TestBuildAudioFrame:
             opus_codec.build_audio_frame("s", 1, [b""])
 
 
-class TestMakeEncoderFallback:
-    @pytest.mark.satellite
-    def test_make_encoder_returns_none_without_opuslib(self, monkeypatch):
-        monkeypatch.setattr(opus_codec, "OPUS_AVAILABLE", False)
-        assert opus_codec.make_encoder() is None
-
-
 @pytest.mark.skipif(not opus_codec.OPUS_AVAILABLE, reason="opuslib not installed")
 class TestOpusChunkEncoder:
     @pytest.mark.satellite

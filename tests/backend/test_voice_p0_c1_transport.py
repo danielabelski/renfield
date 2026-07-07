@@ -93,6 +93,40 @@ class TestSessionOpusDecoders:
         decoders = opus_transport.SessionOpusDecoders()
         decoders.drop("never-seen")  # must not raise
 
+    @pytest.mark.unit
+    def test_has_tracks_allocation_and_drop(self):
+        import opuslib
+
+        enc = opuslib.Encoder(
+            opus_transport.SAMPLE_RATE, opus_transport.CHANNELS, opuslib.APPLICATION_VOIP
+        )
+        forty_ms = opus_transport.SAMPLE_RATE * 40 // 1000
+        packet = enc.encode(b"\x00\x00" * forty_ms, forty_ms)
+
+        decoders = opus_transport.SessionOpusDecoders()
+        assert not decoders.has("sess-1")
+        decoders.decode("sess-1", [packet])
+        assert decoders.has("sess-1")
+        decoders.drop("sess-1")
+        assert not decoders.has("sess-1")
+
+    @pytest.mark.unit
+    def test_decode_amplification_capped(self):
+        """A frame whose packets decode past the per-frame cap raises
+        BinaryFrameError instead of allocating unbounded PCM (DoS guard)."""
+        import opuslib
+
+        enc = opuslib.Encoder(
+            opus_transport.SAMPLE_RATE, opus_transport.CHANNELS, opuslib.APPLICATION_VOIP
+        )
+        forty_ms = opus_transport.SAMPLE_RATE * 40 // 1000
+        packet = enc.encode(b"\x00\x00" * forty_ms, forty_ms)
+        # Each packet decodes to 40 ms; the cap is 1 s → ~25 packets. 200 is
+        # comfortably over, so decode must abort partway with the cap error.
+        decoders = opus_transport.SessionOpusDecoders()
+        with pytest.raises(opus_transport.BinaryFrameError):
+            decoders.decode("sess-dos", [packet] * 200)
+
 
 # =============================================================================
 # C1 CRITICAL REGRESSION: legacy base64 path buffers byte-identically
@@ -151,6 +185,14 @@ class TestBufferAudioRegression:
         sid = await self._session(manager)
         ok, err = manager.buffer_audio(sid, "!!!not-base64!!!", 1)
         assert not ok and "base64" in err.lower()
+
+    @pytest.mark.unit
+    async def test_has_session(self, manager):
+        """The C1 binary path validates the session via has_session BEFORE
+        allocating an Opus decoder (leak guard)."""
+        assert not manager.has_session("ghost")
+        sid = await self._session(manager)
+        assert manager.has_session(sid)
 
 
 # =============================================================================

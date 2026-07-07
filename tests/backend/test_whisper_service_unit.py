@@ -560,9 +560,17 @@ class TestTranscribeWithSpeaker:
         svc._extract_embedding_async = fake_extract_embedding_async
         svc.model = MagicMock()  # sentinel so load_model is skipped
 
-        result = await svc.transcribe_with_speaker(
-            "/tmp/test.wav", db_session=MagicMock()
-        )
+        # This call runs against the REAL module settings (the patch above only
+        # wrapped construction). In-process speaker embeddings are fail-loud
+        # gated off by default (P0, voice-identity design), so opt the flag in
+        # for the call — the point of this test is the parallel gather, not the
+        # guard.
+        from utils.config import settings as real_settings
+
+        with patch.object(real_settings, "speaker_inprocess_embeddings_enabled", True):
+            result = await svc.transcribe_with_speaker(
+                "/tmp/test.wav", db_session=MagicMock()
+            )
 
         assert result["text"] == "transcribed"
         assert observed_parallel, "embedding extraction did not run during transcribe"

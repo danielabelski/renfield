@@ -396,6 +396,15 @@ class SatelliteManager:
 
         return True, ""
 
+    def has_session(self, session_id: str) -> bool:
+        """Whether a session id is currently active (cheap membership test).
+
+        Used by the C1 binary path to validate a frame's session BEFORE
+        allocating a stateful Opus decoder, so unknown/stale session ids
+        can't leak decoders.
+        """
+        return session_id in self.sessions
+
     def get_audio_buffer(self, session_id: str) -> bytes | None:
         """
         Get the complete audio buffer for a session.

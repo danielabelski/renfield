@@ -82,6 +82,29 @@ class SpeakerService:
         """Check if speaker recognition is available"""
         return SPEECHBRAIN_AVAILABLE
 
+    @staticmethod
+    def _inprocess_embeddings_blocked(path: str) -> bool:
+        """P0 central guard (docs/design/voice-identity-wakeword-verification.md).
+
+        The SpeechBrain embeddings this class produces are in a DIFFERENT
+        representation space than the voice-server ONNX model used for
+        recognition, so extracting/comparing them silently corrupts identity.
+        This is the ONE choke point every in-process caller flows through
+        (routes, whisper, voice-login), so no caller can bypass it. Returns
+        True (with a WARNING + metric) when in-process embeddings are off.
+        """
+        if settings.speaker_inprocess_embeddings_enabled:
+            return False
+        from utils.metrics import record_speaker_inprocess_embedding_blocked
+
+        logger.warning(
+            f"🚫 In-process SpeechBrain embedding refused ({path}): "
+            "speaker_inprocess_embeddings_enabled is off (voice-server ONNX "
+            "is the only supported embedding space)."
+        )
+        record_speaker_inprocess_embedding_blocked(path)
+        return True
+
     def load_model(self):
         """Load the speaker embedding model (lazy loading)"""
         if self._model_loaded:
@@ -116,6 +139,9 @@ class SpeakerService:
         """
         if not SPEECHBRAIN_AVAILABLE:
             logger.warning("SpeechBrain not available, cannot extract embedding")
+            return None
+
+        if self._inprocess_embeddings_blocked("extract_embedding"):
             return None
 
         self.load_model()

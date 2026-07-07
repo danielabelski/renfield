@@ -120,14 +120,31 @@ class SessionOpusDecoders:
     # 120 ms of headroom per decode call — an Opus packet decodes to at most
     # 120 ms of audio, and ours are 40 ms.
     _MAX_FRAME_SAMPLES = SAMPLE_RATE * 120 // 1000
+    # Hard cap on decoded PCM per binary frame. The handler size-checks only
+    # the COMPRESSED frame (~1 MB), but a frame packed with hundreds of
+    # thousands of tiny packets each declaring 120 ms would decode to >1 GB
+    # BEFORE the downstream buffer-size check ever runs — a decode-
+    # amplification OOM. One 80 ms capture chunk is 2 packets, so a healthy
+    # frame is a few packets; 1 s of headroom is ~40x that and still bounds
+    # the attack to a fixed allocation.
+    _MAX_DECODED_BYTES_PER_FRAME = SAMPLE_RATE * 2 * 1  # 1 s of 16-bit mono
 
     def __init__(self) -> None:
         if not OPUS_AVAILABLE:
             raise RuntimeError("opuslib not available — negotiate pcm instead")
         self._decoders: dict[str, opuslib.Decoder] = {}
 
+    def has(self, session_id: str) -> bool:
+        return session_id in self._decoders
+
     def decode(self, session_id: str, packets: list[bytes]) -> bytes:
-        """Decode packets for a session into 16-bit mono PCM bytes."""
+        """Decode packets for a session into 16-bit mono PCM bytes.
+
+        Raises BinaryFrameError if the decoded size exceeds the per-frame cap
+        (decode-amplification guard) — the caller drops the session on any
+        exception so a poisoned frame can neither OOM the pod nor leave the
+        stateful decoder desynced from the buffered audio.
+        """
         dec = self._decoders.get(session_id)
         if dec is None:
             dec = opuslib.Decoder(SAMPLE_RATE, CHANNELS)
@@ -135,6 +152,11 @@ class SessionOpusDecoders:
         pcm = bytearray()
         for packet in packets:
             pcm += dec.decode(packet, self._MAX_FRAME_SAMPLES)
+            if len(pcm) > self._MAX_DECODED_BYTES_PER_FRAME:
+                raise BinaryFrameError(
+                    f"decoded PCM exceeds per-frame cap "
+                    f"({len(pcm)} > {self._MAX_DECODED_BYTES_PER_FRAME})"
+                )
         return bytes(pcm)
 
     def drop(self, session_id: str) -> None:

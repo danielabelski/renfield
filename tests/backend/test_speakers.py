@@ -62,6 +62,21 @@ async def speaker_with_embeddings(db_session: AsyncSession) -> Speaker:
     return speaker
 
 
+@pytest.fixture(autouse=True)
+def _enable_inprocess_embeddings():
+    """The enroll/identify/verify routes use the in-process SpeechBrain model,
+    which is fail-loud gated behind speaker_inprocess_embeddings_enabled (P0,
+    voice-identity design). Every route test here exercises that legacy path
+    deliberately, so opt the flag in module-wide — otherwise the routes 503
+    before the mocked service is reached. The default-off refusal itself is
+    covered in test_voice_p0_c1_transport.py.
+    """
+    from utils.config import settings
+
+    with patch.object(settings, 'speaker_inprocess_embeddings_enabled', True):
+        yield
+
+
 @pytest.fixture
 def mock_speaker_service():
     """Mock speaker recognition service"""

@@ -17,6 +17,12 @@ from datetime import date
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from loguru import logger
 
+from ha_glue.services.opus_transport import (
+    OPUS_AVAILABLE,
+    BinaryFrameError,
+    SessionOpusDecoders,
+    parse_audio_frame,
+)
 from models.websocket_messages import WSErrorCode
 from services.database import AsyncSessionLocal
 from services.wakeword_config_manager import get_wakeword_config_manager
@@ -187,8 +193,6 @@ async def satellite_websocket(
             # everything downstream keeps its PCM contract)
             raw_bytes = raw.get("bytes")
             if raw_bytes is not None:
-                from ha_glue.services.opus_transport import BinaryFrameError, parse_audio_frame
-
                 if opus_decoders is None:
                     await send_ws_error(
                         websocket, WSErrorCode.PROTOCOL_ERROR,
@@ -203,11 +207,28 @@ async def satellite_websocket(
                     continue
                 try:
                     bin_session_id, bin_sequence, opus_packets = parse_audio_frame(raw_bytes)
-                    pcm_bytes = opus_decoders.decode(bin_session_id, opus_packets)
                 except BinaryFrameError as e:
                     await send_ws_error(websocket, WSErrorCode.PROTOCOL_ERROR, str(e))
                     continue
+
+                # Validate the session BEFORE allocating/advancing a stateful
+                # decoder — otherwise a straggler/stale/rotating session id
+                # would leak a decoder per frame (never drop()ed).
+                if not satellite_manager.has_session(bin_session_id):
+                    opus_decoders.drop(bin_session_id)  # reap any stale decoder
+                    await send_ws_error(
+                        websocket, WSErrorCode.SESSION_ERROR,
+                        f"unknown session {bin_session_id}",
+                    )
+                    continue
+
+                try:
+                    pcm_bytes = opus_decoders.decode(bin_session_id, opus_packets)
                 except Exception as e:
+                    # Poisoned/oversized frame or a mid-frame decode error: the
+                    # decoder is now desynced from the buffered audio, so drop
+                    # it — the next frame re-creates a clean one.
+                    opus_decoders.drop(bin_session_id)
                     logger.warning(f"⚠️ Opus decode failed for {satellite_id}: {e}")
                     await send_ws_error(websocket, WSErrorCode.PROTOCOL_ERROR, "opus decode failed")
                     continue
@@ -216,17 +237,28 @@ async def satellite_websocket(
                     bin_session_id, pcm_bytes, bin_sequence
                 )
                 if not success:
+                    opus_decoders.drop(bin_session_id)
                     if "buffer full" in error.lower():
                         await satellite_manager.end_session(bin_session_id, reason="buffer_full")
-                        opus_decoders.drop(bin_session_id)
-                    await send_ws_error(websocket, WSErrorCode.BUFFER_FULL, error)
+                        await send_ws_error(websocket, WSErrorCode.BUFFER_FULL, error)
+                    else:
+                        await send_ws_error(websocket, WSErrorCode.SESSION_ERROR, error)
                 continue
 
+            # Text frame. A malformed or non-object frame is treated exactly as
+            # the legacy receive_json() path did — it tore the connection down,
+            # which is the satellite's self-heal (reconnect → fresh register +
+            # config/IRK re-push). Keeping that means the flag-off path stays
+            # byte-identical in behavior.
+            text = raw.get("text")
             try:
-                data = json.loads(raw.get("text") or "")
-            except (json.JSONDecodeError, TypeError):
-                await send_ws_error(websocket, WSErrorCode.INVALID_MESSAGE, "invalid JSON frame")
-                continue
+                data = json.loads(text) if text is not None else None
+            except json.JSONDecodeError:
+                logger.warning(f"⚠️ Malformed JSON frame from {satellite_id or ip_address} — closing")
+                break
+            if not isinstance(data, dict):
+                logger.warning(f"⚠️ Non-object frame from {satellite_id or ip_address} — closing")
+                break
 
             msg_type = data.get("type", "")
 
@@ -284,8 +316,6 @@ async def satellite_websocket(
                 negotiated_codec = "pcm"
                 requested_codec = str(capabilities.get("audio_codec") or "pcm").lower()
                 if requested_codec == "opus":
-                    from ha_glue.services.opus_transport import OPUS_AVAILABLE, SessionOpusDecoders
-
                     if settings.satellite_opus_enabled and OPUS_AVAILABLE:
                         negotiated_codec = "opus"
                         opus_decoders = SessionOpusDecoders()

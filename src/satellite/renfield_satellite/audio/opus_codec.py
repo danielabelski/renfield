@@ -26,10 +26,7 @@ missing and the caller must stay on PCM.
 
 from __future__ import annotations
 
-import logging
 import struct
-
-logger = logging.getLogger(__name__)
 
 try:  # pragma: no cover - environment-dependent
     import opuslib
@@ -105,14 +102,3 @@ class OpusChunkEncoder:
         padded = self._remainder.ljust(PACKET_BYTES, b"\x00")
         self._remainder = b""
         return [self._encoder.encode(padded, PACKET_SAMPLES)]
-
-
-def make_encoder() -> OpusChunkEncoder | None:
-    """Create an encoder, or None (with a warning) when opuslib is missing."""
-    if not OPUS_AVAILABLE:
-        logger.warning(
-            "Opus requested but opuslib/libopus is not installed — "
-            "falling back to PCM transport"
-        )
-        return None
-    return OpusChunkEncoder()
