@@ -79,6 +79,11 @@ class AudioConfig:
     use_arecord: bool = False  # Use arecord subprocess (required for AC108 4-mic + onnxruntime)
     device: str = "plughw:1,0"  # ReSpeaker default
     playback_device: str = "plughw:1,0"
+    # Upstream audio transport codec (C1, voice-identity design): "pcm"
+    # (legacy base64-in-JSON, default) or "opus" (binary WS frames; needs
+    # opuslib + a backend with satellite_opus_enabled — negotiated at
+    # register time, degrades to pcm automatically otherwise).
+    codec: str = "pcm"
     beamforming: BeamformingConfig = field(default_factory=BeamformingConfig)
 
     @property
@@ -312,6 +317,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
         config.audio.use_arecord = aud.get("use_arecord", config.audio.use_arecord)
         config.audio.device = aud.get("device", config.audio.device)
         config.audio.playback_device = aud.get("playback_device", config.audio.playback_device)
+        config.audio.codec = aud.get("codec", config.audio.codec)
 
         # Beamforming config
         if "beamforming" in aud:

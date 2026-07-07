@@ -608,6 +608,28 @@ angezeigt). Rollout gestaffelt: dark → Flotte einschreiben → `…_ENABLED=tr
 
 ---
 
+### Satellite-Audio-Transport + Voice-Identity P0 (C1, `docs/design/voice-identity-wakeword-verification.md`)
+
+```bash
+# C1 binärer Opus-Transport (dark). Aus (Default): ein Satellit, der beim
+# register audio_codec=opus anbietet, bekommt "pcm" zurück und bleibt auf dem
+# Legacy-base64-PCM-JSON-Pfad — Flottenverhalten byte-identisch. An (und
+# opuslib/libopus0 im Backend-Image): der Satellit streamt binäre WS-Frames,
+# das Backend dekodiert am Edge zu PCM (STT/Speaker-Pfade + voice-server-API
+# unverändert). Satellit-Seite: satellite.yaml audio.codec: "opus".
+SATELLITE_OPUS_ENABLED=false
+
+# P0 Fail-loud-Fallback: das In-Process-SpeechBrain-ECAPA und das
+# voice-server-ONNX-ECAPA teilen KEINEN Repräsentationsraum. Default aus =
+# das Backend verweigert SpeechBrain-Embeddings (Extraktion/Vergleich/
+# Speicherung) mit WARNING + Metrik
+# renfield_speaker_inprocess_embedding_blocked_total; Transkription selbst
+# läuft weiter. Nur in Dev-Umgebungen OHNE voice-server auf true setzen.
+SPEAKER_INPROCESS_EMBEDDINGS_ENABLED=false
+```
+
+---
+
 ### Signierte OTA-Pakete (Security Review H6)
 
 Code-Authentizität unabhängig von Transport/Backend: ein Release wird über ein

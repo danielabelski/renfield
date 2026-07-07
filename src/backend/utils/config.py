@@ -168,6 +168,16 @@ class Settings(BaseSettings):
 
     # Speaker Recognition
     speaker_recognition_enabled: bool = True      # Enable speaker recognition
+    # P0 of docs/design/voice-identity-wakeword-verification.md (fail-loud
+    # fallback): the in-process SpeechBrain ECAPA and the voice-server ONNX
+    # ECAPA do NOT share a representation space, yet both historically wrote
+    # into the same speaker tables. Default OFF = the backend refuses to
+    # extract/compare/store SpeechBrain embeddings (STT itself still works);
+    # each refusal logs a WARNING + increments
+    # renfield_speaker_inprocess_embedding_blocked_total. Only set True in a
+    # dev environment that has NO voice-server and accepts a separate,
+    # incompatible embedding space.
+    speaker_inprocess_embeddings_enabled: bool = False
     speaker_recognition_threshold: float = 0.25  # Minimum similarity for positive identification (0-1)
     speaker_recognition_device: str = "cpu"      # Device for inference: "cpu" or "cuda"
     speaker_auto_enroll: bool = True             # Auto-create unknown speakers and save embeddings
@@ -858,6 +868,16 @@ class Settings(BaseSettings):
     # authenticated at least once (not just currently-connected ones), then
     # latch it persistently. Default off until the fleet is fully enrolled.
     satellite_enrollment_autoflip_enabled: bool = False
+
+    # C1 binary Opus transport for satellite audio (docs/design/
+    # voice-identity-wakeword-verification.md §4, decision D6). Dark by
+    # default: when off, a satellite that requests audio_codec=opus at
+    # register is answered "pcm" and keeps the legacy base64-PCM JSON path —
+    # byte-identical fleet behavior. When on (and opuslib/libopus is present
+    # in the image), an opus-capable satellite streams binary frames that the
+    # backend edge-decodes to PCM before the existing buffer, so STT/speaker
+    # paths and the voice-server API are untouched.
+    satellite_opus_enabled: bool = False
 
     # WebSocket Rate Limiting
     # Note: Audio streaming sends ~12.5 chunks/second, so limits must accommodate this

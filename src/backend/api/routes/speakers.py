@@ -23,6 +23,37 @@ from utils.config import settings
 router = APIRouter()
 
 
+def _require_inprocess_embeddings(path: str) -> None:
+    """P0 fail-loud guard (docs/design/voice-identity-wakeword-verification.md).
+
+    These legacy routes embed with the in-process SpeechBrain model, which
+    does NOT share a representation space with the voice-server ONNX model
+    that produced the stored wire-path embeddings. Comparing or storing
+    across the two spaces silently corrupts speaker identity, so unless a
+    dev environment explicitly opts in, refuse with a clear pointer to the
+    supported flow.
+    """
+    if settings.speaker_inprocess_embeddings_enabled:
+        return
+    from utils.metrics import record_speaker_inprocess_embedding_blocked
+
+    logger.warning(
+        f"🚫 Refused in-process SpeechBrain embedding on {path}: "
+        "speaker_inprocess_embeddings_enabled is off"
+    )
+    record_speaker_inprocess_embedding_blocked(path)
+    raise HTTPException(
+        status_code=503,
+        detail=(
+            "In-process (SpeechBrain) speaker embeddings are disabled: they are "
+            "incompatible with the voice-server ONNX embedding space used by "
+            "recognition. Use the guided enrollment (POST /api/speakers/enroll) "
+            "instead, or set SPEAKER_INPROCESS_EMBEDDINGS_ENABLED=true in a "
+            "dev environment without a voice-server."
+        ),
+    )
+
+
 # --- Pydantic Models ---
 
 class SpeakerCreate(BaseModel):
@@ -569,6 +600,8 @@ async def enroll_speaker(
 
     Recommended: Use samples of 3-10 seconds with clear speech.
     """
+    _require_inprocess_embeddings("route_enroll")
+
     # Get speaker with embeddings eagerly loaded
     result = await db.execute(
         select(Speaker)
@@ -646,6 +679,8 @@ async def identify_speaker(
     Upload an audio file to identify which registered speaker is speaking.
     Returns the most likely speaker and confidence score.
     """
+    _require_inprocess_embeddings("route_identify")
+
     service = get_speaker_service()
 
     if not service.is_available():
@@ -724,6 +759,8 @@ async def verify_speaker(
     Use this to verify that someone claiming to be a specific speaker
     actually matches their enrolled voice samples.
     """
+    _require_inprocess_embeddings("route_verify")
+
     service = get_speaker_service()
 
     if not service.is_available():

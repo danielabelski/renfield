@@ -352,12 +352,6 @@ class SatelliteManager:
         Returns:
             Tuple of (success: bool, error_message: str)
         """
-        if session_id not in self.sessions:
-            logger.warning(f"⚠️ Audio for unknown session: {session_id}")
-            return False, "Unknown session"
-
-        session = self.sessions[session_id]
-
         # Check message size limit
         if len(chunk_b64) > settings.ws_max_message_size:
             logger.warning(f"⚠️ Audio chunk too large: {len(chunk_b64)} bytes (max: {settings.ws_max_message_size})")
@@ -370,6 +364,26 @@ class SatelliteManager:
             logger.error(f"❌ Failed to decode audio chunk: {e}")
             return False, "Invalid base64 encoding"
 
+        return self.buffer_audio_bytes(session_id, audio_bytes, sequence)
+
+    def buffer_audio_bytes(
+        self,
+        session_id: str,
+        audio_bytes: bytes,
+        sequence: int
+    ) -> tuple[bool, str]:
+        """Buffer an already-decoded PCM chunk.
+
+        Shared tail of the legacy base64 path above and the C1 binary/Opus
+        path, which decodes at the backend edge
+        (docs/design/voice-identity-wakeword-verification.md §4).
+        """
+        if session_id not in self.sessions:
+            logger.warning(f"⚠️ Audio for unknown session: {session_id}")
+            return False, "Unknown session"
+
+        session = self.sessions[session_id]
+
         # Check buffer size limit
         current_size = sum(len(c) for c in session.audio_chunks)
         if current_size + len(audio_bytes) > settings.ws_max_audio_buffer_size:
@@ -381,6 +395,15 @@ class SatelliteManager:
         session.audio_sequence = sequence
 
         return True, ""
+
+    def has_session(self, session_id: str) -> bool:
+        """Whether a session id is currently active (cheap membership test).
+
+        Used by the C1 binary path to validate a frame's session BEFORE
+        allocating a stateful Opus decoder, so unknown/stale session ids
+        can't leak decoders.
+        """
+        return session_id in self.sessions
 
     def get_audio_buffer(self, session_id: str) -> bytes | None:
         """

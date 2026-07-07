@@ -81,7 +81,7 @@ These matter for Renfield but are out-of-scope for Reva by design:
 3. **Backend-side preprocessing for resource-constrained satellites.** Already on `src/satellite/TECHNICAL_DEBT.md` ("Medium priority: Audio Preprocessing auf Backend verschieben"). Pi Zero 2 W can offload noise reduction. Scoped for Phase B (Section 4) — touches the satellite firmware contract, so it shouldn't be smuggled into Phase A's backend-only blast radius.
 4. **Wake-word path.** Reva explicitly excludes this; Renfield's satellite already runs OpenWakeWord. Reason the Reva framing of "push-to-talk minimum" doesn't fit Renfield.
 5. **Household privacy framing.** Reva's GDPR section talks about individual-performance attribution. Renfield's equivalent: voice metadata of one family member not bleeding into another's `Speaker` profile during auto-enrollment. Already handled at the speaker-service level but worth re-verifying after the swap.
-6. **Opus compression for satellite uplink.** Already on the satellite tech-debt list ("~50% bandwidth"), separate from STT/TTS upgrades but in the same neighborhood.
+6. **Opus compression for satellite uplink.** **DELIVERED** as C1 of `docs/design/voice-identity-wakeword-verification.md` (binary WS frames + backend-edge decode, dark: `SATELLITE_OPUS_ENABLED` + satellite `audio.codec: opus`). Was on the satellite tech-debt list ("~50% bandwidth"); separate from the STT/TTS upgrades below.
 
 ---
 
@@ -106,7 +106,7 @@ The household differentiation that Reva doesn't ask for. Final shape after the M
 - **B-1 — TTS LRU cache** — landed in v2.4.0 (#513). Keyed on `(voice_name, text)`; default size 256 entries (~50 MB cap). Repeated confirmations ("Verstanden", "Bestätigt") avoid re-running ONNX inference.
 - **B-2 — Thread-offload + concurrency bound** — landed in v2.4.0 (#513). `model.transcribe()` and `voice.synthesize()` now run in `asyncio.to_thread(...)` gated by an `asyncio.Semaphore` (`WHISPER_MAX_CONCURRENT=2`, `TTS_MAX_CONCURRENT=4`). Two satellites speaking concurrently no longer serialize.
 - **B-3 — Per-household `initial_prompt` hook** — landed in v2.4.1 (#514). `WhisperPromptBuilder` assembles "Sprecher: X. Raum: Y. Personen: ... Räume: ..." from the DB, cached for 5 min per `(user, room, language)`. New hooks `build_whisper_initial_prompt` (plugins win) and `resolve_room_occupants` (ha_glue handler wraps BLE presence). Speaker-id and STT now run in parallel via `asyncio.gather` so speaker is identified ~50-150 ms before STT finishes. v2.4.2 (#515) added the cache-invalidation broadcast hook (`household_graph_changed`) plus per-user frequency-ranked vocabulary corpus (daily rebuild loop, hook handler that folds top-30 terms into the prompt when corpus exists).
-- **B-4 — Backend audio-preprocessing offload** — STILL DEFERRED. Soft-blocked on Opus encoding (otherwise raw PCM trades CPU for bandwidth); hard-blocked on the XVF3800 hardware-AEC vs software-only architecture decision. Re-evaluate when satellite firmware coordination is available.
+- **B-4 — Backend audio-preprocessing offload** — STILL DEFERRED. The Opus-encoding soft-block is now lifted (C1 ships satellite-side Opus, `docs/design/voice-identity-wakeword-verification.md`); still hard-blocked on the XVF3800 hardware-AEC vs software-only architecture decision. Re-evaluate when satellite firmware coordination is available.
 
 ### Phase C — Defer, signal-gated
 

@@ -15,6 +15,7 @@ from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
 from renfield_satellite import __version__
+from renfield_satellite.audio.opus_codec import OpusChunkEncoder, build_audio_frame
 
 try:
     import websockets
@@ -73,6 +74,7 @@ class WebSocketClient:
         ping_timeout: int = 8,
         register_timeout: float = 15.0,
         enrollment_token: Optional[str] = None,
+        audio_codec: str = "pcm",
     ):
         """
         Initialize WebSocket client.
@@ -105,6 +107,25 @@ class WebSocketClient:
         # Per-satellite enrollment PSK (security H1); sent in the register frame
         # when set, verified server-side against the `satellites` table.
         self._enrollment_token = enrollment_token
+
+        # C1 binary Opus transport (voice-identity design §4). The REQUESTED
+        # codec comes from config; the EFFECTIVE codec is whatever the
+        # register_ack answers ("pcm" unless both ends support opus), so a
+        # legacy backend silently keeps this satellite on the JSON/PCM path.
+        requested = (audio_codec or "pcm").lower()
+        if requested == "opus":
+            from renfield_satellite.audio.opus_codec import OPUS_AVAILABLE
+
+            if not OPUS_AVAILABLE:
+                print("Opus requested but opuslib/libopus missing — using pcm")
+                requested = "pcm"
+        elif requested != "pcm":
+            print(f"Unknown audio codec '{requested}' — using pcm")
+            requested = "pcm"
+        self._requested_audio_codec = requested
+        self._negotiated_audio_codec = "pcm"
+        self._opus_encoder = None
+        self._opus_session_id: Optional[str] = None
 
         self._ws: Optional["WebSocketClientProtocol"] = None
         self._state = ConnectionState.DISCONNECTED
@@ -288,6 +309,13 @@ class WebSocketClient:
                 "ping_timeout": self._ping_timeout,
             }
 
+            # Opus frames are already compressed, so per-message-deflate only
+            # burns CPU on the Pi Zero 2 W (and the backend) for ~zero size
+            # win in the hot audio path — disable it when streaming binary
+            # audio. Legacy JSON satellites keep the library default.
+            if self._requested_audio_codec == "opus":
+                connect_kwargs["compression"] = None
+
             # Pass auth token via header instead of URL query parameter
             if self._auth_token:
                 connect_kwargs["extra_headers"] = {
@@ -386,6 +414,11 @@ class WebSocketClient:
         if self._enrollment_token:
             message["token"] = self._enrollment_token
 
+        # Advertise the codec only when opus is actually requested + available,
+        # so a pcm satellite's register frame stays byte-identical to legacy.
+        if self._requested_audio_codec == "opus":
+            message["capabilities"]["audio_codec"] = "opus"
+
         await self._send(message)
 
         # Wait for ack — BOUNDED. Without a timeout a slow/hung backend (e.g.
@@ -415,6 +448,19 @@ class WebSocketClient:
                 )
                 print(f"Registered successfully. Server protocol: {server_protocol}")
                 print(f"Config: wake_words={self._server_config.wake_words}, threshold={self._server_config.threshold}")
+
+                # C1 codec negotiation result. Absent/unknown → pcm (fail-safe:
+                # never stream binary at a backend that didn't accept it).
+                negotiated = str(data.get("audio_codec") or "pcm").lower()
+                self._negotiated_audio_codec = (
+                    "opus"
+                    if negotiated == "opus" and self._requested_audio_codec == "opus"
+                    else "pcm"
+                )
+                self._opus_encoder = None
+                self._opus_session_id = None
+                if self._requested_audio_codec == "opus":
+                    print(f"Audio codec negotiated: {self._negotiated_audio_codec}")
 
                 # Apply the backend's current LED brightness immediately so a
                 # satellite reconnecting mid-night comes up already dimmed.
@@ -808,6 +854,35 @@ class WebSocketClient:
 
         self._audio_sequence += 1
 
+        # C1 binary path: encode to Opus and ship a binary frame. ENCODE
+        # failures (bad packet, corrupt encoder) downgrade this CONNECTION to
+        # pcm and re-send THIS chunk as JSON below — the backend accepts both.
+        # TRANSPORT failures on send (ConnectionClosed) must NOT be swallowed
+        # as an encode error: they propagate out exactly like the legacy
+        # _send() path so the reconnect loop handles them.
+        if self._negotiated_audio_codec == "opus":
+            frame = None
+            try:
+                if self._opus_encoder is None or self._opus_session_id != session_id:
+                    # Fresh stateful encoder per session — state must not
+                    # bleed across utterances.
+                    self._opus_encoder = OpusChunkEncoder()
+                    self._opus_session_id = session_id
+                packets = self._opus_encoder.encode_chunk(audio_bytes)
+                if packets:
+                    frame = build_audio_frame(session_id, self._audio_sequence, packets)
+            except Exception as e:
+                print(f"Opus encode failed ({e}) — falling back to pcm for this connection")
+                self._negotiated_audio_codec = "pcm"
+                self._opus_encoder = None
+                self._opus_session_id = None
+            else:
+                # Encode OK: send outside the try so a ConnectionClosed here
+                # is a transport error, not a spurious pcm downgrade.
+                if frame is not None:
+                    await self._ws.send(frame)
+                return
+
         await self._send({
             "type": "audio",
             "session_id": session_id,
@@ -831,6 +906,26 @@ class WebSocketClient:
         """
         if not self.is_connected:
             return
+
+        # C1: flush the encoder's buffered partial window (zero-padded) so the
+        # utterance tail isn't lost, then retire the per-session encoder.
+        if (
+            self._negotiated_audio_codec == "opus"
+            and self._opus_encoder is not None
+            and self._opus_session_id == session_id
+        ):
+            try:
+                packets = self._opus_encoder.flush_padded()
+                if packets:
+                    self._audio_sequence += 1
+                    await self._ws.send(
+                        build_audio_frame(session_id, self._audio_sequence, packets)
+                    )
+            except Exception as e:
+                print(f"Opus flush failed (tail dropped): {e}")
+            finally:
+                self._opus_encoder = None
+                self._opus_session_id = None
 
         msg = {
             "type": "audio_end",

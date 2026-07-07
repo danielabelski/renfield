@@ -52,3 +52,8 @@ bleak>=0.22.0
 # IRK-based RPA resolution (ble/rpa.py) — REQUIRED for phone presence; rpa.py
 # silently no-ops (resolve_rpa() always returns False) if this is missing.
 cryptography>=42.0.0
+
+# Binary Opus audio transport (C1, voice-identity design) — OPTIONAL: only
+# used when audio.codec: opus is configured; needs the libopus0 system
+# package. Missing → the satellite logs a warning and stays on PCM.
+opuslib>=3.0.1
