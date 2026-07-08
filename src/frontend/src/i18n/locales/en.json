@@ -1883,6 +1883,10 @@
     "idle": "idle",
     "online": "online",
     "healthy": "healthy",
+    "impaired": {
+      "plugin_failed": "backend plugin not loaded",
+      "no_tools": "connected, no tools"
+    },
     "inRoom": "{{state}} · {{room}}",
     "presentValue": "{{people}} in {{rooms}} rooms",
     "state": {

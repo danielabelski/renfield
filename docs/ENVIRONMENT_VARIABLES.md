@@ -1746,17 +1746,33 @@ PLUGIN_MODULE=
 
 # Mehrere Extensions: komma-separierte Liste von "package.module:callable".
 # Wird nach PLUGIN_MODULE geladen und dedupliziert; ein fehlerhaftes Plugin
-# wird geloggt und übersprungen, bricht den Startup also nicht ab.
+# wird geloggt und übersprungen, bricht den Startup also nicht ab. Der
+# Lade-Ausgang (ok/Fehler) wird pro Spec festgehalten (Kiosk-Health, s. u.).
 PLUGIN_MODULES=
+
+# Optional: bindet ein Startup-Plugin an den MCP-Server, den es „backt", damit
+# ein fehlgeschlagener Plugin-Load diesen Knoten auf dem Kiosk als DEGRADED
+# markiert (erreichbar, aber nicht voll funktionsfähig — z. B. ein Adapter-
+# Plugin, dessen Sidecar-MCP-Server zwar verbunden ist). Komma-separiert
+# "plugin_prefix=server_name" (Trenner ist `=`, NICHT `:` — ein Plugin-Spec
+# enthält selbst einen Doppelpunkt, `:` würde also mis-splitten). Match via
+# spec.startswith(prefix), d. h. links funktioniert sowohl der Modul-Präfix
+# (`twin_adapter`) als auch der volle Spec (`twin_adapter.plugin:register`).
+# Leer = keine solche Bindung (Public-Build unverändert); der Plugin-Name bleibt
+# aus dem generischen Default heraus — das Deployment, das das Plugin ausliefert,
+# setzt die Bindung.
+PLUGIN_MCP_BINDINGS=
 
 # Beispiele
 PLUGIN_MODULE=example_pkg.plugin:register
 PLUGIN_MODULES=pkg_a.plugin:register,pkg_b.plugin:register
+PLUGIN_MCP_BINDINGS=some_adapter=some_server
 ```
 
 **Defaults:**
 - `PLUGIN_MODULE`: `""` (deaktiviert)
 - `PLUGIN_MODULES`: `""` (deaktiviert)
+- `PLUGIN_MCP_BINDINGS`: `""` (keine Plugin→MCP-Health-Bindung)
 
 **Hook Events:** `startup`, `shutdown`, `register_routes`, `register_tools`, `post_message`, `retrieve_context`
 

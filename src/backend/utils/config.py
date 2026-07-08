@@ -780,6 +780,14 @@ class Settings(BaseSettings):
     # after plugin_module; duplicates across both are deduped.
     plugin_modules: str = ""
 
+    # Optional binding of a startup plugin to the MCP server it backs, so a
+    # failed plugin load marks that server "degraded" on the kiosk (connected
+    # but not fully functional). Comma-separated "plugin_module_prefix:server",
+    # e.g. an adapter plugin backing its sidecar MCP server. The plugin naming
+    # stays out of this generic default (empty) — the deployment that ships the
+    # plugin sets the binding. Matched by spec.startswith(prefix).
+    plugin_mcp_bindings: str = ""
+
     # === Authentication ===
     # Set to True to enable authentication (default: False for development)
     auth_enabled: bool = False

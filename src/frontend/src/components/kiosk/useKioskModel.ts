@@ -163,10 +163,15 @@ function buildCommandCenterModel(
     failing.set(match[1], agg);
   }
   const tools: ToolNode[] = live.mcp.servers.map((server) => {
+    // The backend now folds connectivity AND functionality into `health`
+    // (e.g. a connected server whose backing plugin failed → 'degraded'); it is
+    // authoritative for down/degraded. On a healthy (or absent) backend verdict
+    // the frontend still layers its tool-call success-rate degradation on top.
+    const beHealth = server.health;
     let health: NodeHealth;
-    if (!server.connected) {
+    if (!server.connected || beHealth === 'down') {
       health = 'down';
-    } else if (server.last_error) {
+    } else if (beHealth === 'degraded' || server.last_error) {
       health = 'degraded';
     } else {
       const agg = failing.get(server.name);
@@ -177,16 +182,23 @@ function buildCommandCenterModel(
           ? 'degraded'
           : 'healthy';
     }
+    // Localize the backend's machine reason code (never render a raw backend
+    // string — i18n rule); fall back to the tool count.
+    const toolHint = t('kiosk.toolHint', {
+      count: server.tool_count,
+      defaultValue: '{{count}} tools',
+    });
+    const impairedHint =
+      health === 'degraded' && server.impaired_code
+        ? t(`kiosk.impaired.${server.impaired_code}`, { defaultValue: toolHint })
+        : toolHint;
     return {
       id: server.name,
       label: prettifyServerName(server.name),
       health,
-      hint: server.connected
-        ? t('kiosk.toolHint', {
-            count: server.tool_count,
-            defaultValue: '{{count}} tools',
-          })
-        : server.last_error || t('kiosk.legend.down'),
+      hint: !server.connected
+        ? server.last_error || t('kiosk.legend.down')
+        : impairedHint,
     };
   });
 

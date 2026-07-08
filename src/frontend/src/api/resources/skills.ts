@@ -29,14 +29,17 @@ export interface Skill {
   is_owner: boolean;
 }
 
-export interface SkillListFilters {
+// `type` (not `interface`) so it carries the implicit index signature that lets
+// it satisfy the `Record<string, unknown>` param of keys.skills.list(); an
+// interface is not assignable there (it can be augmented, so TS won't infer one).
+export type SkillListFilters = {
   status?: SkillStatus;
   source?: SkillSource;
   admin_view?: boolean;
   include_seeds?: boolean;
   limit?: number;
   offset?: number;
-}
+};
 
 export interface SkillUpdateInput {
   id: number;
