@@ -223,6 +223,35 @@ describe('useKioskSocket', () => {
     expect(ha?.last_error ?? null).toBeNull();
   });
 
+  it('folds the connectivity+functionality health field (degraded while connected)', () => {
+    const { result } = renderHook(() => useKioskSocket());
+    act(() => {
+      latest().fireOpen();
+      // Snapshot hydrates a server that is connected but backend-marked degraded
+      // (e.g. its backing plugin failed to load), so it is NOT green-healthy.
+      const snap = {
+        ...baseSnapshot(),
+        mcp: {
+          enabled: true,
+          total_tools: 2,
+          servers: [
+            { name: 'twin', connected: true, transport: 'streamable_http', tool_count: 2, health: 'degraded', impaired_reason: "backing plugin 'twin_adapter' failed to load" },
+          ],
+        },
+      };
+      latest().fireMessage(snap);
+    });
+    const twin0 = result.current.live.mcp.servers.find((s) => s.name === 'twin');
+    expect(twin0?.connected).toBe(true);
+    expect(twin0?.health).toBe('degraded');
+
+    // A live delta can flip it back to healthy without a reconnect.
+    act(() => {
+      latest().fireMessage({ type: 'tool_health_changed', server: 'twin', connected: true, health: 'healthy' });
+    });
+    expect(result.current.live.mcp.servers.find((s) => s.name === 'twin')?.health).toBe('healthy');
+  });
+
   it('folds a turn_activity delta into the trail and the subsystem pulses', () => {
     const { result } = renderHook(() => useKioskSocket());
     act(() => {

@@ -865,11 +865,26 @@ class MCPManager:
         try:
             from api.websocket.kiosk_handler import broadcast_kiosk_event
 
+            # Recompute the folded connectivity+functionality health so a live
+            # connection flip carries the same `health` the snapshot does (the FE
+            # reconciles on it). Falls back to connectivity if lookup fails.
+            state = self._servers.get(server_name)
+            health = None
+            if state is not None:
+                if not connected:
+                    health = "down"
+                else:
+                    reason = self._impaired_servers().get(server_name)
+                    if reason is None and state.config.transport != MCPTransportType.FEDERATION and not state.tools:
+                        reason = "connected but exposes no tools"
+                    health = "degraded" if reason is not None else "healthy"
+
             await broadcast_kiosk_event(
                 {
                     "type": "tool_health_changed",
                     "server": server_name,
                     "connected": connected,
+                    "health": health or ("healthy" if connected else "down"),
                 }
             )
         except Exception as e:
@@ -2070,19 +2085,43 @@ class MCPManager:
         return name in self._tool_index
 
     def get_status(self) -> dict:
-        """Return status information for all servers."""
+        """Return status information for all servers.
+
+        Each server carries a synthesized ``health`` ∈ {healthy, degraded, down}
+        that folds CONNECTIVITY and FUNCTIONALITY together, so the kiosk shows a
+        node connected-but-impaired (e.g. a backing plugin failed to load, or the
+        server exposes zero tools) as *degraded* rather than a green *healthy*.
+        ``impaired_reason`` carries a short human string when degraded-while-up.
+        """
+        impaired = self._impaired_servers()
         servers = []
         for name, state in self._servers.items():
+            connected = state.connected
+            is_federation = state.config.transport == MCPTransportType.FEDERATION
+            reason = impaired.get(name)
+            # Connected-but-no-tools is a functional failure too (federation
+            # servers manage their single tool out of band, so exempt them).
+            if reason is None and connected and not is_federation and not state.tools:
+                reason = "connected but exposes no tools"
+            if not connected:
+                health = "down"
+            elif reason is not None:
+                health = "degraded"
+            else:
+                health = "healthy"
             server_info = {
                 "name": name,
                 "transport": state.config.transport.value,
-                "connected": state.connected,
+                "connected": connected,
                 "tool_count": len(state.tools),
                 "total_tool_count": len(state.all_discovered_tools),
                 "last_error": state.last_error,
+                "health": health,
             }
+            if health == "degraded":
+                server_info["impaired_reason"] = reason
             # Include backoff info for disconnected servers
-            if not state.connected and state.backoff and state.backoff.attempt_count > 0:
+            if not connected and state.backoff and state.backoff.attempt_count > 0:
                 server_info["reconnect_attempts"] = state.backoff.attempt_count
                 server_info["next_retry_in"] = round(state.backoff.time_until_retry(), 1)
             servers.append(server_info)
@@ -2091,6 +2130,33 @@ class MCPManager:
             "total_tools": len(self._tool_index),
             "servers": servers,
         }
+
+    def _impaired_servers(self) -> dict[str, str]:
+        """Map MCP-server-name → impairment reason for servers whose backing
+        startup plugin failed to load. Driven by ``settings.plugin_mcp_bindings``
+        ("plugin_spec_prefix:server_name", comma-separated). Empty by default →
+        no impairments from this source (public build unaffected)."""
+        raw = (settings.plugin_mcp_bindings or "").strip()
+        if not raw:
+            return {}
+        try:
+            from api.lifecycle import failed_plugins
+        except Exception:
+            return {}
+        failed = failed_plugins()
+        if not failed:
+            return {}
+        impaired: dict[str, str] = {}
+        for pair in raw.split(","):
+            pair = pair.strip()
+            if ":" not in pair:
+                continue
+            prefix, server = (p.strip() for p in pair.rsplit(":", 1))
+            if not prefix or not server:
+                continue
+            if any(spec.startswith(prefix) for spec in failed):
+                impaired[server] = f"backing plugin '{prefix}' failed to load"
+        return impaired
 
     async def refresh_tools(self) -> None:
         """Refresh tool lists from all connected servers and reconnect failed ones."""

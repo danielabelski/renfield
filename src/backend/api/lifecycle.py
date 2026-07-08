@@ -955,12 +955,31 @@ async def _cancel_startup_tasks():
 # to connected devices.
 
 
+# Startup-plugin load outcomes, keyed by spec ("module:callable"). Populated by
+# _load_one_plugin so health surfaces (the kiosk) can tell a plugin that FAILED
+# to load apart from one that simply registered nothing — the two were
+# indistinguishable before (a failed plugin just silently never called
+# register_hook). Read via get_plugin_status()/failed_plugins().
+_plugin_status: dict[str, dict[str, object]] = {}
+
+
+def get_plugin_status() -> dict[str, dict[str, object]]:
+    """Snapshot of startup-plugin load outcomes: spec → {ok, error}."""
+    return dict(_plugin_status)
+
+
+def failed_plugins() -> list[str]:
+    """Specs whose module failed to load (ok=False)."""
+    return [spec for spec, st in _plugin_status.items() if not st.get("ok")]
+
+
 async def _load_one_plugin(spec: str):
     """Load and invoke a single plugin spec.
 
     Format: "package.module:callable" — the callable receives no args
     and is expected to call register_hook() for the events it cares about.
-    A failing plugin is logged and swallowed so it cannot crash startup.
+    A failing plugin is logged and swallowed so it cannot crash startup, but the
+    outcome is recorded in _plugin_status so health surfaces can flag it.
     """
     try:
         import importlib
@@ -979,8 +998,10 @@ async def _load_one_plugin(spec: str):
             if asyncio.iscoroutine(result):
                 await result
 
+        _plugin_status[spec] = {"ok": True, "error": None}
         logger.info(f"Plugin module loaded: {spec}")
-    except Exception:
+    except Exception as e:
+        _plugin_status[spec] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
         logger.opt(exception=True).error(f"Failed to load plugin module: {spec}")
 
 

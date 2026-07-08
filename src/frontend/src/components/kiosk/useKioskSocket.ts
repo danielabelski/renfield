@@ -58,6 +58,11 @@ export interface KioskMcpServer {
   connected: boolean;
   last_error?: string | null;
   tool_count: number;
+  // Backend-folded connectivity+functionality health: 'healthy' | 'degraded' |
+  // 'down'. Present since the degraded-health change; when absent the model
+  // falls back to deriving health from connectivity + tool-call success rate.
+  health?: string;
+  impaired_reason?: string | null;
 }
 
 export interface KioskMcp {
@@ -169,6 +174,7 @@ interface ToolHealthChangedDelta {
   type: 'tool_health_changed';
   server: string;
   connected: boolean;
+  health?: string;
 }
 
 interface WeatherUpdatedDelta {
@@ -357,6 +363,7 @@ function reduce(state: KioskLiveModel, msg: KioskMessage): KioskLiveModel {
           ...server,
           connected: delta.connected,
           last_error: delta.connected ? null : server.last_error,
+          health: delta.health ?? server.health,
         };
       });
       if (!found) {
@@ -364,6 +371,7 @@ function reduce(state: KioskLiveModel, msg: KioskMessage): KioskLiveModel {
           name: delta.server,
           connected: delta.connected,
           tool_count: 0,
+          health: delta.health,
         });
       }
       return { ...state, mcp: { ...state.mcp, servers } };
