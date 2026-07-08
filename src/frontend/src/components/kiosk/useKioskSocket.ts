@@ -22,7 +22,7 @@ import { useEffect, useReducer, useRef, useState } from 'react';
 
 import { debug } from '../../utils/debug';
 import { getWebSocketUrl } from '../../utils/env';
-import type { SatelliteState } from './types';
+import type { NodeHealth, SatelliteState } from './types';
 import type {
   AgentRoleInfo,
   KioskNowPlaying,
@@ -58,11 +58,13 @@ export interface KioskMcpServer {
   connected: boolean;
   last_error?: string | null;
   tool_count: number;
-  // Backend-folded connectivity+functionality health: 'healthy' | 'degraded' |
-  // 'down'. Present since the degraded-health change; when absent the model
-  // falls back to deriving health from connectivity + tool-call success rate.
-  health?: string;
-  impaired_reason?: string | null;
+  // Backend-folded connectivity+functionality health. Present since the
+  // degraded-health change; when absent the model falls back to deriving health
+  // from connectivity + tool-call success rate.
+  health?: NodeHealth;
+  // Stable machine code for WHY a node is degraded ('plugin_failed' | 'no_tools')
+  // — the frontend localizes it (never a raw backend string, per the i18n rule).
+  impaired_code?: string | null;
 }
 
 export interface KioskMcp {
@@ -174,7 +176,8 @@ interface ToolHealthChangedDelta {
   type: 'tool_health_changed';
   server: string;
   connected: boolean;
-  health?: string;
+  health?: NodeHealth;
+  impaired_code?: string | null;
 }
 
 interface WeatherUpdatedDelta {
@@ -364,6 +367,12 @@ function reduce(state: KioskLiveModel, msg: KioskMessage): KioskLiveModel {
           connected: delta.connected,
           last_error: delta.connected ? null : server.last_error,
           health: delta.health ?? server.health,
+          // Carry the reason code with the health it belongs to; clear it once
+          // the node is no longer degraded so a stale reason can't linger.
+          impaired_code:
+            delta.health === 'degraded'
+              ? delta.impaired_code ?? server.impaired_code
+              : null,
         };
       });
       if (!found) {
@@ -372,6 +381,7 @@ function reduce(state: KioskLiveModel, msg: KioskMessage): KioskLiveModel {
           connected: delta.connected,
           tool_count: 0,
           health: delta.health,
+          impaired_code: delta.health === 'degraded' ? delta.impaired_code : null,
         });
       }
       return { ...state, mcp: { ...state.mcp, servers } };

@@ -167,7 +167,7 @@ function buildCommandCenterModel(
     // (e.g. a connected server whose backing plugin failed → 'degraded'); it is
     // authoritative for down/degraded. On a healthy (or absent) backend verdict
     // the frontend still layers its tool-call success-rate degradation on top.
-    const beHealth = server.health as NodeHealth | undefined;
+    const beHealth = server.health;
     let health: NodeHealth;
     if (!server.connected || beHealth === 'down') {
       health = 'down';
@@ -182,18 +182,23 @@ function buildCommandCenterModel(
           ? 'degraded'
           : 'healthy';
     }
+    // Localize the backend's machine reason code (never render a raw backend
+    // string — i18n rule); fall back to the tool count.
+    const toolHint = t('kiosk.toolHint', {
+      count: server.tool_count,
+      defaultValue: '{{count}} tools',
+    });
+    const impairedHint =
+      health === 'degraded' && server.impaired_code
+        ? t(`kiosk.impaired.${server.impaired_code}`, { defaultValue: toolHint })
+        : toolHint;
     return {
       id: server.name,
       label: prettifyServerName(server.name),
       health,
       hint: !server.connected
         ? server.last_error || t('kiosk.legend.down')
-        : health === 'degraded' && server.impaired_reason
-          ? server.impaired_reason
-          : t('kiosk.toolHint', {
-              count: server.tool_count,
-              defaultValue: '{{count}} tools',
-            }),
+        : impairedHint,
     };
   });
 

@@ -235,7 +235,7 @@ describe('useKioskSocket', () => {
           enabled: true,
           total_tools: 2,
           servers: [
-            { name: 'twin', connected: true, transport: 'streamable_http', tool_count: 2, health: 'degraded', impaired_reason: "backing plugin 'twin_adapter' failed to load" },
+            { name: 'twin', connected: true, transport: 'streamable_http', tool_count: 2, health: 'degraded', impaired_code: 'plugin_failed' },
           ],
         },
       };
@@ -244,12 +244,16 @@ describe('useKioskSocket', () => {
     const twin0 = result.current.live.mcp.servers.find((s) => s.name === 'twin');
     expect(twin0?.connected).toBe(true);
     expect(twin0?.health).toBe('degraded');
+    expect(twin0?.impaired_code).toBe('plugin_failed');
 
-    // A live delta can flip it back to healthy without a reconnect.
+    // A live delta can flip it back to healthy without a reconnect; the stale
+    // reason code must clear so it can't linger on a now-healthy node.
     act(() => {
       latest().fireMessage({ type: 'tool_health_changed', server: 'twin', connected: true, health: 'healthy' });
     });
-    expect(result.current.live.mcp.servers.find((s) => s.name === 'twin')?.health).toBe('healthy');
+    const twin1 = result.current.live.mcp.servers.find((s) => s.name === 'twin');
+    expect(twin1?.health).toBe('healthy');
+    expect(twin1?.impaired_code ?? null).toBeNull();
   });
 
   it('folds a turn_activity delta into the trail and the subsystem pulses', () => {

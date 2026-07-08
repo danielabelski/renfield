@@ -865,26 +865,22 @@ class MCPManager:
         try:
             from api.websocket.kiosk_handler import broadcast_kiosk_event
 
-            # Recompute the folded connectivity+functionality health so a live
-            # connection flip carries the same `health` the snapshot does (the FE
-            # reconciles on it). Falls back to connectivity if lookup fails.
+            # Recompute the folded connectivity+functionality health via the same
+            # helper get_status() uses, so a live flip carries the same `health`
+            # AND `impaired_code` the snapshot does (the FE reconciles on both).
             state = self._servers.get(server_name)
-            health = None
             if state is not None:
-                if not connected:
-                    health = "down"
-                else:
-                    reason = self._impaired_servers().get(server_name)
-                    if reason is None and state.config.transport != MCPTransportType.FEDERATION and not state.tools:
-                        reason = "connected but exposes no tools"
-                    health = "degraded" if reason is not None else "healthy"
+                health, code = self._server_health(server_name, state)
+            else:
+                health, code = ("healthy" if connected else "down"), None
 
             await broadcast_kiosk_event(
                 {
                     "type": "tool_health_changed",
                     "server": server_name,
                     "connected": connected,
-                    "health": health or ("healthy" if connected else "down"),
+                    "health": health,
+                    "impaired_code": code,
                 }
             )
         except Exception as e:
@@ -2093,35 +2089,23 @@ class MCPManager:
         server exposes zero tools) as *degraded* rather than a green *healthy*.
         ``impaired_reason`` carries a short human string when degraded-while-up.
         """
-        impaired = self._impaired_servers()
+        plugin_failed = self._impaired_servers()
         servers = []
         for name, state in self._servers.items():
-            connected = state.connected
-            is_federation = state.config.transport == MCPTransportType.FEDERATION
-            reason = impaired.get(name)
-            # Connected-but-no-tools is a functional failure too (federation
-            # servers manage their single tool out of band, so exempt them).
-            if reason is None and connected and not is_federation and not state.tools:
-                reason = "connected but exposes no tools"
-            if not connected:
-                health = "down"
-            elif reason is not None:
-                health = "degraded"
-            else:
-                health = "healthy"
+            health, code = self._server_health(name, state, plugin_failed)
             server_info = {
                 "name": name,
                 "transport": state.config.transport.value,
-                "connected": connected,
+                "connected": state.connected,
                 "tool_count": len(state.tools),
                 "total_tool_count": len(state.all_discovered_tools),
                 "last_error": state.last_error,
                 "health": health,
             }
-            if health == "degraded":
-                server_info["impaired_reason"] = reason
+            if code is not None:
+                server_info["impaired_code"] = code
             # Include backoff info for disconnected servers
-            if not connected and state.backoff and state.backoff.attempt_count > 0:
+            if not state.connected and state.backoff and state.backoff.attempt_count > 0:
                 server_info["reconnect_attempts"] = state.backoff.attempt_count
                 server_info["next_retry_in"] = round(state.backoff.time_until_retry(), 1)
             servers.append(server_info)
@@ -2131,31 +2115,58 @@ class MCPManager:
             "servers": servers,
         }
 
-    def _impaired_servers(self) -> dict[str, str]:
-        """Map MCP-server-name → impairment reason for servers whose backing
-        startup plugin failed to load. Driven by ``settings.plugin_mcp_bindings``
-        ("plugin_spec_prefix:server_name", comma-separated). Empty by default →
-        no impairments from this source (public build unaffected)."""
+    def _server_health(
+        self, name: str, state: "MCPServerState", plugin_failed: set[str] | None = None
+    ) -> tuple[str, str | None]:
+        """Fold CONNECTIVITY and FUNCTIONALITY into (health, impaired_code).
+
+        health ∈ {healthy, degraded, down}; impaired_code is a stable machine code
+        (the frontend localizes it — never a human string, per the i18n rule) set
+        only when degraded-while-connected: ``plugin_failed`` (a bound startup
+        plugin didn't load) or ``no_tools`` (the server DISCOVERED no tools —
+        checked against all_discovered_tools, NOT the active-tool filter, so a
+        healthy server whose prompt_tools/override filtered everything out is not
+        falsely flagged). Federation servers manage their single tool out of band
+        → exempt from no_tools. Shared by get_status() and _broadcast_tool_health.
+        """
+        if not state.connected:
+            return "down", None
+        if plugin_failed is None:
+            plugin_failed = self._impaired_servers()
+        if name in plugin_failed:
+            return "degraded", "plugin_failed"
+        if state.config.transport != MCPTransportType.FEDERATION and not state.all_discovered_tools:
+            return "degraded", "no_tools"
+        return "healthy", None
+
+    def _impaired_servers(self) -> set[str]:
+        """MCP-server names whose bound startup plugin FAILED to load. Driven by
+        ``settings.plugin_mcp_bindings`` ("plugin_prefix=server_name", comma-
+        separated — ``=`` not ``:`` because plugin specs themselves contain a
+        colon, so ``:`` mis-splits a full spec used as the prefix). Empty by
+        default → no impairments from this source (public build unaffected).
+        The prefix is matched via spec.startswith(), so either the module prefix
+        (``twin_adapter``) or the full spec (``twin_adapter.plugin:register``)
+        works as the left side."""
         raw = (settings.plugin_mcp_bindings or "").strip()
         if not raw:
-            return {}
+            return set()
         try:
             from api.lifecycle import failed_plugins
         except Exception:
-            return {}
+            return set()
         failed = failed_plugins()
         if not failed:
-            return {}
-        impaired: dict[str, str] = {}
+            return set()
+        impaired: set[str] = set()
         for pair in raw.split(","):
-            pair = pair.strip()
-            if ":" not in pair:
+            if "=" not in pair:
                 continue
-            prefix, server = (p.strip() for p in pair.rsplit(":", 1))
+            prefix, server = (p.strip() for p in pair.split("=", 1))
             if not prefix or not server:
                 continue
             if any(spec.startswith(prefix) for spec in failed):
-                impaired[server] = f"backing plugin '{prefix}' failed to load"
+                impaired.add(server)
         return impaired
 
     async def refresh_tools(self) -> None:

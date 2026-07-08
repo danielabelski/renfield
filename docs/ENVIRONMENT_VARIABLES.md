@@ -1754,16 +1754,19 @@ PLUGIN_MODULES=
 # ein fehlgeschlagener Plugin-Load diesen Knoten auf dem Kiosk als DEGRADED
 # markiert (erreichbar, aber nicht voll funktionsfähig — z. B. ein Adapter-
 # Plugin, dessen Sidecar-MCP-Server zwar verbunden ist). Komma-separiert
-# "plugin_spec_prefix:server_name"; Match via spec.startswith(prefix). Leer =
-# keine solche Bindung (Public-Build unverändert). Der Plugin-Name bleibt aus
-# dem generischen Default heraus — das Deployment, das das Plugin ausliefert,
+# "plugin_prefix=server_name" (Trenner ist `=`, NICHT `:` — ein Plugin-Spec
+# enthält selbst einen Doppelpunkt, `:` würde also mis-splitten). Match via
+# spec.startswith(prefix), d. h. links funktioniert sowohl der Modul-Präfix
+# (`twin_adapter`) als auch der volle Spec (`twin_adapter.plugin:register`).
+# Leer = keine solche Bindung (Public-Build unverändert); der Plugin-Name bleibt
+# aus dem generischen Default heraus — das Deployment, das das Plugin ausliefert,
 # setzt die Bindung.
 PLUGIN_MCP_BINDINGS=
 
 # Beispiele
 PLUGIN_MODULE=example_pkg.plugin:register
 PLUGIN_MODULES=pkg_a.plugin:register,pkg_b.plugin:register
-PLUGIN_MCP_BINDINGS=some_adapter:some_server
+PLUGIN_MCP_BINDINGS=some_adapter=some_server
 ```
 
 **Defaults:**
