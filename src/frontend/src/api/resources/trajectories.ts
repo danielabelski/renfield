@@ -34,14 +34,16 @@ export interface TrajectoryStats {
   retention_days: number;
 }
 
-export interface TrajectoryListFilters {
+// `type` (not `interface`) so it satisfies the `Record<string, unknown>` param
+// of keys.trajectories.list() — interfaces lack the implicit index signature.
+export type TrajectoryListFilters = {
   user_id?: number;
   outcome?: TrajectoryOutcome;
   flagged_only?: boolean;
   since_days?: number;
   limit?: number;
   offset?: number;
-}
+};
 
 async function fetchTrajectories(filters: TrajectoryListFilters): Promise<TrajectorySummary[]> {
   const response = await apiClient.get<TrajectorySummary[]>('/api/trajectories', {
