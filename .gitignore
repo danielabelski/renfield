@@ -126,3 +126,11 @@ tests/eval/schicht_a_fixtures_local/
 
 # Custom wakeword models are fetched into the build context, not committed
 src/satellite/models/
+
+# Command-center design assets — ~41MB of screenshots/video for the DECOMMISSIONED
+# admin board (docs/design/command-center.md is SUPERSEDED). Kept locally, never
+# committed (permanent repo bloat).
+docs/design/assets/
+
+# Flash-erase scratch image (4MB of 0xFF) — regenerable, never commit.
+src/satellite/hardware/xvf3800/firmware/*_all_ff.bin
