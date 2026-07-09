@@ -620,9 +620,11 @@ angezeigt). Rollout gestaffelt: dark → Flotte einschreiben → `…_ENABLED=tr
 # opuslib/libopus0 sind aus dem Backend-Image entfernt). STT/Speaker-Pfade
 # unverändert. Setzt voice_server_url voraus. Satellit-Seite: satellite.yaml
 # audio.codec: "opus" PLUS opuslib + libopus0 auf dem Satelliten (Encode-Seite):
-# bare-metal über group_vars satellite_python_packages (opuslib) + system_packages
-# (libopus0), k8s-Pod-Sat (Esszimmer) über das Satelliten-Image. Fehlt opuslib,
-# fällt der Satellit auf pcm zurück. Flotte auf Opus (2026-07-09): Fitnessraum,
+# bare-metal über die dedizierte opuslib-Task in provision.yml ([python, app],
+# damit auch ein Code-only `--tags app`-Deploy sie mitnimmt) + libopus0 in
+# satellite_system_packages ([system]), k8s-Pod-Sat (Esszimmer) über das
+# Satelliten-Image (Dockerfile). Fehlt opuslib/libopus0, fällt der Satellit
+# graceful auf pcm zurück. Flotte auf Opus (2026-07-09): Fitnessraum,
 # Arbeitszimmer, Wohnzimmer, Kinderbad (bare-metal) + Esszimmer (Pod).
 #
 # DEPLOY-INVARIANTE: Vor dem Aktivieren MUSS das Voice-Server-Image opuslib +
