@@ -225,9 +225,15 @@ class AgentContext:
         for step in recent_steps:
             if step.step_type == "tool_call":
                 tool_text = tool_called.format(tool=step.tool)
+                # #686: tool-call args can carry attacker-influenced strings the
+                # agent lifted from untrusted content; json.dumps does NOT escape
+                # < / [, so neutralize the serialized params before the prompt.
+                params_json = neutralize_delimiters(
+                    json.dumps(step.parameters, ensure_ascii=False)
+                )
                 lines.append(
                     f"  {step_label} {step.step_number}: {tool_text}"
-                    f" mit {json.dumps(step.parameters, ensure_ascii=False)}"
+                    f" mit {params_json}"
                 )
             elif step.step_type == "tool_result":
                 if step.data is not None:
@@ -245,7 +251,9 @@ class AgentContext:
                 lines.append(f"  {result_label} {safe_content}")
                 lines.append("  </tool_result>")
             elif step.step_type == "error":
-                lines.append(f"  {error_label} {step.content[:1500]}")
+                # #686: error text can echo attacker-influenced provider/exception
+                # strings into the same unframed scratchpad — neutralize it too.
+                lines.append(f"  {error_label} {neutralize_delimiters(step.content[:1500])}")
 
         return "\n".join(lines)
 
@@ -1057,12 +1065,16 @@ class AgentService:
                 room_name=room_context["room_name"]
             )
 
-        # Conversation context prefix: context vars + summary before raw history
+        # Conversation context prefix: context vars + summary before raw history.
+        # #686: both are DERIVED from earlier (possibly-injected) tool/document
+        # content — context vars are harvested from tool results, the summary is
+        # LLM-generated over prior turns — and re-enter the prompt here on later
+        # turns, so neutralize their delimiters at this re-injection chokepoint.
         conv_prefix = ""
         if context_vars_text:
-            conv_prefix += f"## Conversation Context\n{context_vars_text}\n\n"
+            conv_prefix += f"## Conversation Context\n{neutralize_delimiters(context_vars_text)}\n\n"
         if summary_text:
-            conv_prefix += f"## Earlier in this conversation\n{summary_text}\n\n"
+            conv_prefix += f"## Earlier in this conversation\n{neutralize_delimiters(summary_text)}\n\n"
 
         # With 32k context, include conversation history for follow-up references
         # like "Schick die gleiche Rechnung nochmal" or "Und wie ist es morgen?"
@@ -1079,7 +1091,12 @@ class AgentService:
             history_lines = []
             for msg in recent:
                 role = "User" if msg.get("role") == "user" else "Assistant"
-                content = _compress_history_message(msg.get("content", ""))
+                # #686: prior-turn content can echo injected document/tool text
+                # (the exact structural-breakout the fix targets) and re-enters
+                # the prompt here via the multi-turn history — neutralize it.
+                content = neutralize_delimiters(
+                    _compress_history_message(msg.get("content", ""))
+                )
                 # Mark assistant turns where the tool action failed. Without
                 # this marker the LLM has no way to tell a transient past
                 # failure (config bug, network blip) from the current state
@@ -1219,10 +1236,15 @@ class AgentService:
             b for b in (tool_corrections, tool_health_warnings, learned_skills) if b
         )
 
-        # Build prompt from externalized template (role-specific or default)
+        # Build prompt from externalized template (role-specific or default).
+        # #686: the user message fills the <user_message> DATA frame; neutralize
+        # it so a crafted message can't close </user_message> and forge a
+        # <tool_result> the model would treat as prior tool output (a real
+        # escalation vector when a low-privilege household voice is the author).
+        safe_message = neutralize_delimiters(message)
         prompt = prompt_manager.get(
             "agent", self._prompt_key, lang=lang,
-            message=message,
+            message=safe_message,
             room_context=room_context_str,
             conv_context=conv_context,
             memory_context=memory_context,
@@ -1240,7 +1262,7 @@ class AgentService:
             logger.debug(f"Prompt key '{self._prompt_key}' not found, falling back to 'agent_prompt'")
             prompt = prompt_manager.get(
                 "agent", "agent_prompt", lang=lang,
-                message=message,
+                message=safe_message,
                 room_context=room_context_str,
                 conv_context=conv_context,
                 memory_context=memory_context,

@@ -15,19 +15,19 @@ instructions" framing (semantic injection is handled there).
 """
 import re
 
-# XML-style structural tags the agent/RAG prompt uses to frame content. These are
-# the boundaries the prompt's SECURITY NOTE relies on to separate DATA from
-# instructions (prompts/agent.yaml: <user_message> <tool_result> <memory_context>
-# <conversation_history> <context_variables> <uploaded_document>) plus the generic
-# role/content tags. Multi-word tags are listed BEFORE their prefixes so the
-# alternation matches the longest form (a bare ``context``/``user`` alternative
-# would never mis-match ``context_variables``/``user_message`` because of the
-# trailing ``\b``, but ordering keeps the intent obvious).
+# The EXACT structural tags the agent/RAG prompt uses to frame content — the
+# boundaries the prompt's SECURITY NOTE relies on to separate DATA from
+# instructions (prompts/agent.yaml). ONLY these real framing tags are
+# neutralized. Generic role/content words (`system`, `user`, `assistant`,
+# `document`, `context`) are DELIBERATELY EXCLUDED: they are not prompt
+# boundaries here, and rewriting them would corrupt legitimate document text
+# that happens to contain literal ``<system>`` / ``<user>`` markup (e.g. a doc
+# discussing ChatML) — a real regression caught in review. Neutralizing a tag
+# the model doesn't treat as a boundary buys no security and mangles content.
 _TAG_RE = re.compile(
     r"<\s*/?\s*("
     r"tool_result|tool_call|memory_context|conversation_history|"
-    r"context_variables|uploaded_document|user_message|"
-    r"document|context|system|user|assistant"
+    r"context_variables|uploaded_document|user_message"
     r")\b",
     re.IGNORECASE,
 )
