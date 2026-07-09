@@ -51,9 +51,29 @@ ansible-playbook -i inventory.yml provision.yml --limit satellite-fitnessraum --
 
 # Just update models
 ansible-playbook -i inventory.yml provision.yml --limit satellite-fitnessraum --tags models
+
+# Just (re)apply WM8960 audio-mixer tuning (ALC + mic input path) — restart-free
+ansible-playbook -i inventory.yml provision.yml --limit satellite-wohnzimmer --tags audio
 ```
 
-Available tags: `system`, `boot`, `driver`, `python`, `app`, `config`, `models`, `service`
+Available tags: `system`, `boot`, `driver`, `python`, `app`, `config`, `models`, `service`, `audio`
+
+### WM8960 audio tuning (`2mic` / Whisplay)
+
+openWakeWord scores on raw amplitude, so WM8960-based HATs need mixer tuning in
+front of the model (`--tags audio`, restart-free):
+
+- **ALC** (`wm8960_alc_enabled`, + `wm8960_alc_*` / `wm8960_noise_gate_*`) —
+  hardware AGC that lifts quiet/far speech toward a target level.
+- **Input capture path** (`wm8960_input_path_enabled`, + `wm8960_input_boost`
+  0–3) — routes the mics to the ADC (unmutes the input path) and sets the
+  **pre-ALC** Input Boost. The Seeed 2-Mic (`2mic`) ships this **muted / maxed**,
+  which starves the ADC — a `2mic` sat that never fires a wakeword is almost
+  certainly this. An SNR sweep found the maxed boost (+29 dB) buries speech in
+  ALC-amplified noise (SNR ~4.6 dB); `wm8960_input_boost: 1` (+13 dB) → ~17.8 dB.
+  The ALC normalizes loudness, so the **Input Boost, not the PGA, is the SNR
+  lever**. NB: `2mic-v2` is a different codec (TLV320AIC3x) — these vars don't
+  apply. Persisted on-device by `alsactl store`.
 
 ## Dry Run
 
