@@ -56,6 +56,7 @@ interface SnapOverrides {
   weather?: unknown;
   now_playing?: unknown[];
   mcp?: unknown;
+  internal_health?: unknown[];
 }
 
 function snapshot(satState: string, over: SnapOverrides = {}) {
@@ -73,6 +74,7 @@ function snapshot(satState: string, over: SnapOverrides = {}) {
     },
     mcp: over.mcp ?? mcp,
     tool_health: [],
+    internal_health: over.internal_health ?? [],
     roles,
     activity: [],
     peers: [],
@@ -117,6 +119,39 @@ describe('KioskPage', () => {
     expect(screen.getByText('1/2 gesund')).toBeInTheDocument();
     const svg = document.querySelector('svg[role="img"]') as SVGElement;
     expect(svg).toBeTruthy();
+  });
+
+  it('renders the internal subsystem nodes with their real health, and reacts to a delta', async () => {
+    renderWithProviders(<KioskPage />);
+    pushSnapshot(
+      snapshot('idle', {
+        internal_health: [
+          { id: 'presence', health: 'degraded', impaired_code: 'presence_satellite_unauthenticated' },
+          { id: 'knowledge', health: 'healthy', impaired_code: null },
+          { id: 'media', health: 'down', impaired_code: 'media_disabled' },
+        ],
+      }),
+    );
+    const health = (id: string) =>
+      document.querySelector(`[data-tool-id="${id}"]`)?.getAttribute('data-tool-health');
+    await waitFor(() => {
+      // no longer the permanent gray 'unknown' — each carries a real verdict
+      expect(health('presence')).toBe('degraded');
+    });
+    expect(health('knowledge')).toBe('healthy');
+    expect(health('media')).toBe('down');
+
+    // a pushed internal_health_changed delta re-colours the node live
+    const ws = MockWebSocket.instances[MockWebSocket.instances.length - 1];
+    act(() => {
+      ws.fireMessage({
+        type: 'internal_health_changed',
+        subsystems: [{ id: 'presence', health: 'healthy', impaired_code: null }],
+      });
+    });
+    await waitFor(() => {
+      expect(health('presence')).toBe('healthy');
+    });
   });
 
   it('drives the core into a voice state from a listening satellite', async () => {

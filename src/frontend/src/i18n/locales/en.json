@@ -1885,7 +1885,13 @@
     "healthy": "healthy",
     "impaired": {
       "plugin_failed": "backend plugin not loaded",
-      "no_tools": "connected, no tools"
+      "no_tools": "connected, no tools",
+      "presence_disabled": "Presence detection disabled",
+      "presence_no_satellite": "No satellite online",
+      "presence_satellite_unauthenticated": "Satellite not enrolled — receiving no IRK keys",
+      "knowledge_worker_down": "Ingest worker unreachable",
+      "knowledge_queue_backed_up": "Processing queue backed up",
+      "media_disabled": "Media follow disabled"
     },
     "inRoom": "{{state}} · {{room}}",
     "presentValue": "{{people}} in {{rooms}} rooms",
@@ -1907,7 +1913,8 @@
       "present": "Present / healthy",
       "empty": "Online · empty",
       "offline": "Offline",
-      "down": "Down"
+      "down": "Down",
+      "degraded": "Degraded"
     },
     "noSatellite": "No satellite",
     "toolHint_one": "{{count}} tool",

@@ -80,6 +80,33 @@ export interface KioskToolHealth {
   degraded: boolean;
 }
 
+/** Health verdict for an internal-only subsystem (knowledge / presence / media)
+ *  — the three synthetic pseudo-nodes. `health` mirrors the MCP-node axis;
+ *  `impaired_code` is a machine reason the frontend localizes. */
+export interface KioskInternalHealth {
+  id: string;
+  health: NodeHealth;
+  impaired_code?: string | null;
+}
+
+/** Folded id → verdict map (built from the snapshot's `internal_health` array
+ *  and each `internal_health_changed` delta). */
+export type InternalHealthMap = Record<
+  string,
+  { health: NodeHealth; impaired_code?: string | null }
+>;
+
+/** Fold the wire array into the id-keyed map the model reads. */
+function foldInternalHealth(list: KioskInternalHealth[] | undefined): InternalHealthMap {
+  const map: InternalHealthMap = {};
+  for (const entry of list ?? []) {
+    if (entry && typeof entry.id === 'string' && entry.id) {
+      map[entry.id] = { health: entry.health, impaired_code: entry.impaired_code ?? null };
+    }
+  }
+  return map;
+}
+
 export interface KioskPeer {
   id: string;
   name: string;
@@ -102,6 +129,10 @@ export interface KioskLiveModel {
   peers: KioskPeer[];
   weather: KioskWeather | null;
   nowPlaying: KioskNowPlaying[];
+  /** id → health verdict for the internal-only subsystem pseudo-nodes
+   *  (knowledge / presence / media). Empty until the first snapshot; an id
+   *  missing here renders 'unknown' (gray). */
+  internalHealth: InternalHealthMap;
   /** True while ≥1 web-chat turn is being processed → the core shows
    *  "processing" even with no satellite active (typed commands have no room). */
   chatActive: boolean;
@@ -130,6 +161,7 @@ interface SnapshotMessage {
   };
   mcp?: KioskMcp;
   tool_health?: KioskToolHealth[];
+  internal_health?: KioskInternalHealth[];
   roles?: AgentRoleInfo[];
   activity?: RoleActivityEntry[];
   peers?: KioskPeer[];
@@ -185,6 +217,11 @@ interface WeatherUpdatedDelta {
   weather?: KioskWeather | null;
 }
 
+interface InternalHealthChangedDelta {
+  type: 'internal_health_changed';
+  subsystems?: KioskInternalHealth[];
+}
+
 interface TurnActivityDelta {
   type: 'turn_activity';
   role: string;
@@ -202,6 +239,7 @@ type KioskMessage =
   | NowPlayingChangedDelta
   | ToolHealthChangedDelta
   | WeatherUpdatedDelta
+  | InternalHealthChangedDelta
   | TurnActivityDelta
   | ChatActivityDelta
   | { type: string; [key: string]: unknown };
@@ -220,6 +258,7 @@ const EMPTY_MODEL: KioskLiveModel = {
   peers: [],
   weather: null,
   nowPlaying: [],
+  internalHealth: {},
   chatActive: false,
   subsystemPulses: {},
 };
@@ -259,6 +298,7 @@ function hydrate(prev: KioskLiveModel, msg: SnapshotMessage): KioskLiveModel {
     peers: msg.peers ?? [],
     weather: msg.weather ?? null,
     nowPlaying: msg.now_playing ?? [],
+    internalHealth: foldInternalHealth(msg.internal_health),
     chatActive: msg.chat_active ?? false,
     // Preserve the pulse map: it is delta-sourced and self-decays in the view,
     // so a reconnect snapshot must not wipe an in-flight subsystem pulse.
@@ -390,6 +430,13 @@ function reduce(state: KioskLiveModel, msg: KioskMessage): KioskLiveModel {
     case 'weather_updated': {
       const delta = msg as WeatherUpdatedDelta;
       return { ...state, weather: delta.weather ?? null };
+    }
+
+    case 'internal_health_changed': {
+      // Full replace — the backend recomputes and pushes the whole set on any
+      // change (diff-gated), so we never merge partial verdicts.
+      const delta = msg as InternalHealthChangedDelta;
+      return { ...state, internalHealth: foldInternalHealth(delta.subsystems) };
     }
 
     case 'chat_activity': {

@@ -203,19 +203,34 @@ function buildCommandCenterModel(
   });
 
   // Append the internal-only subsystem pseudo-nodes (knowledge / presence /
-  // media) so an `internal.*` turn has a node to light. Pulse-only: no health,
-  // excluded from the tool-health telemetry counts below. Skip any id that a
-  // REAL MCP server already owns (e.g. an operator adds an output-provider
-  // stanza named `media`) — the real node wins and handles that pulse, and we
-  // never emit a duplicate `data-tool-id` / React key.
+  // media) so an `internal.*` turn has a node to light. They now carry a REAL
+  // health verdict pushed by the backend (`internalHealth`): healthy/degraded/
+  // down, defaulting to 'unknown' (gray) until the first verdict lands. Still
+  // `synthetic` so they stay out of the MCP tool-health telemetry counts. Skip
+  // any id a REAL MCP server already owns (e.g. an operator adds an
+  // output-provider stanza named `media`) — the real node wins and handles that
+  // pulse, and we never emit a duplicate `data-tool-id` / React key.
   const realServerIds = new Set(tools.map((tool) => tool.id));
   for (const node of INTERNAL_SUBSYSTEM_NODES) {
     if (realServerIds.has(node.id)) continue;
+    const verdict = live.internalHealth[node.id];
+    const health: NodeHealth = verdict?.health ?? 'unknown';
+    // Localize the machine reason code (never render a raw backend string —
+    // i18n rule); fall back to a generic per-health hint.
+    const hint = verdict?.impaired_code
+      ? t(`kiosk.impaired.${verdict.impaired_code}`, {
+          defaultValue:
+            health === 'down'
+              ? t('kiosk.legend.down', { defaultValue: 'Offline' })
+              : t('kiosk.legend.degraded', { defaultValue: 'Degraded' }),
+        })
+      : undefined;
     tools.push({
       id: node.id,
       label: t(node.labelKey, { defaultValue: node.fallback }),
-      health: 'unknown',
+      health,
       synthetic: true,
+      hint,
     });
   }
 

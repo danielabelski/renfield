@@ -1885,7 +1885,13 @@
     "healthy": "gesund",
     "impaired": {
       "plugin_failed": "Backend-Plugin nicht geladen",
-      "no_tools": "verbunden, aber keine Tools"
+      "no_tools": "verbunden, aber keine Tools",
+      "presence_disabled": "Präsenzerkennung deaktiviert",
+      "presence_no_satellite": "Kein Satellit online",
+      "presence_satellite_unauthenticated": "Satellit nicht angemeldet – empfängt keine IRK-Schlüssel",
+      "knowledge_worker_down": "Ingest-Worker nicht erreichbar",
+      "knowledge_queue_backed_up": "Verarbeitungs-Warteschlange überlastet",
+      "media_disabled": "Medien-Follow deaktiviert"
     },
     "inRoom": "{{state}} · {{room}}",
     "presentValue": "{{people}} in {{rooms}} Räumen",
@@ -1907,7 +1913,8 @@
       "present": "Anwesend / gesund",
       "empty": "Online · leer",
       "offline": "Offline",
-      "down": "Ausgefallen"
+      "down": "Ausgefallen",
+      "degraded": "Beeinträchtigt"
     },
     "noSatellite": "Kein Satellit",
     "toolHint_one": "{{count}} Tool",

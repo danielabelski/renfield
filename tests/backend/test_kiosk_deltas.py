@@ -285,10 +285,15 @@ async def test_tool_health_broadcast_on_transition():
 
     events = _events_of_type(bcast, "tool_health_changed")
     assert len(events) == 1
+    # The delta carries the folded health + reason code the snapshot does (added
+    # with the node-degraded-health feature) — a healthy reconnect is health
+    # 'healthy' with no impaired_code.
     assert events[0] == {
         "type": "tool_health_changed",
         "server": "weather",
         "connected": True,
+        "health": "healthy",
+        "impaired_code": None,
     }
     assert state.connected is True
 

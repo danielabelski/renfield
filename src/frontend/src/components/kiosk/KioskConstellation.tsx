@@ -335,11 +335,13 @@ export default function KioskConstellation({ kiosk }: Props) {
           const deg = at(i, tools.length, toolOffset);
           const [x, y] = polar(R_TOOLS, deg);
           const [lx, ly] = polar(R_TOOLS + 22, deg);
-          // Synthetic internal pseudo-nodes (knowledge / presence / media) carry
-          // no health — render them as a dim, dotted placeholder that only comes
-          // alive on a pulse, visually distinct from a monitored MCP tool.
-          const col = tool.synthetic ? C.unknown : healthColor(tool.health);
-          const on = !tool.synthetic && (tool.health === 'healthy' || tool.health === 'degraded');
+          // Internal pseudo-nodes (knowledge / presence / media) now carry a
+          // real health verdict too. Only fall back to the dim, dotted "no data"
+          // placeholder when the health is genuinely unknown (no verdict pushed
+          // yet); otherwise render exactly like a monitored MCP tool.
+          const known = tool.health !== 'unknown';
+          const col = known ? healthColor(tool.health) : C.unknown;
+          const on = tool.health === 'healthy' || tool.health === 'degraded';
           // Active-subsystem pulse: a turn_activity naming this MCP server lights
           // its node. The signal rides TWO channels (WCAG 1.4.1 — not colour
           // alone): the turquoise ACTIVE accent AND an expanding concentric ring
@@ -349,7 +351,8 @@ export default function KioskConstellation({ kiosk }: Props) {
           const active = pulse > 0;
           const ringR = reduced ? 20 : 14 + (1 - pulse) * 16;
           return (
-            <g key={`tool-${tool.id}`} data-tool-id={tool.id} data-tool-active={active ? '1' : undefined}>
+            <g key={`tool-${tool.id}`} data-tool-id={tool.id} data-tool-health={tool.health}
+              data-tool-active={active ? '1' : undefined}>
               {active && (
                 <circle cx={x} cy={y} r={ringR} fill="none" stroke={C.active}
                   strokeWidth={2} strokeOpacity={0.28 + 0.55 * pulse}
@@ -358,8 +361,8 @@ export default function KioskConstellation({ kiosk }: Props) {
               <rect x={x - 8} y={y - 8} width={16} height={16} rx={3} transform={`rotate(45 ${x} ${y})`}
                 fill={active ? C.active : on ? col : 'none'}
                 stroke={active ? C.active : col} strokeWidth={2.5}
-                strokeOpacity={tool.synthetic && !active ? 0.55 : 1}
-                strokeDasharray={tool.synthetic ? '1 3' : tool.health === 'down' ? '3 3' : undefined}
+                strokeOpacity={!known && !active ? 0.55 : 1}
+                strokeDasharray={!known ? '1 3' : tool.health === 'down' ? '3 3' : undefined}
                 filter={on || active ? 'url(#k-glow)' : undefined} />
               <text x={lx} y={ly + 5} textAnchor={anchorFor(lx)} fontSize={16}
                 fill={active ? '#eafffb' : C.dim} fontWeight={active ? 600 : 400}>{tool.label}</text>

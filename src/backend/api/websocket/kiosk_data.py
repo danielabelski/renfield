@@ -198,6 +198,154 @@ async def broadcast_turn_activity(
 
 
 # ---------------------------------------------------------------------------
+# Internal-subsystem health (knowledge / presence / media). The kiosk draws three
+# synthetic pseudo-nodes for the platform-core `internal.*` subsystems that have
+# no MCP server (INTERNAL_SUBSYSTEM_NODES, useKioskModel.ts). They were permanent
+# gray "unknown" placeholders — pulse-only, no status — which on a wall board read
+# as broken. This gives each a REAL healthy/degraded/down verdict from live
+# backend state so an impaired subsystem is visible instead of a silent gray
+# diamond. Each verdict carries an optional machine `impaired_code` the frontend
+# localizes (i18n rule), mirroring the MCP-server `impaired_code` contract.
+#
+# Grounded signals only — no invented metrics:
+#   * presence  — presence_enabled + the satellite fleet's ability to deliver BLE
+#     reports. An enrolled-but-unauthenticated satellite receives no IRK push and
+#     silently reports nothing (the exact failure that mislocated a phone on
+#     2026-07-09), so that reads as degraded.
+#   * knowledge — the ingest worker liveness + Redis queue depth (the same probe
+#     `internal.ingest_status` surfaces).
+#   * media     — media-follow enabled/disabled. No cheap output-target
+#     reachability probe exists, so media is availability-only (healthy/down); a
+#     "no reachable target" degraded signal is a follow-up, deliberately NOT faked.
+# ---------------------------------------------------------------------------
+
+# The subsystem ids the kiosk draws as internal pseudo-nodes. MUST stay in sync
+# with the frontend INTERNAL_SUBSYSTEM_NODES (components/kiosk/useKioskModel.ts).
+INTERNAL_SUBSYSTEM_IDS = ("knowledge", "presence", "media")
+
+# A knowledge ingest backlog deeper than this reads as degraded (the worker is up
+# but not keeping pace). Named, not magic — mirrors the other module thresholds.
+_KNOWLEDGE_QUEUE_DEGRADED_ABOVE = 100
+
+
+class InternalSubsystemHealth(BaseModel):
+    id: str
+    health: str  # "healthy" | "degraded" | "down"
+    impaired_code: str | None = None
+
+
+async def _presence_health() -> "InternalSubsystemHealth":
+    from ha_glue.utils.config import ha_glue_settings
+
+    if not ha_glue_settings.presence_enabled:
+        return InternalSubsystemHealth(
+            id="presence", health="down", impaired_code="presence_disabled"
+        )
+    try:
+        from ha_glue.services.satellite_manager import get_satellite_manager
+
+        sats = list(get_satellite_manager().satellites.values())
+    except Exception:
+        sats = []
+    if not sats:
+        return InternalSubsystemHealth(
+            id="presence", health="degraded", impaired_code="presence_no_satellite"
+        )
+    # When per-satellite enrollment is on, a connected-but-unauthenticated
+    # satellite gets no IRK push, so it can't resolve rotating-RPA phones and
+    # contributes nothing to room arbitration — silently. Surface it as degraded.
+    if settings.satellite_enrollment_enabled and any(
+        not getattr(s, "authenticated", False) for s in sats
+    ):
+        return InternalSubsystemHealth(
+            id="presence",
+            health="degraded",
+            impaired_code="presence_satellite_unauthenticated",
+        )
+    return InternalSubsystemHealth(id="presence", health="healthy")
+
+
+async def _knowledge_health() -> "InternalSubsystemHealth":
+    try:
+        from api.routes.knowledge import _worker_is_alive
+        from services.redis_client import get_redis
+        from services.task_queue import DocumentTaskQueue
+
+        worker_alive = await _worker_is_alive()
+        queue_depth = await DocumentTaskQueue(redis_client=get_redis()).stream_length()
+    except Exception as e:  # noqa: BLE001 — a failed probe IS a degraded signal
+        logger.debug(f"kiosk internal health: knowledge probe failed: {e}")
+        return InternalSubsystemHealth(
+            id="knowledge", health="degraded", impaired_code="knowledge_worker_down"
+        )
+    if worker_alive is False:
+        return InternalSubsystemHealth(
+            id="knowledge", health="degraded", impaired_code="knowledge_worker_down"
+        )
+    if isinstance(queue_depth, int) and queue_depth > _KNOWLEDGE_QUEUE_DEGRADED_ABOVE:
+        return InternalSubsystemHealth(
+            id="knowledge", health="degraded", impaired_code="knowledge_queue_backed_up"
+        )
+    return InternalSubsystemHealth(id="knowledge", health="healthy")
+
+
+async def _media_health() -> "InternalSubsystemHealth":
+    from ha_glue.utils.config import ha_glue_settings
+
+    if not ha_glue_settings.media_follow_enabled:
+        return InternalSubsystemHealth(
+            id="media", health="down", impaired_code="media_disabled"
+        )
+    return InternalSubsystemHealth(id="media", health="healthy")
+
+
+async def compute_internal_subsystem_health() -> list[dict]:
+    """Health verdicts for the kiosk's three internal pseudo-nodes.
+
+    Best-effort per subsystem: a probe that raises degrades THAT subsystem's
+    readout rather than aborting the whole list. Content-free (ids + verdicts)."""
+    out: list[dict] = []
+    for compute in (_presence_health, _knowledge_health, _media_health):
+        try:
+            out.append((await compute()).model_dump())
+        except Exception as e:  # noqa: BLE001 — never abort the whole readout
+            logger.debug(f"kiosk internal health: {compute.__name__} failed: {e}")
+    return out
+
+
+# How often the backend recomputes internal-subsystem health for the push
+# refresher. Fast enough that a wall board reflects an enrollment/worker fault
+# within a glance, cheap enough to run continuously (in-memory + one Redis probe).
+_INTERNAL_HEALTH_REFRESH_SECONDS = 30
+
+# Last internal-health list PUSHED to the kiosk hub, so the refresher only
+# broadcasts on an actual change (diff-gate). None until the first push.
+_internal_health_last_pushed: list[dict] | None = None
+
+
+async def refresh_and_push_internal_health() -> None:
+    """Backend-internal internal-subsystem-health refresh → PUSH on change.
+
+    The backing state (enrollment/auth, ingest worker liveness, Redis queue depth)
+    has no push of its own, so a timer recomputes and streams an
+    ``internal_health_changed`` delta only when a verdict changes — the same
+    diff-gated, fire-and-forget pattern as the weather tile."""
+    global _internal_health_last_pushed
+    health = await compute_internal_subsystem_health()
+    if health == _internal_health_last_pushed:
+        return
+    _internal_health_last_pushed = health
+    try:
+        from api.websocket.kiosk_handler import broadcast_kiosk_event
+
+        await broadcast_kiosk_event(
+            {"type": "internal_health_changed", "subsystems": health}
+        )
+    except Exception as e:
+        logger.debug(f"kiosk internal_health_changed broadcast failed: {e}")
+
+
+# ---------------------------------------------------------------------------
 # Ambient kiosk weather tile. Read-only, degrades to None (never an error) when
 # the feature is off or the source is unavailable, so the kiosk hides the tile.
 # ---------------------------------------------------------------------------

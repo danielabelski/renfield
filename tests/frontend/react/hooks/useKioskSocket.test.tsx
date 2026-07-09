@@ -72,6 +72,10 @@ function baseSnapshot() {
       servers: [{ name: 'homeassistant', connected: true, transport: 'stdio', tool_count: 10 }],
     },
     tool_health: [{ tool_name: 'mcp.homeassistant.turn_on', total: 10, success_rate: 1, degraded: false }],
+    internal_health: [
+      { id: 'presence', health: 'degraded', impaired_code: 'presence_satellite_unauthenticated' },
+      { id: 'knowledge', health: 'healthy', impaired_code: null },
+    ],
     roles: [
       { name: 'general', description: { de: 'Allgemein', en: 'General' }, mcp_servers: null, internal_tools: null, has_agent_loop: true },
     ],
@@ -124,6 +128,35 @@ describe('useKioskSocket', () => {
     expect(m.peers[0].name).toBe('Peer');
     expect(m.weather?.location).toBe('Musterstadt');
     expect(m.nowPlaying[0].title).toBe('Radio');
+    // internal-subsystem health folds into an id-keyed map
+    expect(m.internalHealth.presence).toEqual({
+      health: 'degraded',
+      impaired_code: 'presence_satellite_unauthenticated',
+    });
+    expect(m.internalHealth.knowledge.health).toBe('healthy');
+  });
+
+  it('folds an internal_health_changed delta (full replace) onto the map', () => {
+    const { result } = renderHook(() => useKioskSocket());
+    act(() => {
+      latest().fireOpen();
+      latest().fireMessage(baseSnapshot());
+    });
+    expect(result.current.live.internalHealth.presence.health).toBe('degraded');
+    act(() => {
+      latest().fireMessage({
+        type: 'internal_health_changed',
+        subsystems: [
+          { id: 'presence', health: 'healthy', impaired_code: null },
+          { id: 'media', health: 'down', impaired_code: 'media_disabled' },
+        ],
+      });
+    });
+    const ih = result.current.live.internalHealth;
+    // full replace: presence flips healthy, media appears, knowledge is gone
+    expect(ih.presence.health).toBe('healthy');
+    expect(ih.media).toEqual({ health: 'down', impaired_code: 'media_disabled' });
+    expect(ih.knowledge).toBeUndefined();
   });
 
   it('folds a satellite_state delta onto the matching satellite', () => {
