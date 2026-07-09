@@ -102,19 +102,21 @@ wm8960_noise_gate_threshold: 5         # 0-31 (1.5dB steps), a few steps above t
 # the mic never reaches the ADC. Enable per-host to route + unmute + set the
 # pre-ALC Input Boost. Off by default (no effect on Whisplay, which is fine).
 wm8960_input_path_enabled: false       # enable the mic→ADC input-routing task
-wm8960_input_boost: 1                  # pre-ALC Input Boost Mixer 0-3 (+11..+29dB); 1 (+13dB) tuned for SNR
+# pre-ALC Input Boost Mixer level. VALID RANGE 1-3 (+13/+21/+29 dB). Do NOT use
+# 0 — it disconnects the boost mixer and re-MUTES the mic (the exact bug this
+# task fixes). 1 (+13 dB) is tuned for SNR (higher buries speech in ALC noise).
+wm8960_input_boost: 1
 
 # LED
 led_brightness: 20
 led_night_brightness: 5
 led_type: "apa102"
-# LED GPIO pins — only meaningful for led_type "gpio_rgb"; the template emits
-# gpio_red/green/blue for every led_type, so they need defaults (harmless/unused
-# on apa102/xvf3800). led_power_pin is guarded by `is not none`, so null omits
-# it; a gpio_rgb host with a power-enable pin overrides these in host_vars.
-led_gpio_red: 0
-led_gpio_green: 0
-led_gpio_blue: 0
+# led_power_pin is referenced (guarded by `is not none`) in the non-gpio_rgb LED
+# branch that apa102/xvf3800 hit, so it must be DEFINED — null omits the line.
+# A gpio_rgb host with a power-enable pin sets it in host_vars.
+# (led_gpio_red/green/blue are deliberately NOT defaulted: they're emitted only
+# for led_type "gpio_rgb", so a gpio_rgb host that forgets them should fail LOUD
+# at render rather than silently drive reserved BCM GPIO0.)
 led_power_pin: null
 
 # Display

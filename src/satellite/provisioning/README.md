@@ -66,7 +66,7 @@ front of the model (`--tags audio`, restart-free):
 - **ALC** (`wm8960_alc_enabled`, + `wm8960_alc_*` / `wm8960_noise_gate_*`) —
   hardware AGC that lifts quiet/far speech toward a target level.
 - **Input capture path** (`wm8960_input_path_enabled`, + `wm8960_input_boost`
-  0–3) — routes the mics to the ADC (unmutes the input path) and sets the
+  1–3; 0 re-mutes) — routes the mics to the ADC (unmutes the input path) and sets the
   **pre-ALC** Input Boost. The Seeed 2-Mic (`2mic`) ships this **muted / maxed**,
   which starves the ADC — a `2mic` sat that never fires a wakeword is almost
   certainly this. An SNR sweep found the maxed boost (+29 dB) buries speech in
