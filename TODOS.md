@@ -152,6 +152,7 @@ If ui_sweep noise shows up in real use, mark original sweep row `superseded=true
 - **High priority:** audio preprocessing (noise reduction) on backend for resource-constrained satellites — alternative: XVF3800 hardware AEC (see `docs/XVF3800_SATELLITE.md`)
 - **Medium priority:** ~~Opus audio compression (~50% bandwidth)~~ ✅ BUILT as C1 (binary WS frames, dark: `SATELLITE_OPUS_ENABLED` + satellite `audio.codec: opus`); ✅ decode moved backend→voice-server (C2 Phase 1) · echo cancellation (software WebRTC APM or XVF3800)
 - **Low priority:** 4-mic beamforming extension · custom wake-word training
+- **Low priority — satellite multi-core / GIL:** the satellite is a single Python asyncio process → GIL-bound, so it uses ~1.3 of the Pi Zero 2 W's 4 cores (measured 2026-07-08 on Arbeitszimmer: openWakeWord onnx pegs one core at 99.9% — it releases the GIL — while the asyncio loop + capture + opus-encode serialize onto ~one more core; ~2.5 cores idle). **Not worth fixing today:** multiprocessing would give true parallelism but (a) **RAM is the blocker** — 512 MB total, the sat already at ~200 MB / 48%, and a second interpreter reloading the onnx model would OOM; (b) IPC copy/latency on the real-time audio hot path (chunk every 80 ms through capture→wakeword→VAD→encode→send); (c) coordination complexity for no current need — the workload fits the ~1.3 cores (load avg ~1.1). Revisit only if a heavier per-satellite workload (e.g. on-device diarization/embeddings, C3) actually needs the idle cores AND the hardware gets more RAM (Pi Zero 2 W → a Pi 4/5-class or the Orange Pi Zero 3 the Esszimmer sat uses). Opus encode itself is a non-issue: measured ~10% of one core, lands on the loop thread, off the hot wakeword core.
 
 ### ~~C1 Opus — move decode from the backend to the voice-server~~ ✅ DONE (C2 Phase 1, 2026-07-07)
 
@@ -162,10 +163,11 @@ to the new voice-server `POST /api/voice/stt-opus`, where
 `voice_server/services/opus_decode.py` owns the one-shot opuslib decode →
 float32 mono 16 kHz PCM. opuslib/libopus0 removed from the backend image. Opus
 decode now lives on the media layer alongside the browser `/ws/voice` ffmpeg
-path — C1 is the on-ramp to C2 as intended. Still dark (`SATELLITE_OPUS_ENABLED`);
-the blocker on fleet rollout is cleared. Tests: backend 23/23 + voice-server 7/7.
+path — C1 is the on-ramp to C2 as intended. **Opus now LIVE fleet-wide** (`SATELLITE_OPUS_ENABLED=true`):
+5/5 online sats negotiate opus (Fitnessraum, Arbeitszimmer, Wohnzimmer, Kinderbad, Esszimmer);
+Benszimmer deferred (offline). Tests: backend 23/23 + voice-server 7/7.
 
-**SOURCE:** architectural review 2026-07-07; `docs/design/voice-identity-wakeword-verification.md` §4 C1 / §5a D6 / §8; PRs #927 (merged C1), #928 (provisioning, held), #930 (D6 amendment), C2 Phase 1 (this decode move).
+**SOURCE:** architectural review 2026-07-07; `docs/design/voice-identity-wakeword-verification.md` §4 C1 / §5a D6 / §8; PRs #927 (merged C1), #928 (provisioning, merged), #930 (D6 amendment), #931 (C2 Phase 1 decode move, merged).
 
 ---
 
