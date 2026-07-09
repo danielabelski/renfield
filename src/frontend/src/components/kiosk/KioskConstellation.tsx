@@ -83,7 +83,11 @@ function ray(r: number, deg: number): [number, number] {
   return [r * Math.cos(a), r * Math.sin(a)];
 }
 function healthColor(h: NodeHealth): string {
-  return h === 'healthy' ? C.healthy : h === 'degraded' ? C.degraded : h === 'down' ? C.down : C.unknown;
+  if (h === 'healthy') return C.healthy;
+  if (h === 'degraded') return C.degraded;
+  if (h === 'down') return C.down;
+  if (h === 'off') return C.off; // disabled-by-config: muted, not the red of 'down'
+  return C.unknown;
 }
 function anchorFor(x: number): 'start' | 'middle' | 'end' {
   const dx = x - CX;
@@ -342,6 +346,9 @@ export default function KioskConstellation({ kiosk }: Props) {
           const known = tool.health !== 'unknown';
           const col = known ? healthColor(tool.health) : C.unknown;
           const on = tool.health === 'healthy' || tool.health === 'degraded';
+          // A subsystem awaiting a verdict ('unknown') OR intentionally off
+          // ('off') renders muted — neither is a fault to alarm on.
+          const muted = !known || tool.health === 'off';
           // Active-subsystem pulse: a turn_activity naming this MCP server lights
           // its node. The signal rides TWO channels (WCAG 1.4.1 — not colour
           // alone): the turquoise ACTIVE accent AND an expanding concentric ring
@@ -353,6 +360,9 @@ export default function KioskConstellation({ kiosk }: Props) {
           return (
             <g key={`tool-${tool.id}`} data-tool-id={tool.id} data-tool-health={tool.health}
               data-tool-active={active ? '1' : undefined}>
+              {/* Native tooltip: the localized health reason (degraded/off) or
+                  the MCP tool-count hint. Inspectable + accessible on the board. */}
+              {tool.hint && <title>{tool.hint}</title>}
               {active && (
                 <circle cx={x} cy={y} r={ringR} fill="none" stroke={C.active}
                   strokeWidth={2} strokeOpacity={0.28 + 0.55 * pulse}
@@ -361,7 +371,7 @@ export default function KioskConstellation({ kiosk }: Props) {
               <rect x={x - 8} y={y - 8} width={16} height={16} rx={3} transform={`rotate(45 ${x} ${y})`}
                 fill={active ? C.active : on ? col : 'none'}
                 stroke={active ? C.active : col} strokeWidth={2.5}
-                strokeOpacity={!known && !active ? 0.55 : 1}
+                strokeOpacity={muted && !active ? 0.55 : 1}
                 strokeDasharray={!known ? '1 3' : tool.health === 'down' ? '3 3' : undefined}
                 filter={on || active ? 'url(#k-glow)' : undefined} />
               <text x={lx} y={ly + 5} textAnchor={anchorFor(lx)} fontSize={16}

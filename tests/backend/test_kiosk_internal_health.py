@@ -44,6 +44,9 @@ def _patch_presence(monkeypatch, *, enabled: bool, enrollment: bool, sats: dict)
 
 
 def _patch_knowledge(monkeypatch, *, alive, depth, raises: bool = False):
+    # _knowledge_health delegates to kb_maintenance_tool.ingest_worker_and_backlog,
+    # which uses _worker_is_alive + DocumentTaskQueue.pending_count() (the LIVE
+    # backlog, not the ever-growing stream length).
     import api.routes.knowledge as kn
     import services.redis_client as rc
     import services.task_queue as tq
@@ -60,7 +63,7 @@ def _patch_knowledge(monkeypatch, *, alive, depth, raises: bool = False):
         def __init__(self, *a, **k):
             pass
 
-        async def stream_length(self):
+        async def pending_count(self):
             return depth
 
     monkeypatch.setattr(tq, "DocumentTaskQueue", _Q)
@@ -68,10 +71,11 @@ def _patch_knowledge(monkeypatch, *, alive, depth, raises: bool = False):
 
 # ------------------------------------------------------------------ presence
 class TestPresenceHealth:
-    async def test_down_when_disabled(self, monkeypatch):
+    async def test_off_when_disabled(self, monkeypatch):
+        # Disabled-by-config is 'off' (muted), NOT 'down' (red/outage).
         _patch_presence(monkeypatch, enabled=False, enrollment=True, sats={})
         v = await _presence_health()
-        assert v.health == "down"
+        assert v.health == "off"
         assert v.impaired_code == "presence_disabled"
 
     async def test_degraded_when_no_satellite(self, monkeypatch):
@@ -151,12 +155,12 @@ class TestKnowledgeHealth:
 
 # ------------------------------------------------------------------ media
 class TestMediaHealth:
-    async def test_down_when_disabled(self, monkeypatch):
+    async def test_off_when_disabled(self, monkeypatch):
         import ha_glue.utils.config as hcfg
 
         monkeypatch.setattr(hcfg.ha_glue_settings, "media_follow_enabled", False)
         v = await _media_health()
-        assert v.health == "down"
+        assert v.health == "off"
         assert v.impaired_code == "media_disabled"
 
     async def test_healthy_when_enabled(self, monkeypatch):
@@ -183,7 +187,7 @@ class TestComputeAndPush:
         assert ids == {"presence", "knowledge", "media"}
         for row in out:
             assert set(row.keys()) == {"id", "health", "impaired_code"}
-            assert row["health"] in {"healthy", "degraded", "down"}
+            assert row["health"] in {"healthy", "degraded", "down", "off"}
 
     async def test_refresh_push_is_diff_gated(self, monkeypatch):
         import api.websocket.kiosk_handler as handler
@@ -213,3 +217,38 @@ class TestComputeAndPush:
         fixed[:] = [{"id": "presence", "health": "degraded", "impaired_code": "x"}]
         await refresh_and_push_internal_health()
         assert len(pushed) == 2
+
+    async def test_broadcast_failure_does_not_advance_gate(self, monkeypatch):
+        # A failed broadcast must NOT advance the gate, or the delta is lost
+        # forever (the next tick would see "no change" and stay silent).
+        import api.websocket.kiosk_handler as handler
+
+        calls = {"n": 0}
+
+        async def _flaky(event):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("hub down")
+
+        monkeypatch.setattr(handler, "broadcast_kiosk_event", _flaky)
+        kiosk_data._internal_health_last_pushed = None
+
+        async def _compute():
+            return [{"id": "media", "health": "off", "impaired_code": "media_disabled"}]
+
+        monkeypatch.setattr(kiosk_data, "compute_internal_subsystem_health", _compute)
+
+        await refresh_and_push_internal_health()  # broadcast raises → gate NOT advanced
+        assert kiosk_data._internal_health_last_pushed is None
+        await refresh_and_push_internal_health()  # retries, succeeds
+        assert calls["n"] == 2
+        assert kiosk_data._internal_health_last_pushed is not None
+
+    async def test_reset_gate_forces_a_repush(self, monkeypatch):
+        from api.websocket.kiosk_data import reset_internal_health_gate
+
+        kiosk_data._internal_health_last_pushed = [
+            {"id": "presence", "health": "healthy", "impaired_code": None}
+        ]
+        reset_internal_health_gate()
+        assert kiosk_data._internal_health_last_pushed is None

@@ -238,8 +238,10 @@ async def _presence_health() -> "InternalSubsystemHealth":
     from ha_glue.utils.config import ha_glue_settings
 
     if not ha_glue_settings.presence_enabled:
+        # 'off' (disabled by config), NOT 'down' — a switched-off subsystem must
+        # not paint the same red/"failed" as a real outage on the wall board.
         return InternalSubsystemHealth(
-            id="presence", health="down", impaired_code="presence_disabled"
+            id="presence", health="off", impaired_code="presence_disabled"
         )
     try:
         from ha_glue.services.satellite_manager import get_satellite_manager
@@ -267,12 +269,12 @@ async def _presence_health() -> "InternalSubsystemHealth":
 
 async def _knowledge_health() -> "InternalSubsystemHealth":
     try:
-        from api.routes.knowledge import _worker_is_alive
-        from services.redis_client import get_redis
-        from services.task_queue import DocumentTaskQueue
+        # Shared probe with `internal.ingest_status` (single source of truth) —
+        # `backlog` is the LIVE pending count (XPENDING), which drains, not the
+        # ever-growing cumulative stream length.
+        from services.kb_maintenance_tool import ingest_worker_and_backlog
 
-        worker_alive = await _worker_is_alive()
-        queue_depth = await DocumentTaskQueue(redis_client=get_redis()).stream_length()
+        worker_alive, backlog = await ingest_worker_and_backlog()
     except Exception as e:  # noqa: BLE001 — a failed probe IS a degraded signal
         logger.debug(f"kiosk internal health: knowledge probe failed: {e}")
         return InternalSubsystemHealth(
@@ -282,7 +284,7 @@ async def _knowledge_health() -> "InternalSubsystemHealth":
         return InternalSubsystemHealth(
             id="knowledge", health="degraded", impaired_code="knowledge_worker_down"
         )
-    if isinstance(queue_depth, int) and queue_depth > _KNOWLEDGE_QUEUE_DEGRADED_ABOVE:
+    if isinstance(backlog, int) and backlog > _KNOWLEDGE_QUEUE_DEGRADED_ABOVE:
         return InternalSubsystemHealth(
             id="knowledge", health="degraded", impaired_code="knowledge_queue_backed_up"
         )
@@ -293,8 +295,9 @@ async def _media_health() -> "InternalSubsystemHealth":
     from ha_glue.utils.config import ha_glue_settings
 
     if not ha_glue_settings.media_follow_enabled:
+        # 'off' (disabled by config), not 'down' — see _presence_health.
         return InternalSubsystemHealth(
-            id="media", health="down", impaired_code="media_disabled"
+            id="media", health="off", impaired_code="media_disabled"
         )
     return InternalSubsystemHealth(id="media", health="healthy")
 
@@ -323,10 +326,23 @@ _INTERNAL_HEALTH_REFRESH_SECONDS = 30
 _internal_health_last_pushed: list[dict] | None = None
 
 
+def reset_internal_health_gate() -> None:
+    """Force the next refresher tick to re-push the current verdicts.
+
+    The diff-gate is a module global that is NOT advanced while no kiosk is
+    connected (the scheduler skips the refresh then). So across a no-client gap
+    it can hold a pre-gap verdict; a kiosk that connects during the gap hydrates
+    from the fresh snapshot, but a later reversion to the stale gate value would
+    be suppressed and leave that kiosk stuck. Resetting on connect makes the next
+    tick re-emit the truth, reconciling every listener."""
+    global _internal_health_last_pushed
+    _internal_health_last_pushed = None
+
+
 async def refresh_and_push_internal_health() -> None:
     """Backend-internal internal-subsystem-health refresh → PUSH on change.
 
-    The backing state (enrollment/auth, ingest worker liveness, Redis queue depth)
+    The backing state (enrollment/auth, ingest worker liveness, Redis backlog)
     has no push of its own, so a timer recomputes and streams an
     ``internal_health_changed`` delta only when a verdict changes — the same
     diff-gated, fire-and-forget pattern as the weather tile."""
@@ -334,7 +350,6 @@ async def refresh_and_push_internal_health() -> None:
     health = await compute_internal_subsystem_health()
     if health == _internal_health_last_pushed:
         return
-    _internal_health_last_pushed = health
     try:
         from api.websocket.kiosk_handler import broadcast_kiosk_event
 
@@ -342,7 +357,11 @@ async def refresh_and_push_internal_health() -> None:
             {"type": "internal_health_changed", "subsystems": health}
         )
     except Exception as e:
+        # Do NOT advance the gate on a failed broadcast — otherwise the delta is
+        # lost permanently (the next tick would see no change and stay silent).
         logger.debug(f"kiosk internal_health_changed broadcast failed: {e}")
+        return
+    _internal_health_last_pushed = health
 
 
 # ---------------------------------------------------------------------------

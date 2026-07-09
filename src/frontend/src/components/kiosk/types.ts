@@ -4,7 +4,9 @@
 // the type names kept their `…Node`/`CommandCenterModel` spelling to bound the
 // diff — they now describe the kiosk's rings.
 
-export type NodeHealth = 'healthy' | 'degraded' | 'down' | 'unknown';
+// 'off' = a subsystem intentionally disabled by config (distinct from 'down' =
+// a real outage, so a switched-off node doesn't read as a fault on the wall).
+export type NodeHealth = 'healthy' | 'degraded' | 'down' | 'unknown' | 'off';
 
 export interface CoreNode {
   /** Display name of the orchestrator, e.g. "Renfield". */

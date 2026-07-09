@@ -220,9 +220,9 @@ function buildCommandCenterModel(
     const hint = verdict?.impaired_code
       ? t(`kiosk.impaired.${verdict.impaired_code}`, {
           defaultValue:
-            health === 'down'
-              ? t('kiosk.legend.down', { defaultValue: 'Offline' })
-              : t('kiosk.legend.degraded', { defaultValue: 'Degraded' }),
+            health === 'degraded'
+              ? t('kiosk.legend.degraded', { defaultValue: 'Degraded' })
+              : t('kiosk.legend.offline', { defaultValue: 'Off' }),
         })
       : undefined;
     tools.push({

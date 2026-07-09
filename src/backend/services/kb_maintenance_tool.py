@@ -162,6 +162,25 @@ _PL_LABELS = {
 }
 
 
+async def ingest_worker_and_backlog() -> tuple[bool | None, int | None]:
+    """Shared ingest-liveness probe → ``(worker_alive, live pending backlog)``.
+
+    Backlog is ``pending_count`` (Redis XPENDING — delivered-but-unacked tasks),
+    which DRAINS as the worker acks. Deliberately NOT ``stream_length`` (XLEN):
+    the stream is never trimmed, so XLEN counts every task ever enqueued and only
+    grows — it can't signal a live backlog (a caught-up worker would still read
+    "overloaded" forever). Shared by ``ingest_status`` and the kiosk
+    knowledge-health node so the two never diverge.
+    """
+    from api.routes.knowledge import _worker_is_alive
+    from services.redis_client import get_redis
+    from services.task_queue import DocumentTaskQueue
+
+    worker_alive = await _worker_is_alive()
+    backlog = await DocumentTaskQueue(redis_client=get_redis()).pending_count()
+    return worker_alive, backlog
+
+
 async def ingest_status(params: dict, user_id: int | None = None) -> dict:
     """Read-only snapshot of the ingest → KB → Paperless pipeline."""
     try:
@@ -215,18 +234,11 @@ async def ingest_status(params: dict, user_id: int | None = None) -> dict:
                 ).all()
             }
 
-        # worker liveness + queue depth (best-effort; never fail the readout)
+        # worker liveness + live backlog (best-effort; never fail the readout)
         worker_alive = None
         queue_depth = None
         try:
-            from api.routes.knowledge import _worker_is_alive
-            from services.redis_client import get_redis
-            from services.task_queue import DocumentTaskQueue
-
-            worker_alive = await _worker_is_alive()
-            queue_depth = await DocumentTaskQueue(
-                redis_client=get_redis()
-            ).stream_length()
+            worker_alive, queue_depth = await ingest_worker_and_backlog()
         except Exception as e:  # noqa: BLE001 - liveness is a nice-to-have
             logger.warning(f"ingest_status: worker/queue probe failed: {e}")
 

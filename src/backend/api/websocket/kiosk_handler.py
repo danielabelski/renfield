@@ -453,6 +453,12 @@ async def kiosk_live(
         return
 
     _kiosk_clients.add(websocket)  # now broadcast-eligible
+    # Reset the internal-health diff-gate so the next refresher tick re-pushes the
+    # current verdicts — the gate isn't advanced while no kiosk is connected, so
+    # it can hold a stale pre-gap value that would otherwise suppress a real delta.
+    from api.websocket.kiosk_data import reset_internal_health_gate
+
+    reset_internal_health_gate()
     logger.info(f"🖥️ Kiosk display connected ({len(_kiosk_clients)} total)")
 
     try:

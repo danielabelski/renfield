@@ -128,7 +128,8 @@ describe('KioskPage', () => {
         internal_health: [
           { id: 'presence', health: 'degraded', impaired_code: 'presence_satellite_unauthenticated' },
           { id: 'knowledge', health: 'healthy', impaired_code: null },
-          { id: 'media', health: 'down', impaired_code: 'media_disabled' },
+          // disabled-by-config is 'off' (muted), NOT 'down' (red/outage)
+          { id: 'media', health: 'off', impaired_code: 'media_disabled' },
         ],
       }),
     );
@@ -139,7 +140,11 @@ describe('KioskPage', () => {
       expect(health('presence')).toBe('degraded');
     });
     expect(health('knowledge')).toBe('healthy');
-    expect(health('media')).toBe('down');
+    expect(health('media')).toBe('off');
+    // the localized impaired reason renders as the node's <title> tooltip
+    expect(
+      document.querySelector('[data-tool-id="presence"] title')?.textContent,
+    ).toBeTruthy();
 
     // a pushed internal_health_changed delta re-colours the node live
     const ws = MockWebSocket.instances[MockWebSocket.instances.length - 1];
