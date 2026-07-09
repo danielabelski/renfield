@@ -63,6 +63,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.database import KGEntity, KGRelation
 from utils.config import settings
 from utils.llm_client import get_default_client, get_embed_client
+from utils.prompt_safety import neutralize_delimiters
 
 
 class KGRetrieval:
@@ -347,9 +348,11 @@ class KGRetrieval:
         # Format triples
         triples = []
         for r in relation_rows:
-            subj = entity_map.get(r.subject_id, "?")
-            obj = entity_map.get(r.object_id, "?")
-            triples.append(f"- {subj} {r.predicate} {obj}")
+            # #686: KG entity names + predicates are document/conversation-derived
+            # (untrusted); neutralize before they join the shared prompt context.
+            subj = neutralize_delimiters(entity_map.get(r.subject_id, "?"))
+            obj = neutralize_delimiters(entity_map.get(r.object_id, "?"))
+            triples.append(f"- {subj} {neutralize_delimiters(r.predicate)} {obj}")
 
         if not triples:
             return None

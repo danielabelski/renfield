@@ -23,6 +23,7 @@ from services.agent_tools import AgentToolRegistry, unsanitize_tool_name
 from services.prompt_manager import prompt_manager
 from utils.circuit_breaker import agent_circuit_breaker
 from utils.config import settings
+from utils.prompt_safety import neutralize_delimiters
 from utils.llm_client import extract_response_content, get_agent_client, get_classification_chat_kwargs
 from utils.token_counter import token_counter
 
@@ -235,8 +236,13 @@ class AgentContext:
                 else:
                     content = step.content[:8000] if step.content else no_result
                 tool_name = step.tool or "unknown"
-                lines.append(f"  <tool_result tool=\"{tool_name}\">")
-                lines.append(f"  {result_label} {content}")
+                # #686: neutralize structural delimiters in untrusted tool output
+                # (and the tool name) so a crafted MCP/tool result can't forge or
+                # close the <tool_result> boundary and inject instructions.
+                safe_content = neutralize_delimiters(content)
+                safe_tool = neutralize_delimiters(tool_name)
+                lines.append(f"  <tool_result tool=\"{safe_tool}\">")
+                lines.append(f"  {result_label} {safe_content}")
                 lines.append("  </tool_result>")
             elif step.step_type == "error":
                 lines.append(f"  {error_label} {step.content[:1500]}")

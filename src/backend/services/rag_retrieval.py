@@ -56,6 +56,7 @@ from services.circle_sql import document_chunks_circles_filter
 from services.fts_languages import build_tsquery_union_sql
 from utils.config import settings
 from utils.llm_client import get_embed_client
+from utils.prompt_safety import neutralize_delimiters
 
 
 class RAGRetrieval:
@@ -645,11 +646,14 @@ class RAGRetrieval:
         for i, result in enumerate(results, 1):
             chunk = result["chunk"]
             doc = result["document"]
-            source_info = f"[Quelle {i}: {doc['filename']}"
+            # #686: neutralize delimiters in untrusted doc fields (filename,
+            # section title, chunk body) so a crafted document can't forge a
+            # `[Quelle N: …]` marker or close a prompt tag.
+            source_info = f"[Quelle {i}: {neutralize_delimiters(doc['filename'])}"
             if chunk.get("page_number"):
                 source_info += f", Seite {chunk['page_number']}"
             if chunk.get("section_title"):
-                source_info += f", {chunk['section_title']}"
+                source_info += f", {neutralize_delimiters(chunk['section_title'])}"
             source_info += "]"
-            context_parts.append(f"{source_info}\n{chunk['content']}")
+            context_parts.append(f"{source_info}\n{neutralize_delimiters(chunk['content'])}")
         return "\n\n---\n\n".join(context_parts)

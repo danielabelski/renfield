@@ -23,6 +23,7 @@ from services.input_guard import detect_injection
 from services.websocket_auth import WSAuthError, authenticate_websocket
 from services.websocket_rate_limiter import get_rate_limiter
 from utils.config import settings
+from utils.prompt_safety import neutralize_delimiters
 from utils.request_context import request_id as request_id_var
 from utils.voice_context import voice_originated
 
@@ -608,9 +609,11 @@ async def _fetch_document_context(attachment_ids: list[int], lang: str) -> str:
             return prompt_manager.get(
                 "chat", "document_context_section", lang=lang,
                 attachment_id=str(doc.id),
-                filename=doc.filename or "document",
+                # #686: uploaded filename + extracted text are untrusted — a
+                # crafted doc could otherwise close <uploaded_document> and inject.
+                filename=neutralize_delimiters(doc.filename or "document"),
                 file_size=_format_file_size(doc.file_size),
-                document_text=text,
+                document_text=neutralize_delimiters(text),
             )
 
         # Multiple documents — distribute max_chars evenly
@@ -621,9 +624,10 @@ async def _fetch_document_context(attachment_ids: list[int], lang: str) -> str:
             section = prompt_manager.get(
                 "chat", "document_separator", lang=lang,
                 attachment_id=str(doc.id),
-                filename=doc.filename or "document",
+                # #686: untrusted uploaded filename + extracted text (see above).
+                filename=neutralize_delimiters(doc.filename or "document"),
                 file_size=_format_file_size(doc.file_size),
-                document_text=text,
+                document_text=neutralize_delimiters(text),
             )
             doc_sections.append(section)
 
@@ -648,8 +652,10 @@ def _format_memory_line(m: dict) -> str:
     """
     cat_label = (m.get("category") or "").upper()
     subject = m.get("subject_name")
-    tag = f"{cat_label} · {subject}" if subject else cat_label
-    return f"- [{tag}] {m.get('content', '')}"
+    # #686: subject name + memory content are document/conversation-derived
+    # (untrusted); neutralize so a stored memory can't forge a prompt delimiter.
+    tag = f"{cat_label} · {neutralize_delimiters(subject)}" if subject else cat_label
+    return f"- [{tag}] {neutralize_delimiters(m.get('content', ''))}"
 
 
 async def _retrieve_memory_context(content: str, user_id: int | None, lang: str) -> str:

@@ -69,6 +69,7 @@ from services.document_processing_history import (
 )
 from services.document_processor import DocumentProcessor
 from utils.config import settings
+from utils.prompt_safety import neutralize_delimiters
 from utils.llm_client import get_embed_client
 
 if TYPE_CHECKING:  # pragma: no cover - imports only needed for type hints
@@ -870,13 +871,15 @@ class RAGService:
         for i, result in enumerate(results, 1):
             chunk = result["chunk"]
             doc = result["document"]
-            source_info = f"[Quelle {i}: {doc['filename']}"
+            # #686: neutralize delimiters in untrusted doc fields (see the twin
+            # copy in rag_retrieval.format_context_from_results).
+            source_info = f"[Quelle {i}: {neutralize_delimiters(doc['filename'])}"
             if chunk.get("page_number"):
                 source_info += f", Seite {chunk['page_number']}"
             if chunk.get("section_title"):
-                source_info += f", {chunk['section_title']}"
+                source_info += f", {neutralize_delimiters(chunk['section_title'])}"
             source_info += "]"
-            context_parts.append(f"{source_info}\n{chunk['content']}")
+            context_parts.append(f"{source_info}\n{neutralize_delimiters(chunk['content'])}")
         return "\n\n---\n\n".join(context_parts)
 
     # ==========================================================================
