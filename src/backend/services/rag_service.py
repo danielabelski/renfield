@@ -863,21 +863,15 @@ class RAGService:
         )
 
     def format_context_from_results(self, results: list[dict]) -> str:
-        """Format pre-fetched search results into context string without re-searching."""
-        if not results:
-            return ""
-        context_parts = []
-        for i, result in enumerate(results, 1):
-            chunk = result["chunk"]
-            doc = result["document"]
-            source_info = f"[Quelle {i}: {doc['filename']}"
-            if chunk.get("page_number"):
-                source_info += f", Seite {chunk['page_number']}"
-            if chunk.get("section_title"):
-                source_info += f", {chunk['section_title']}"
-            source_info += "]"
-            context_parts.append(f"{source_info}\n{chunk['content']}")
-        return "\n\n---\n\n".join(context_parts)
+        """Format pre-fetched search results into a context string.
+
+        Delegates to the single circle-aware implementation (RAGRetrieval) so the
+        formatting — including the #686 delimiter-neutralization of untrusted doc
+        fields — lives in ONE place. Previously this was a byte-for-byte copy, a
+        footgun where a field added to one copy would silently miss the other.
+        """
+        from services.rag_retrieval import RAGRetrieval
+        return RAGRetrieval(self.db).format_context_from_results(results)
 
     # ==========================================================================
     # Document Management
