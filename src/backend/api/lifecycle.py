@@ -785,6 +785,38 @@ def _schedule_kiosk_weather_refresh(app):
     )
 
 
+def _schedule_kiosk_internal_health_refresh(app):
+    """Backend-internal refresher → PUSHES an ``internal_health_changed`` delta to
+    the kiosk hub when a knowledge/presence/media verdict changes.
+
+    Same no-poll model as the weather refresher: the backing state (enrollment/
+    auth, ingest worker liveness, Redis queue depth) has no push of its own, so a
+    backend timer recomputes it and streams only actual changes to the wall
+    displays — the kiosk browser never polls. Diff-gated in
+    ``refresh_and_push_internal_health``; skipped when no wall display is
+    connected so it does no work nobody would consume.
+    """
+    from api.websocket.kiosk_data import _INTERNAL_HEALTH_REFRESH_SECONDS
+
+    async def _tick():
+        from api.websocket.kiosk_data import refresh_and_push_internal_health
+        from api.websocket.kiosk_handler import _kiosk_clients
+
+        if not _kiosk_clients:
+            return
+        await refresh_and_push_internal_health()
+
+    _spawn_periodic_task(
+        name="Kiosk internal-health refresh",
+        interval=_INTERNAL_HEALTH_REFRESH_SECONDS,
+        work=_tick,
+        started_msg=(
+            f"Kiosk internal-health refresher gestartet "
+            f"(interval={_INTERNAL_HEALTH_REFRESH_SECONDS}s)"
+        ),
+    )
+
+
 def _schedule_notification_poller(app):
     """Start the MCP notification poller for servers with notifications enabled."""
     if not settings.notification_poller_enabled:
@@ -1129,6 +1161,7 @@ async def lifespan(app: "FastAPI"):
     _schedule_paperless_reconciler(app)
     _schedule_obligation_calendar_sync(app)
     _schedule_kiosk_weather_refresh(app)
+    _schedule_kiosk_internal_health_refresh(app)
 
     # Self-learning Phase 1: load bundled seed skills into the database.
     # Idempotent — seeds with a matching title are skipped, so re-running

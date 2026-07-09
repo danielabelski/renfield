@@ -198,6 +198,173 @@ async def broadcast_turn_activity(
 
 
 # ---------------------------------------------------------------------------
+# Internal-subsystem health (knowledge / presence / media). The kiosk draws three
+# synthetic pseudo-nodes for the platform-core `internal.*` subsystems that have
+# no MCP server (INTERNAL_SUBSYSTEM_NODES, useKioskModel.ts). They were permanent
+# gray "unknown" placeholders — pulse-only, no status — which on a wall board read
+# as broken. This gives each a REAL healthy/degraded/down verdict from live
+# backend state so an impaired subsystem is visible instead of a silent gray
+# diamond. Each verdict carries an optional machine `impaired_code` the frontend
+# localizes (i18n rule), mirroring the MCP-server `impaired_code` contract.
+#
+# Grounded signals only — no invented metrics:
+#   * presence  — presence_enabled + the satellite fleet's ability to deliver BLE
+#     reports. An enrolled-but-unauthenticated satellite receives no IRK push and
+#     silently reports nothing (the exact failure that mislocated a phone on
+#     2026-07-09), so that reads as degraded.
+#   * knowledge — the ingest worker liveness + Redis queue depth (the same probe
+#     `internal.ingest_status` surfaces).
+#   * media     — media-follow enabled/disabled. No cheap output-target
+#     reachability probe exists, so media is availability-only (healthy/down); a
+#     "no reachable target" degraded signal is a follow-up, deliberately NOT faked.
+# ---------------------------------------------------------------------------
+
+# The subsystem ids the kiosk draws as internal pseudo-nodes. MUST stay in sync
+# with the frontend INTERNAL_SUBSYSTEM_NODES (components/kiosk/useKioskModel.ts).
+INTERNAL_SUBSYSTEM_IDS = ("knowledge", "presence", "media")
+
+# A knowledge ingest backlog deeper than this reads as degraded (the worker is up
+# but not keeping pace). Named, not magic — mirrors the other module thresholds.
+_KNOWLEDGE_QUEUE_DEGRADED_ABOVE = 100
+
+
+class InternalSubsystemHealth(BaseModel):
+    id: str
+    health: str  # "healthy" | "degraded" | "down"
+    impaired_code: str | None = None
+
+
+async def _presence_health() -> "InternalSubsystemHealth":
+    from ha_glue.utils.config import ha_glue_settings
+
+    if not ha_glue_settings.presence_enabled:
+        # 'off' (disabled by config), NOT 'down' — a switched-off subsystem must
+        # not paint the same red/"failed" as a real outage on the wall board.
+        return InternalSubsystemHealth(
+            id="presence", health="off", impaired_code="presence_disabled"
+        )
+    try:
+        from ha_glue.services.satellite_manager import get_satellite_manager
+
+        sats = list(get_satellite_manager().satellites.values())
+    except Exception:
+        sats = []
+    if not sats:
+        return InternalSubsystemHealth(
+            id="presence", health="degraded", impaired_code="presence_no_satellite"
+        )
+    # When per-satellite enrollment is on, a connected-but-unauthenticated
+    # satellite gets no IRK push, so it can't resolve rotating-RPA phones and
+    # contributes nothing to room arbitration — silently. Surface it as degraded.
+    if settings.satellite_enrollment_enabled and any(
+        not getattr(s, "authenticated", False) for s in sats
+    ):
+        return InternalSubsystemHealth(
+            id="presence",
+            health="degraded",
+            impaired_code="presence_satellite_unauthenticated",
+        )
+    return InternalSubsystemHealth(id="presence", health="healthy")
+
+
+async def _knowledge_health() -> "InternalSubsystemHealth":
+    try:
+        # Shared probe with `internal.ingest_status` (single source of truth) —
+        # `backlog` is the LIVE pending count (XPENDING), which drains, not the
+        # ever-growing cumulative stream length.
+        from services.kb_maintenance_tool import ingest_worker_and_backlog
+
+        worker_alive, backlog = await ingest_worker_and_backlog()
+    except Exception as e:  # noqa: BLE001 — a failed probe IS a degraded signal
+        logger.debug(f"kiosk internal health: knowledge probe failed: {e}")
+        return InternalSubsystemHealth(
+            id="knowledge", health="degraded", impaired_code="knowledge_worker_down"
+        )
+    if worker_alive is False:
+        return InternalSubsystemHealth(
+            id="knowledge", health="degraded", impaired_code="knowledge_worker_down"
+        )
+    if isinstance(backlog, int) and backlog > _KNOWLEDGE_QUEUE_DEGRADED_ABOVE:
+        return InternalSubsystemHealth(
+            id="knowledge", health="degraded", impaired_code="knowledge_queue_backed_up"
+        )
+    return InternalSubsystemHealth(id="knowledge", health="healthy")
+
+
+async def _media_health() -> "InternalSubsystemHealth":
+    from ha_glue.utils.config import ha_glue_settings
+
+    if not ha_glue_settings.media_follow_enabled:
+        # 'off' (disabled by config), not 'down' — see _presence_health.
+        return InternalSubsystemHealth(
+            id="media", health="off", impaired_code="media_disabled"
+        )
+    return InternalSubsystemHealth(id="media", health="healthy")
+
+
+async def compute_internal_subsystem_health() -> list[dict]:
+    """Health verdicts for the kiosk's three internal pseudo-nodes.
+
+    Best-effort per subsystem: a probe that raises degrades THAT subsystem's
+    readout rather than aborting the whole list. Content-free (ids + verdicts)."""
+    out: list[dict] = []
+    for compute in (_presence_health, _knowledge_health, _media_health):
+        try:
+            out.append((await compute()).model_dump())
+        except Exception as e:  # noqa: BLE001 — never abort the whole readout
+            logger.debug(f"kiosk internal health: {compute.__name__} failed: {e}")
+    return out
+
+
+# How often the backend recomputes internal-subsystem health for the push
+# refresher. Fast enough that a wall board reflects an enrollment/worker fault
+# within a glance, cheap enough to run continuously (in-memory + one Redis probe).
+_INTERNAL_HEALTH_REFRESH_SECONDS = 30
+
+# Last internal-health list PUSHED to the kiosk hub, so the refresher only
+# broadcasts on an actual change (diff-gate). None until the first push.
+_internal_health_last_pushed: list[dict] | None = None
+
+
+def reset_internal_health_gate() -> None:
+    """Force the next refresher tick to re-push the current verdicts.
+
+    The diff-gate is a module global that is NOT advanced while no kiosk is
+    connected (the scheduler skips the refresh then). So across a no-client gap
+    it can hold a pre-gap verdict; a kiosk that connects during the gap hydrates
+    from the fresh snapshot, but a later reversion to the stale gate value would
+    be suppressed and leave that kiosk stuck. Resetting on connect makes the next
+    tick re-emit the truth, reconciling every listener."""
+    global _internal_health_last_pushed
+    _internal_health_last_pushed = None
+
+
+async def refresh_and_push_internal_health() -> None:
+    """Backend-internal internal-subsystem-health refresh → PUSH on change.
+
+    The backing state (enrollment/auth, ingest worker liveness, Redis backlog)
+    has no push of its own, so a timer recomputes and streams an
+    ``internal_health_changed`` delta only when a verdict changes — the same
+    diff-gated, fire-and-forget pattern as the weather tile."""
+    global _internal_health_last_pushed
+    health = await compute_internal_subsystem_health()
+    if health == _internal_health_last_pushed:
+        return
+    try:
+        from api.websocket.kiosk_handler import broadcast_kiosk_event
+
+        await broadcast_kiosk_event(
+            {"type": "internal_health_changed", "subsystems": health}
+        )
+    except Exception as e:
+        # Do NOT advance the gate on a failed broadcast — otherwise the delta is
+        # lost permanently (the next tick would see no change and stay silent).
+        logger.debug(f"kiosk internal_health_changed broadcast failed: {e}")
+        return
+    _internal_health_last_pushed = health
+
+
+# ---------------------------------------------------------------------------
 # Ambient kiosk weather tile. Read-only, degrades to None (never an error) when
 # the feature is off or the source is unavailable, so the kiosk hides the tile.
 # ---------------------------------------------------------------------------

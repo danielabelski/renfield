@@ -231,6 +231,7 @@ async def build_kiosk_snapshot(app) -> dict:
         "presence": {"rooms": [], "people_present": 0, "occupied_rooms": 0},
         "mcp": {"enabled": False, "total_tools": 0, "servers": []},
         "tool_health": [],
+        "internal_health": [],
         "roles": [],
         "activity": [],
         "peers": [],
@@ -293,6 +294,14 @@ async def build_kiosk_snapshot(app) -> dict:
         snapshot["tool_health"] = tool_health
     except Exception as e:
         logger.debug(f"kiosk snapshot: tool health unavailable: {e}")
+
+    # --- Internal-subsystem health (knowledge / presence / media) --------
+    try:
+        from api.websocket.kiosk_data import compute_internal_subsystem_health
+
+        snapshot["internal_health"] = await compute_internal_subsystem_health()
+    except Exception as e:
+        logger.debug(f"kiosk snapshot: internal health unavailable: {e}")
 
     # --- Agent roles (availability-filtered, as the router sees them) ----
     try:
@@ -444,6 +453,12 @@ async def kiosk_live(
         return
 
     _kiosk_clients.add(websocket)  # now broadcast-eligible
+    # Reset the internal-health diff-gate so the next refresher tick re-pushes the
+    # current verdicts — the gate isn't advanced while no kiosk is connected, so
+    # it can hold a stale pre-gap value that would otherwise suppress a real delta.
+    from api.websocket.kiosk_data import reset_internal_health_gate
+
+    reset_internal_health_gate()
     logger.info(f"🖥️ Kiosk display connected ({len(_kiosk_clients)} total)")
 
     try:
