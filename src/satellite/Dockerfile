@@ -31,6 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libasound2 libasound2-plugins alsa-utils \
         mpv libmpv2 \
         libsamplerate0 libopenblas0 \
+        libopus0 \
         libusb-1.0-0 \
         bluez bluez-tools \
         ca-certificates curl \
@@ -62,6 +63,7 @@ RUN pip3 install --break-system-packages \
         bleak \
         cryptography \
         Pillow \
+        "opuslib>=3.0.1" \
     && pip3 install --break-system-packages --no-deps openwakeword
 
 # --- Wake word + VAD models (baked) ---
