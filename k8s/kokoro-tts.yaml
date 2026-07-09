@@ -1,0 +1,81 @@
+# Kokoro-TTS — high-quality neural TTS (Kokoro-82M) for English narration.
+# Separate from the Piper voice-server (which stays the German household
+# assistant voice). CPU-only: the 82M model is light and does not need the
+# single GPU. Internal service only (no ingress); consumers reach it at
+# http://kokoro-tts:8880 (OpenAI-compatible /v1/audio/speech).
+apiVersion: v1
+kind: Service
+metadata:
+  name: kokoro-tts
+  namespace: renfield
+  labels:
+    app.kubernetes.io/name: kokoro-tts
+    app.kubernetes.io/part-of: renfield
+spec:
+  selector:
+    app.kubernetes.io/name: kokoro-tts
+  ports:
+    - port: 8880
+      targetPort: 8880
+      name: http
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kokoro-tts
+  namespace: renfield
+  labels:
+    app.kubernetes.io/name: kokoro-tts
+    app.kubernetes.io/part-of: renfield
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kokoro-tts
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kokoro-tts
+        app.kubernetes.io/part-of: renfield
+    spec:
+      imagePullSecrets:
+        - name: harbor-pull-secret
+      containers:
+        - name: kokoro-tts
+          # Mirror of ghcr.io/remsky/kokoro-fastapi-cpu:latest (weights baked
+          # into the image — no runtime model download / egress needed).
+          image: registry.treehouse.x-idra.de/renfield/kokoro-fastapi:cpu-v1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8880
+              name: http
+          resources:
+            requests:
+              cpu: "1"
+              memory: 1Gi
+            limits:
+              cpu: "4"
+              memory: 4Gi
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8880
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 40        # generous for first model load
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8880
+            periodSeconds: 15
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8880
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            failureThreshold: 5
