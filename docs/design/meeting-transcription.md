@@ -11,6 +11,11 @@ Upload a multi-speaker meeting recording → speaker-attributed transcript → r
 in the knowledge base (RAG + Wissen workspace). Written notes and single-voice dictation
 already work via existing paths; this adds the multi-speaker piece.
 
+> Related design: `docs/design/voice-identity-wakeword-verification.md` plans ONLINE
+> (streaming) diarization for session continuity — a different pyannote mode than the
+> batch pipeline here. Coordinate the voice-server image change (GPU torch + pyannote
+> layer split) so both land ONE pyannote integration, not two.
+
 ## Locked architecture (all decisions from the review)
 
 ```

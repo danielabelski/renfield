@@ -1,25 +1,54 @@
 # Diarization spike gates — FIXED 2026-07-06 during /plan-eng-review, BEFORE the
-# first measurement (D12 / outside-voice amendment 5). Do not tune these to fit
-# a run; a gate change needs its own reviewed decision.
+# first measurement. Do not tune these to fit a run; a gate change needs its own
+# reviewed decision.
+#
+# AMENDED 2026-07-06 (same day, still before any measurement) by the PR #924
+# /review fix round: the review proved the original contract was fail-open —
+# a run that measured nothing (empty diarization, missing metrics) reported
+# PASS. Hardened: missing hard-gate metrics now FAIL; der_like + hyp-coverage
+# gates close the "diarizer labels almost nothing → AER=0" hole; the report
+# verdict is per-model (PASS if at least ONE candidate passes all hard gates);
+# the separation metric requires minimum pair counts to count as measured.
+#
+# NOTE for the no-PyYAML fallback parser in bin/run_diarization_eval.py:
+# keep this file a FLAT numeric mapping under `gates:`.
 gates:
-  # Share of overlapping speech frames attributed to the wrong speaker after
-  # optimal cluster->reference mapping (Hungarian). Above this, transcripts are
-  # not trustworthy enough to ship §2 at all.
+  # HARD — share of overlapping speech frames attributed to the wrong speaker
+  # after optimal cluster->reference mapping (Hungarian). Above this,
+  # transcripts are not trustworthy enough to ship §2 at all.
   attribution_error_rate_max: 0.20
 
-  # Processing cost ceiling: 60 min of audio must finish in <= 30 GPU-minutes
-  # (diarization + ASR combined), else the serialized-batch deployment shape
-  # (D5) starves the box.
+  # HARD — DER-style total (missed + false alarm + confusion) / ref speech.
+  # Catches the degenerate case AER alone cannot see: a diarizer that labels
+  # almost nothing has AER ~0 but der_like ~1.
+  der_like_max: 0.30
+
+  # HARD — fraction of reference speech frames the hypothesis also labels
+  # (both-streams coverage). Below this the AER was measured on too little
+  # of the meeting to mean anything.
+  min_hyp_coverage: 0.70
+
+  # HARD — processing cost ceiling: 60 min of audio must finish in <= 30
+  # GPU-minutes of INFERENCE (model load/download time excluded), else the
+  # serialized-batch deployment shape (D5) starves the box.
   gpu_seconds_per_audio_minute_max: 30
 
-  # AUTO-MATCH gate (D12): per-cluster ECAPA separation on meeting-length audio,
-  # same_cluster_cosine_mean - cross_cluster_cosine_p95, in the voice-server
-  # ONNX space. Below this, auto-match is NOT built — pseudonyms + one-click
-  # human labeling remain the product. (Context: short chat turns measured
-  # same-speaker ~0.28 vs cross p95 ~0.22 — separation 0.06, unusable.)
+  # HARD (global) — live satellite STT p95 latency during a running batch
+  # job, relative to the idle baseline. Failed/timed-out probes count as
+  # timeout-clamped samples so degradation cannot hide in dropped requests.
+  live_stt_p95_factor_max: 2.0
+
+  # ADVISORY (auto-match gate, D12): per-cluster ECAPA separation on
+  # meeting-length audio, same_cluster_cosine_mean - cross_cluster_cosine_p95,
+  # in the voice-server ONNX space. Below this, auto-match is NOT built —
+  # pseudonyms + one-click human labeling remain the product. (Context: short
+  # chat turns measured same-speaker ~0.28 vs cross p95 ~0.22 — separation
+  # 0.06, unusable.) Failing this gate does NOT block the §2 build.
   auto_match_separation_min: 0.15
 
-  # Live satellite STT p95 latency during a running batch job, relative to the
-  # idle baseline (probe-live-stt baseline vs during). Above 2x, escalate per
-  # the ladder in docs/design/meeting-transcription.md (night-window first).
-  live_stt_p95_factor_max: 2.0
+  # Data-sufficiency floor for the separation metric: below these pair counts
+  # the metric reports "insufficient data" instead of a number (the committed
+  # synthetic fixture yields ~3 same / ~18 cross pairs — not enough to judge
+  # a 0.15 threshold; real recordings decide).
+  separation_min_same_pairs: 10
+  separation_min_cross_pairs: 30

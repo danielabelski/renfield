@@ -78,6 +78,8 @@ docker exec -it renfield-backend alembic downgrade -1
 
 For architecture questions, use the `architecture-guide` agent.
 
+**In-flight (spike phase, nothing shipped):** Meeting transcription + diarization — locked design in `docs/design/meeting-transcription.md` (spike-gated: no product code before the gates in `tests/eval/diarization/gates.yaml` pass); persistent eval harness `bin/run_diarization_eval.py`. Related: the voice-identity design (`docs/design/voice-identity-wakeword-verification.md`) plans STREAMING diarization — coordinate before adding pyannote to the voice-server image twice.
+
 ### BLE phone presence via IRK resolution + the k8s satellite
 
 Modern phones advertise a **rotating** BLE Resolvable Private Address (RPA), so a static MAC whitelist can't track them. Renfield resolves the rotating address back to a stable identity using the device's **Identity Resolving Key (IRK)** — the same mechanism as Home Assistant's *Private BLE Device* / Bermuda. No app, no extra hardware. Design + status: [`docs/design/ble-presence-improvement.md`](docs/design/ble-presence-improvement.md) (SHIPPED + DEPLOYED).

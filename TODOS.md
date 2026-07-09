@@ -331,6 +331,26 @@ The hybrid extractor (deterministic Steuernummer/IBAN with whitespace normalizat
 
 ## P3 — Conditional / on signal
 
+### ℹ️ Reference (info only, NOT a work item): Meetily — self-hosted call-meeting notetaker
+
+Recorded 2026-07-06 on request — **deliberately no decision taken, no planned
+extension; info only.** [Meetily](https://github.com/Zackriya-Solutions/meetily)
+(MIT, Tauri: Rust backend + Next.js, ~19k stars, v0.4.x pre-release) captures
+system audio + mic locally ("bot-free", works with Teams/Zoom/Meet/any app),
+live-transcribes via whisper.cpp/Parakeet (multilingual incl. `de`) and
+summarizes via Ollama/OpenAI-compatible endpoints. 100% local, desktop
+single-user, no HTTP API.
+
+Relevance: **NO speaker diarization in the open-source Community Edition**
+(Pro-only promise, never shipped in CE release notes as of 2026-07) → it does
+NOT replace §2 (`docs/design/meeting-transcription.md`); room-meeting
+diarization + speaker identity + KB/circles integration stay our build. IF the
+online-call capture gap (voice-pipeline-plan.md out-of-scope item) ever gets
+prioritized for the work instance, the zero-code path would be: Meetily CE on
+the work machine → its exports into a watch folder → existing folder-ingest →
+project KB. Also noteworthy as a concept: system-audio capture instead of
+meeting-bots.
+
 ### Satellite meeting recording ("Renfield, starte Meeting-Aufnahme")
 
 **WHAT:** A satellite (primarily the XVF3800-equipped ones) records long-form meeting audio on voice command and pushes it into the meeting-transcription upload path (`POST /api/meetings/transcribe`). Own phase, deliberately kept OUT of the §2 diarization build (eng-review decision D15, 2026-07-06).

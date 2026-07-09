@@ -185,7 +185,7 @@ Both via the same plugin-hook architecture in Renfield, customized at integratio
 
 ## 7. Out of scope
 
-- **Echo cancellation / diarization** for live meeting scenarios. Renfield has no Teams Calls integration; Reva's doc lists it out of scope too.
+- **Echo cancellation / diarization** for live meeting scenarios. Renfield has no Teams Calls integration; Reva's doc lists it out of scope too. *(Update 2026-07-06: diarization of RECORDED meetings now has a locked, spike-gated design — `docs/design/meeting-transcription.md`; live/streaming diarization remains out of scope here, see the voice-identity design.)*
 - **Wake-word retraining** — covered by `src/satellite/TECHNICAL_DEBT.md` low-priority section, separate work.
 - **Multi-speaker simultaneous input** — single-speaker per session for now.
 - **Languages beyond `de`/`en`** — `supported_languages="de,en"` is the current commitment.
