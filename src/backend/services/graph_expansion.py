@@ -38,22 +38,30 @@ from services.atom_types import Atom, AtomMatch
 from utils.config import settings
 
 
-def _entity_filter(asker_id: int | None) -> tuple[str, dict[str, Any]]:
-    """Circle WHERE-fragment for kg_entities alias ``e`` (mirrors kg_retrieval)."""
-    if not settings.auth_enabled:
+def _entity_filter(
+    asker_id: int | None, enforce_circles: bool = False
+) -> tuple[str, dict[str, Any]]:
+    """Circle WHERE-fragment for kg_entities alias ``e`` (mirrors kg_retrieval).
+
+    ``enforce_circles`` (federation): keep the peer-scoped circle filter active
+    even with auth off (drops the owner + explicit-grant branches).
+    """
+    if not settings.auth_enabled and not enforce_circles:
         return ("", {})
     if asker_id is None:
         return ("AND e.circle_tier = :pub_tier", {"pub_tier": TIER_PUBLIC})
     from services.circle_sql import kg_entities_circles_filter
-    clause, params = kg_entities_circles_filter(asker_id, alias="e")
+    clause, params = kg_entities_circles_filter(asker_id, alias="e", peer_scoped=enforce_circles)
     return (f"AND {clause}", params)
 
 
-async def _accessible(db: AsyncSession, ids: list[int], asker_id: int | None) -> dict[int, dict[str, Any]]:
+async def _accessible(
+    db: AsyncSession, ids: list[int], asker_id: int | None, enforce_circles: bool = False
+) -> dict[int, dict[str, Any]]:
     """Of ``ids``, the live canonical entities the asker may see (kg_node shape)."""
     if not ids:
         return {}
-    efilter, eparams = _entity_filter(asker_id)
+    efilter, eparams = _entity_filter(asker_id, enforce_circles)
     rows = (await db.execute(text(f"""
         SELECT e.id, e.name, e.entity_type, e.circle_tier
         FROM kg_entities e
@@ -66,16 +74,45 @@ async def _accessible(db: AsyncSession, ids: list[int], asker_id: int | None) ->
     }
 
 
-async def _edges_within(db: AsyncSession, ids: list[int]) -> list[dict[str, Any]]:
-    """Active relations whose BOTH endpoints are in ``ids`` (all already accessible)."""
+def _relation_filter(
+    asker_id: int | None, enforce_circles: bool = False
+) -> tuple[str, dict[str, Any]]:
+    """Peer-scoped circle WHERE-fragment for kg_relations alias ``r``.
+
+    A relation carries its OWN ``circle_tier`` (can be stricter than either
+    endpoint), so accessible endpoints are NOT sufficient to disclose the
+    predicate — a private relationship between two public entities would
+    otherwise leak to a peer.
+
+    Applied ONLY on the federation (``enforce_circles``) path so every
+    non-federation caller keeps the original endpoint-accessibility behavior
+    byte-identically. (Household/auth-on relation-tier filtering — where
+    entities are filtered but relations historically were not — is a separate,
+    pre-existing concern tracked as a follow-up, not part of this security fix.)
+    """
+    if not enforce_circles:
+        return ("", {})
+    if asker_id is None:
+        return ("AND r.circle_tier = :rel_pub_tier", {"rel_pub_tier": TIER_PUBLIC})
+    from services.circle_sql import kg_relations_circles_filter
+    clause, params = kg_relations_circles_filter(asker_id, alias="r", peer_scoped=True)
+    return (f"AND {clause}", params)
+
+
+async def _edges_within(
+    db: AsyncSession, ids: list[int], asker_id: int | None = None, enforce_circles: bool = False
+) -> list[dict[str, Any]]:
+    """Active relations whose BOTH endpoints are in ``ids`` (all already accessible)
+    AND whose own ``circle_tier`` the asker may reach (relation-tier gate)."""
     if len(ids) < 2:
         return []
-    rows = (await db.execute(text("""
-        SELECT id, subject_id, predicate, object_id, circle_tier
-        FROM kg_relations
-        WHERE is_active = true AND subject_id <> object_id
-          AND subject_id = ANY(:ids) AND object_id = ANY(:ids)
-    """), {"ids": ids})).fetchall()
+    rfilter, rparams = _relation_filter(asker_id, enforce_circles)
+    rows = (await db.execute(text(f"""
+        SELECT r.id, r.subject_id, r.predicate, r.object_id, r.circle_tier
+        FROM kg_relations r
+        WHERE r.is_active = true AND r.subject_id <> r.object_id
+          AND r.subject_id = ANY(:ids) AND r.object_id = ANY(:ids) {rfilter}
+    """), {"ids": ids, **rparams})).fetchall()
     return [{"id": int(r.id), "subject_id": int(r.subject_id), "predicate": r.predicate,
              "object_id": int(r.object_id), "circle_tier": int(r.circle_tier or 0)} for r in rows]
 
@@ -118,9 +155,14 @@ async def expand_fused(
     max_pivots: int = 8,
     max_hops: int = 2,
     max_expanded: int = 15,
+    enforce_circles: bool = False,
 ) -> list[AtomMatch]:
     """Post-RRF expansion. Returns NEW kg_node/kg_edge atoms (decay-scored,
-    provenance-marked) to append to ``merged``. [] if flag off / nothing to do."""
+    provenance-marked) to append to ``merged``. [] if flag off / nothing to do.
+
+    ``enforce_circles`` (federation): every hop's circle filter stays peer-scoped
+    even with auth off — otherwise expansion re-opens the leak the fused clause
+    closed."""
     if not settings.graph_expansion_enabled:
         return []
 
@@ -145,11 +187,16 @@ async def expand_fused(
     for hop in range(1, max(1, max_hops) + 1):
         if not frontier:
             break
-        rows = (await db.execute(text("""
-            SELECT subject_id, object_id FROM kg_relations
-            WHERE is_active = true AND subject_id <> object_id
-              AND (subject_id = ANY(:f) OR object_id = ANY(:f))
-        """), {"f": frontier})).fetchall()
+        # Peer path: don't TRAVERSE through relations the peer can't see, else a
+        # private edge discloses graph structure (that two nodes are linked) even
+        # after _edges_within hides the predicate. Non-federation path: rfilter=""
+        # → byte-identical.
+        rfilter, rparams = _relation_filter(asker_id, enforce_circles)
+        rows = (await db.execute(text(f"""
+            SELECT r.subject_id, r.object_id FROM kg_relations r
+            WHERE r.is_active = true AND r.subject_id <> r.object_id
+              AND (r.subject_id = ANY(:f) OR r.object_id = ANY(:f)) {rfilter}
+        """), {"f": frontier, **rparams})).fetchall()
         best: dict[int, float] = {}
         for s, o in rows:
             s, o = int(s), int(o)
@@ -158,7 +205,7 @@ async def expand_fused(
                     best[far] = max(best.get(far, 0.0), origin[near])
         if not best:
             break
-        acc = await _accessible(db, list(best), asker_id)   # circle filter at THIS hop
+        acc = await _accessible(db, list(best), asker_id, enforce_circles)   # circle filter at THIS hop
         for eid, ent in acc.items():
             seen.add(eid)
             ent["_score"] = best[eid] / (1 + hop)
@@ -187,9 +234,9 @@ async def expand_fused(
     names = {e["id"]: e.get("name", "") for e in top}
     pivot_only = [eid for eid, _ in pivots if eid not in names]  # pivot names not in `accessible`
     if pivot_only:
-        for eid, ent in (await _accessible(db, pivot_only, asker_id)).items():
+        for eid, ent in (await _accessible(db, pivot_only, asker_id, enforce_circles)).items():
             names[eid] = ent.get("name", "")
-    for r in await _edges_within(db, list(node_ids)):
+    for r in await _edges_within(db, list(node_ids), asker_id, enforce_circles):
         if r["subject_id"] in names and r["object_id"] in names:
             hop = max(accessible.get(r["subject_id"], {}).get("_hop", 0),
                       accessible.get(r["object_id"], {}).get("_hop", 0)) or 1
