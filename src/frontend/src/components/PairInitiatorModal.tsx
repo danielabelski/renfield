@@ -62,6 +62,9 @@ export default function PairInitiatorModal({ isOpen, onClose, onPaired }: PairIn
   const [tier, setTier] = useState<CircleTier>(2);
 
   const [copied, setCopied] = useState(false);
+  // Optional per-pairing override of the reachable endpoint the peer will use to
+  // query us. Blank → the backend defaults from FEDERATION_ADVERTISED_URL.
+  const [advertisedUrl, setAdvertisedUrl] = useState('');
 
   const reset = () => {
     setStep('offer');
@@ -72,6 +75,7 @@ export default function PairInitiatorModal({ isOpen, onClose, onPaired }: PairIn
     setParsedResponse(null);
     setTier(2);
     setCopied(false);
+    setAdvertisedUrl('');  // don't re-advertise a URL typed for a prior peer
   };
 
   const handleClose = () => {
@@ -84,7 +88,10 @@ export default function PairInitiatorModal({ isOpen, onClose, onPaired }: PairIn
     try {
       setLoading(true);
       setError(null);
-      const response = await apiClient.post<OfferData>('/api/federation/pair/offer', {});
+      const trimmed = advertisedUrl.trim();
+      const response = await apiClient.post<OfferData>('/api/federation/pair/offer', {
+        offered_endpoints: trimmed ? [{ url: trimmed }] : [],
+      });
       setOffer(response.data);
       setStep('await_response');
     } catch (err) {
@@ -165,6 +172,22 @@ export default function PairInitiatorModal({ isOpen, onClose, onPaired }: PairIn
           <p className="text-sm text-gray-700 dark:text-gray-300">
             {t('circles.pairInitiateStep1Explanation')}
           </p>
+          <div>
+            <label htmlFor="pair-advertised-url" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              {t('circles.pairAdvertisedUrlLabel')}
+            </label>
+            <input
+              id="pair-advertised-url"
+              type="text"
+              value={advertisedUrl}
+              onChange={(e) => setAdvertisedUrl(e.target.value)}
+              placeholder={t('circles.pairAdvertisedUrlPlaceholder')}
+              className="input w-full"
+            />
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+              {t('circles.pairAdvertisedUrlHelp')}
+            </p>
+          </div>
           <div className="flex justify-end gap-2">
             <button type="button" onClick={handleClose} className="btn-secondary px-4 py-2 rounded-lg">
               {t('common.cancel')}

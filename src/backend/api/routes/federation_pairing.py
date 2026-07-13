@@ -38,9 +38,28 @@ from services.pairing_service import (
     PairingResponse,
     PairingService,
 )
+from utils.config import settings
 
 
 router = APIRouter()
+
+
+def _resolve_advertised_endpoints(provided: list[dict]) -> list[dict]:
+    """The endpoints THIS instance advertises during pairing. A per-pairing UI
+    override wins; else fall back to the `federation_advertised_url` setting;
+    else advertise nothing (legacy — the peer gets no usable endpoint).
+
+    `provided` is scrubbed of entries with a blank/missing `url` before it counts
+    as an override — the UI already guards this, but a raw API caller posting
+    `[{"url": ""}]` / `[{}]` would otherwise persist a garbage endpoint that
+    resolves to "" and silently breaks the peer's transport. An all-blank
+    override re-falls-through to the setting."""
+    cleaned = [e for e in provided if isinstance(e, dict) and str(e.get("url", "")).strip()]
+    if cleaned:
+        return cleaned
+    if settings.federation_advertised_url:
+        return [{"url": settings.federation_advertised_url}]
+    return []
 
 
 # =============================================================================
@@ -117,7 +136,7 @@ async def create_pair_offer(
     return svc.create_offer(
         current_user=current_user,
         display_name=body.display_name,
-        offered_endpoints=body.offered_endpoints,
+        offered_endpoints=_resolve_advertised_endpoints(body.offered_endpoints),
     )
 
 
@@ -134,7 +153,7 @@ async def accept_pair_offer(
             current_user=current_user,
             offer=body.offer,
             my_tier_for_you=body.my_tier_for_you,
-            accepted_endpoints=body.accepted_endpoints,
+            accepted_endpoints=_resolve_advertised_endpoints(body.accepted_endpoints),
         )
     except PairingError as e:
         logger.warning(f"Pairing accept failed for user {current_user.id}: {e}")
