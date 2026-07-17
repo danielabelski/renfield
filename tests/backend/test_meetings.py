@@ -226,6 +226,67 @@ class TestMeetingRoutes:
         _override_user(user_a)
         assert (await async_client.get("/api/meetings/999999")).status_code == 404
 
+    async def test_list_404_when_flag_off(self, async_client, monkeypatch):
+        monkeypatch.setattr(settings, "meeting_transcription_enabled", False)
+        assert (await async_client.get("/api/meetings")).status_code == 404
+
+    async def test_list_owner_scoped_newest_first(
+        self, async_client, monkeypatch, tmp_path
+    ):
+        from models.database import User
+
+        _enable(monkeypatch, tmp_path, auth=True)
+        user_a = User(id=1, username="a", password_hash="x", is_active=True, role_id=1)
+        user_b = User(id=2, username="b", password_hash="x", is_active=True, role_id=1)
+
+        # A uploads two, B uploads one
+        _override_user(user_a)
+        first = (await async_client.post(
+            "/api/meetings/transcribe",
+            files={"audio": _wav()}, data={"consent_confirmed": "true", "title": "First"},
+        )).json()["id"]
+        second = (await async_client.post(
+            "/api/meetings/transcribe",
+            files={"audio": _wav()}, data={"consent_confirmed": "true", "title": "Second"},
+        )).json()["id"]
+        _override_user(user_b)
+        await async_client.post(
+            "/api/meetings/transcribe",
+            files={"audio": _wav()}, data={"consent_confirmed": "true", "title": "B-only"},
+        )
+
+        # A sees only A's meetings, newest first
+        _override_user(user_a)
+        rows = (await async_client.get("/api/meetings")).json()
+        assert [r["id"] for r in rows] == [second, first]
+        assert {r["title"] for r in rows} == {"First", "Second"}
+
+    async def test_list_auth_off_sees_all(self, async_client, monkeypatch, tmp_path):
+        _enable(monkeypatch, tmp_path, auth=False)
+        _override_user(None)
+        await async_client.post(
+            "/api/meetings/transcribe",
+            files={"audio": _wav()}, data={"consent_confirmed": "true"},
+        )
+        rows = (await async_client.get("/api/meetings")).json()
+        assert len(rows) >= 1
+
+    async def test_list_limit_caps_rows_and_rejects_out_of_range(
+        self, async_client, monkeypatch, tmp_path
+    ):
+        _enable(monkeypatch, tmp_path, auth=False)
+        _override_user(None)
+        for _ in range(3):
+            await async_client.post(
+                "/api/meetings/transcribe",
+                files={"audio": _wav()}, data={"consent_confirmed": "true"},
+            )
+        # limit actually caps the returned rows
+        assert len((await async_client.get("/api/meetings?limit=2")).json()) == 2
+        # out-of-range limits are 422 (ge=1, le=200)
+        assert (await async_client.get("/api/meetings?limit=0")).status_code == 422
+        assert (await async_client.get("/api/meetings?limit=201")).status_code == 422
+
 
 # ---------------------------------------------------------------------------
 # Pipeline pure functions — pseudonyms + render (no GPU, no DB)
