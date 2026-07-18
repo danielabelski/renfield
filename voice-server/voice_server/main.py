@@ -9,15 +9,36 @@ Endpoints:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from contextlib import asynccontextmanager
 
+import uvicorn
 from fastapi import FastAPI
 
 from voice_server import __version__
 from voice_server.config import settings
 
 logger = logging.getLogger("voice_server")
+
+
+class _AnonServer(uvicorn.Server):
+    """In-process second listener that does NOT own process signals.
+
+    uvicorn >= 0.30 registers SIGTERM/SIGINT handlers unconditionally inside
+    serve() via the capture_signals() context manager (the old
+    Server.install_signal_handlers hook no longer exists). Without this
+    override the anon listener — started AFTER the primary — would overwrite
+    the primary's handlers, so a K8s SIGTERM would flip the ANON server's
+    should_exit, the primary would never drain, and kubelet would SIGKILL
+    both at the grace deadline (PR #987 review finding 1). The primary
+    server owns signals; this one is stopped explicitly in the lifespan
+    finally.
+    """
+
+    @contextlib.contextmanager
+    def capture_signals(self):
+        yield
 
 
 @asynccontextmanager
@@ -68,10 +89,69 @@ async def lifespan(app: FastAPI):
     app.state.meeting = MeetingDiarizationService()
     await app.state.meeting.warmup()
 
+    # Registry mode with an anonymous client row (D16: the household has no
+    # user logins) serves the SAME app on a second port. The deployment
+    # fences that port with a NetworkPolicy + a dedicated ClusterIP Service;
+    # auth binds anonymous rows to it via the ASGI server scope, so the
+    # primary (ingress-reachable) port never honors them. lifespan="off" —
+    # app.state is already initialized by THIS lifespan; a second run would
+    # reload the models.
+    anon_server = None
+    anon_task = None
+    if settings.auth_mode == "registry" and any(
+        c.anonymous for c in settings.auth_clients.values()
+    ):
+        import asyncio
+        import time as _time
+
+        anon_config = uvicorn.Config(
+            app,
+            host=settings.host,
+            port=settings.anon_port,
+            log_level=settings.log_level.lower(),
+            lifespan="off",
+        )
+        anon_server = _AnonServer(anon_config)
+
+        async def _serve_anon() -> None:
+            # uvicorn calls sys.exit() on a bind failure; keep that (and any
+            # other BaseException) inside this task so it can't tear through
+            # the shared event loop, and let the started-wait below turn it
+            # into a loud lifespan failure.
+            try:
+                await anon_server.serve()
+            except asyncio.CancelledError:
+                raise
+            except BaseException:  # noqa: BLE001 — includes SystemExit
+                logger.exception("anonymous-client listener crashed")
+
+        anon_task = asyncio.get_running_loop().create_task(_serve_anon())
+
+        # Fail LOUD if the anon port can't bind (same philosophy as the
+        # opuslib boot check above): a dead household listener behind a green
+        # /health is exactly the silent-failure class this project is
+        # digging out of. Lifespan failure → non-ready pod → visible.
+        deadline = _time.monotonic() + 10.0
+        while not anon_server.started:
+            if anon_task.done() or _time.monotonic() > deadline:
+                raise RuntimeError(
+                    f"anonymous-client listener failed to start on "
+                    f":{settings.anon_port}"
+                )
+            await asyncio.sleep(0.05)
+        logger.info("anonymous-client listener on :%d", settings.anon_port)
+
     logger.info("voice-server ready")
     try:
         yield
     finally:
+        if anon_server is not None:
+            anon_server.should_exit = True
+            if anon_task is not None:
+                try:
+                    await anon_task
+                except Exception:  # noqa: BLE001 — shutdown path, log only
+                    logger.exception("anon listener shutdown error")
         logger.info("voice-server shutting down")
 
 
