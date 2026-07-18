@@ -1084,3 +1084,97 @@ class TestGetDefaultClientRoutesToOpenAI:
         assert isinstance(embed, OpenAICompatibleClient)
         assert embed._base_url == "http://embed:8080/v1"
         assert embed._default_model == "qwen3-embedding"
+
+
+# ============================================================================
+# Reasoning-effort control + dedicated client (OpenRouter latency fixes)
+# ============================================================================
+
+class TestReasoningEffortExtraBody:
+    """llm_openai_reasoning_effort must reach the request extra_body — and
+    ONLY when explicitly configured (local llama-server deployments stay
+    byte-identical with the default None)."""
+
+    def _client_with_mock_create(self):
+        client = OpenAICompatibleClient.__new__(OpenAICompatibleClient)
+        client._default_model = "m"
+        inner = MagicMock()
+        inner.chat.completions.create = AsyncMock(return_value=MagicMock(choices=[]))
+        client._client = inner
+        return client, inner
+
+    def _run_chat(self, client, **chat_kwargs):
+        import asyncio
+
+        with patch.object(OpenAICompatibleClient, "_wrap_response", return_value=MagicMock()):
+            asyncio.run(client.chat(model="m", messages=[{"role": "user", "content": "hi"}], **chat_kwargs))
+
+    @pytest.mark.unit
+    @patch("utils.llm_client.settings")
+    def test_reasoning_effort_emitted_when_set(self, mock_settings):
+        mock_settings.llm_openai_reasoning_effort = "low"
+        client, inner = self._client_with_mock_create()
+        self._run_chat(client)
+        _, kwargs = inner.chat.completions.create.call_args
+        assert kwargs["extra_body"] == {"reasoning_effort": "low"}
+
+    @pytest.mark.unit
+    @patch("utils.llm_client.settings")
+    def test_no_extra_body_when_unset(self, mock_settings):
+        mock_settings.llm_openai_reasoning_effort = None
+        client, inner = self._client_with_mock_create()
+        self._run_chat(client)
+        _, kwargs = inner.chat.completions.create.call_args
+        assert kwargs["extra_body"] is None
+
+    @pytest.mark.unit
+    @patch("utils.llm_client.settings")
+    def test_reasoning_effort_composes_with_think_flag(self, mock_settings):
+        mock_settings.llm_openai_reasoning_effort = "low"
+        client, inner = self._client_with_mock_create()
+        self._run_chat(client, think=False)
+        _, kwargs = inner.chat.completions.create.call_args
+        assert kwargs["extra_body"]["reasoning_effort"] == "low"
+        assert kwargs["extra_body"]["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+class TestGetDedicatedClient:
+    """get_dedicated_client() builds a client for exactly the given URL — it
+    has no OpenAI-tier branch by construction (the seam that decides is in
+    AgentRouter.classify, covered by test_agent_router.py's
+    test_router_uses_dedicated_url / _falls_back_to_agent_ollama_url)."""
+
+    @pytest.mark.unit
+    @patch("ollama.AsyncClient")
+    @patch("utils.llm_client.settings")
+    def test_binds_explicit_url(self, mock_settings, mock_cls):
+        from utils.llm_client import get_dedicated_client
+
+        mock_settings.ollama_fallback_url = ""
+        mock_settings.ollama_connect_timeout = 10.0
+        mock_settings.ollama_read_timeout = 300.0
+        sentinel = MagicMock()
+        mock_cls.return_value = sentinel
+
+        result = get_dedicated_client("http://router-ollama:11434")
+
+        args, kwargs = mock_cls.call_args
+        assert kwargs.get("host") == "http://router-ollama:11434"
+        assert result is sentinel
+
+    @pytest.mark.unit
+    @patch("ollama.AsyncClient")
+    @patch("utils.llm_client.settings")
+    def test_fallback_wrapping_applies(self, mock_settings, mock_cls):
+        """A configured OLLAMA_FALLBACK_URL wraps the dedicated client, same
+        as every other _make_client_with_fallback consumer."""
+        from utils.llm_client import _FallbackLLMClient, get_dedicated_client
+
+        mock_settings.ollama_fallback_url = "http://backup:11434"
+        mock_settings.ollama_connect_timeout = 10.0
+        mock_settings.ollama_read_timeout = 300.0
+        mock_cls.return_value = MagicMock()
+
+        result = get_dedicated_client("http://router-ollama:11434")
+
+        assert isinstance(result, _FallbackLLMClient)

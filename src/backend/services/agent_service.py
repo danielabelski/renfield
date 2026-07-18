@@ -24,7 +24,12 @@ from services.prompt_manager import prompt_manager
 from utils.circuit_breaker import agent_circuit_breaker
 from utils.config import settings
 from utils.prompt_safety import neutralize_delimiters
-from utils.llm_client import extract_response_content, get_agent_client, get_classification_chat_kwargs
+from utils.llm_client import (
+    extract_response_content,
+    get_agent_client,
+    get_classification_chat_kwargs,
+    use_openai_for_tier,
+)
 from utils.token_counter import token_counter
 
 if TYPE_CHECKING:
@@ -413,7 +418,13 @@ _DEFAULT_LLM_OPTIONS_SUMMARY = {
     "temperature": 0.3, "num_predict": 1500, "num_ctx": 32768,
 }
 _DEFAULT_LLM_OPTIONS_TOOL_PRESELECT = {
-    "temperature": 0, "num_predict": 120, "num_ctx": 4096,
+    # 512, not 120: reasoning models spend completion budget on hidden
+    # reasoning tokens BEFORE the visible JSON. At 120 the entire budget was
+    # consumed by reasoning and the content came back empty, so pre-selection
+    # failed to parse on every turn (wasting the call and stuffing ALL tools
+    # into the agent prompt). 512 survives moderate reasoning while keeping
+    # the call cheap; non-reasoning models are unaffected (they stop early).
+    "temperature": 0, "num_predict": 512, "num_ctx": 4096,
 }
 
 # Hard workflow prerequisites: a tool the pre-selection LLM may pick cannot
@@ -1455,10 +1466,18 @@ class AgentService:
 
         start_time = time.monotonic()
 
-        # Per-role model/URL override > global agent settings > default
+        # Per-role model/URL override > global agent settings > default.
+        # When the agent tier rides an OpenAI-compat endpoint, the last-resort
+        # default must be that endpoint's model — falling back to the local
+        # Ollama model name sends e.g. "llama3.2:3b" to an external API that
+        # validates model IDs (400). Affects roles without a model override
+        # (notably the built-in `general` fallback role).
         role_model = self.role.model if self.role else None
         role_url = self.role.ollama_url if self.role else None
-        agent_model = role_model or settings.agent_model or settings.ollama_model
+        if use_openai_for_tier("agent"):
+            agent_model = role_model or settings.agent_model or settings.llm_openai_model
+        else:
+            agent_model = role_model or settings.agent_model or settings.ollama_model
 
         # Use separate Ollama instance for agent if configured
         agent_client, resolved_url = get_agent_client(role_url, settings.agent_ollama_url)
