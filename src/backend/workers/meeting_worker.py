@@ -82,6 +82,28 @@ _TRANSIENT_EXC: tuple[type[BaseException], ...] = (
 )
 
 
+# UNAMBIGUOUS GPU resource-exhaustion markers in a voice-server 5xx body. These
+# come back as HTTP 500 but retrying the IDENTICAL job just re-OOMs the (shared)
+# GPU — the reclaim loop would re-burn it every window forever. So they are
+# TERMINAL, not transient, even though the status is 5xx. Kept DELIBERATELY
+# narrow to true exhaustion / dead-context: broader CUDA strings ("cuda error",
+# "cudnn"/"cublas" init) also match GENUINELY-transient states (model-load race,
+# post-node-reboot driver/NVML settle window) that fail fast without thrashing
+# and DO recover on retry — those must stay retryable. The transient-retry cap
+# below is the message-independent backstop for anything not matched here (e.g.
+# a hard OOM that kills the pod and surfaces as "unreachable").
+_GPU_RESOURCE_MARKERS: tuple[str, ...] = (
+    "out of memory",
+    "cuda_error_out_of_memory",
+    "invalid device ordinal",
+)
+
+
+def _is_gpu_resource_error(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    return any(marker in msg for marker in _GPU_RESOURCE_MARKERS)
+
+
 def _is_transient_error(exc: BaseException) -> bool:
     if isinstance(exc, _TRANSIENT_EXC):
         return True
@@ -91,6 +113,11 @@ def _is_transient_error(exc: BaseException) -> bool:
     # instead of re-burning the GPU every reclaim window. Mirrors the document
     # worker's Ollama 5xx/4xx split.
     if isinstance(exc, VoiceServerError):
+        # GPU resource exhaustion (CUDA OOM / dead context) is a 5xx that retry
+        # can't fix on the same job → terminal, so it stops thrashing the shared
+        # GPU instead of retrying every reclaim window forever.
+        if _is_gpu_resource_error(exc):
+            return False
         return exc.status_code is None or exc.status_code >= 500
     return False
 
@@ -213,6 +240,28 @@ async def _process_entry(
                 RuntimeError(
                     f"quarantined after {crash_count} crash redeliveries "
                     f"(worker kept dying mid-processing)"
+                ),
+            )
+            await queue.ack(entry.entry_id)
+            await _clear_transient(redis, entry.entry_id)
+            return
+
+        # Message-independent backstop: a job that keeps failing TRANSIENTLY
+        # (voice-server 5xx / unreachable) is left for reclaim every window, but
+        # crash_count never trips the guard above (transient leaves are excluded).
+        # An OOM the markers miss, or a pod-killing OOM seen as "unreachable",
+        # would thus re-burn the shared GPU forever. Cap the transient retries.
+        if transient_leaves > settings.meeting_worker_max_transient_retries:
+            logger.error(
+                f"meeting {meeting_id}: entry {entry.entry_id} left transient "
+                f"{transient_leaves}x (> {settings.meeting_worker_max_transient_retries}) "
+                f"— quarantining (voice-server kept failing)"
+            )
+            await _mark_meeting_failed(
+                meeting_id,
+                RuntimeError(
+                    f"quarantined after {transient_leaves} transient voice-server "
+                    f"failures (OOM / unreachable that did not recover)"
                 ),
             )
             await queue.ack(entry.entry_id)
