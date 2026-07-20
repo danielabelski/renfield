@@ -59,6 +59,18 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+class SsoExchangeRequest(BaseModel):
+    """Exchange a one-time SSO hand-off code for the session tokens.
+
+    Replaces the URL-fragment token hand-off: the SPA receives an opaque
+    ``code`` (+ ``state``) in the callback URL and POSTs it here with the PKCE
+    ``code_verifier`` it generated when starting the login. See
+    docs/design/sso-token-handoff-hardening.md."""
+    code: str
+    code_verifier: str
+    state: str
+
+
 class RegisterRequest(BaseModel):
     """Request model for user registration."""
     username: str = Field(..., min_length=3, max_length=100)
@@ -307,6 +319,65 @@ async def refresh_token(
         # #694: a token refresh must carry the still-current flag, else the SPA
         # would think rotation is done and stop redirecting to /change-password
         # (while the server keeps returning opaque 403s).
+        must_change_password=user.must_change_password,
+    )
+
+
+@router.post("/sso/exchange", response_model=TokenResponse)
+@limiter.limit(settings.api_rate_limit_auth)
+async def sso_exchange(
+    request: Request,
+    exchange: SsoExchangeRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Exchange a one-time SSO hand-off code for the session tokens.
+
+    The token-in-URL replacement: a federated login redirects the SPA to
+    ``…/auth/callback?code=&state=`` (opaque code only); the SPA POSTs the code +
+    its PKCE ``code_verifier`` + ``state`` here and gets the tokens in the body.
+    The code is single-use (atomic GETDEL) and PKCE/state-bound, so a leaked code
+    is worthless. Every failure returns the SAME opaque 400 — no oracle for
+    which check failed. Gated by ``sso_handoff_enabled`` (404 when off). See
+    docs/design/sso-token-handoff-hardening.md.
+    """
+    if not settings.sso_handoff_enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+    from services.sso_handoff_store import consume_handoff_code, verify_pkce_s256
+
+    bad = HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Invalid or expired authorization code",
+    )
+    # Consume first (single-use): even a wrong verifier/state burns the code, so
+    # an attacker who raced the victim to a leaked code can't retry it.
+    session = await consume_handoff_code(exchange.code)
+    if session is None:
+        raise bad
+    if not verify_pkce_s256(exchange.code_verifier, session.code_challenge):
+        raise bad
+    # constant-time state compare (CSRF binding to the initiating tab)
+    import hmac
+    if not hmac.compare_digest(exchange.state, session.state):
+        raise bad
+
+    # Re-validate the user and mint the tokens NOW (not at callback time), so no
+    # token ever sat in Redis and must_change_password reflects current state.
+    user = await get_user_by_id(db, session.user_id)
+    if not user or not user.is_active:
+        raise bad
+
+    access_token = create_access_token(
+        data={"sub": str(user.id), "username": user.username}
+    )
+    refresh_token = create_refresh_token(user.id)
+
+    logger.info(f"SSO hand-off exchanged: user={user.username} provider={session.provider!r}")
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_type="bearer",
+        expires_in=settings.access_token_expire_minutes * 60,
         must_change_password=user.must_change_password,
     )
 
