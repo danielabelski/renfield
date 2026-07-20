@@ -363,10 +363,16 @@ export const handlers: HttpHandler[] = [
       room_handoff_enabled: false,
       chat_branching_enabled: false,
       projects_enabled: false,
+      notes_enabled: false,
       meeting_transcription_enabled: false,
       meeting_minutes_enabled: false,
     });
   }),
+  // Notes links (Phase 4B) — default empty so the NoteLinksPanel per-card fetch
+  // doesn't hit an unhandled request; per-test handlers override for link cases.
+  http.get(`${BASE_URL}/api/notes/:id/links`, () =>
+    HttpResponse.json({ outgoing: [], backlinks: [] }),
+  ),
   // MCP API
   http.get(`${BASE_URL}/api/mcp/status`, () => {
     return HttpResponse.json(mockMcpStatus);
