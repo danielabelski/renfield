@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import ATOM_TYPE_NOTE, Note
 from services.atom_service import AtomService
+from utils.config import settings
 
 
 class NoteTitleConflict(Exception):
@@ -48,6 +49,39 @@ async def _sync_links_best_effort(db: AsyncSession, note: Note, owner_id: int | 
             await sync_note_links(db, note, owner_id=owner_id)
     except Exception as e:  # noqa: BLE001
         logger.warning(f"note {note.id}: [[link]] sync failed (note saved anyway): {e}")
+
+
+async def embed_note_by_id(note_id: int) -> None:
+    """Compute + store a note's dense embedding on its OWN session (a background
+    task — NEVER the request transaction, so the Ollama round-trip doesn't pin a
+    pooled request connection; cf. the 2026-07-01 folder-ingest outage class).
+    Scheduled by the route via FastAPI BackgroundTasks after the note is committed,
+    so FTS covers it immediately and the embedding lands moments later.
+
+    Best-effort: an unreachable embed model leaves ``embedding`` NULL and the FTS
+    branch still covers the note. Postgres-only (the sqlite column is Text) and
+    flag-gated."""
+    if not settings.notes_semantic_search_enabled:
+        return
+    from services.database import AsyncSessionLocal
+
+    try:
+        async with AsyncSessionLocal() as db:
+            if db.bind is None or db.bind.dialect.name != "postgresql":
+                return
+            note = await db.get(Note, note_id)
+            if note is None:
+                return
+            text_in = f"{note.title}\n{note.body or ''}".strip()
+            if not text_in:
+                return
+            from utils.llm_client import get_embed_client
+            client = get_embed_client()
+            resp = await client.embeddings(model=settings.ollama_embed_model, prompt=text_in)
+            note.embedding = resp.embedding
+            await db.commit()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"note {note_id}: background embedding failed (FTS still covers it): {e}")
 
 
 async def create_note(
@@ -117,7 +151,8 @@ async def update_note(
         # but the in-session ORM object is stale — refresh it to match.
         await db.refresh(note, attribute_names=["circle_tier"])
     await db.flush()
-    # Re-sync links when the title (the [[link]] key) or body changed.
+    # Re-sync links when the content (title/body) changed. Re-embedding is
+    # scheduled by the route as a background task (off the request transaction).
     if title is not None or body is not None:
         await _sync_links_best_effort(db, note, note.owner_user_id)
     return note
