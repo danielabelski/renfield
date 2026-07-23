@@ -524,3 +524,74 @@ class TestForceOcrPath:
         # Global config overrides force_ocr=False
         processor._convert_document_ocr.assert_called_once()
         processor._convert_document.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# OCR engine switch (rag_ocr_engine) — force_full_page_ocr converter
+# ---------------------------------------------------------------------------
+
+def _build_ocr_opts(engine, *, cli_present=True, cli_langs_ok=True, tesserocr_present=True):
+    """Invoke DocumentProcessor._build_full_page_ocr_options with mocked docling option
+    classes and a mocked tesseract RUNTIME (CLI binary + deu/eng traineddata, and the
+    tesserocr binding). Returns the ``(label, kwargs)`` sentinel produced by the selected
+    option constructor. The fail-safe hinges on real availability — the option classes
+    always construct, so mocking them alone must NOT be enough to select tesseract."""
+    mod = sys.modules["docling.datamodel.pipeline_options"]
+
+    def _mk(label):
+        return lambda **kwargs: (label, kwargs)
+
+    def _find_spec(name):
+        return object() if (name == "tesserocr" and tesserocr_present) else None
+
+    with patch.object(mod, "EasyOcrOptions", _mk("easyocr"), create=True), \
+         patch.object(mod, "TesseractCliOcrOptions", _mk("tess_cli"), create=True), \
+         patch.object(mod, "TesseractOcrOptions", _mk("tess_bind"), create=True), \
+         patch("shutil.which", lambda name: "/usr/bin/tesseract" if cli_present else None), \
+         patch("importlib.util.find_spec", _find_spec), \
+         patch.object(DocumentProcessor, "_tesseract_cli_has_langs",
+                      staticmethod(lambda: cli_langs_ok)), \
+         patch("services.document_processor.settings") as s:
+        s.rag_ocr_engine = engine
+        return DocumentProcessor()._build_full_page_ocr_options()
+
+
+@pytest.mark.unit
+def test_ocr_engine_tesseract_prefers_cli():
+    label, kwargs = _build_ocr_opts("tesseract", cli_present=True, cli_langs_ok=True)
+    assert label == "tess_cli"
+    assert kwargs == {"lang": ["deu", "eng"], "force_full_page_ocr": True}
+
+
+@pytest.mark.unit
+def test_ocr_engine_tesseract_falls_back_to_binding_without_cli():
+    # No CLI, but the tesserocr binding is importable -> binding variant.
+    label, kwargs = _build_ocr_opts("tesseract", cli_present=False, tesserocr_present=True)
+    assert label == "tess_bind"
+    assert kwargs == {"lang": ["deu", "eng"], "force_full_page_ocr": True}
+
+
+@pytest.mark.unit
+def test_ocr_engine_tesseract_cli_missing_langs_fails_safe():
+    # CLI binary present but deu/eng traineddata missing AND no binding -> EasyOcr.
+    label, kwargs = _build_ocr_opts(
+        "tesseract", cli_present=True, cli_langs_ok=False, tesserocr_present=False
+    )
+    assert label == "easyocr"
+
+
+@pytest.mark.unit
+def test_ocr_engine_tesseract_fails_safe_to_easyocr_when_runtime_absent():
+    # tesseract selected but NO CLI and NO binding -> must fail safe to EasyOcr
+    # (regression guard: the options classes construct even without the runtime).
+    label, kwargs = _build_ocr_opts("tesseract", cli_present=False, tesserocr_present=False)
+    assert label == "easyocr"
+    assert kwargs["lang"] == ["de", "en"]
+    assert kwargs["force_full_page_ocr"] is True
+
+
+@pytest.mark.unit
+def test_ocr_engine_easyocr_legacy():
+    label, kwargs = _build_ocr_opts("easyocr")
+    assert label == "easyocr"
+    assert kwargs == {"lang": ["de", "en"], "force_full_page_ocr": True, "bitmap_area_threshold": 0.0}
