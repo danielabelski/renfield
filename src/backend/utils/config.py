@@ -336,6 +336,12 @@ class Settings(BaseSettings):
     mcp_refresh_interval: int = 60        # Background refresh interval (seconds)
     mcp_connect_timeout: float = 10.0     # Connection timeout per server (seconds)
     mcp_call_timeout: float = 30.0        # Tool call timeout (seconds)
+    # Paperless consume-poll timeout: await_consume_result blocks until Paperless
+    # finishes OCR-consuming an uploaded doc, which on a fresh/slow instance exceeds
+    # the 30s mcp_call_timeout — that cut-off left the doc un-settled → re-enqueued →
+    # RE-UPLOADED → duplicates (2026-07). The leg passes this as a per-call timeout
+    # override so the first consume verdict actually arrives (no retry, no duplicate).
+    paperless_consume_timeout_s: float = 120.0
     mcp_max_response_size: int = Field(default=131072, ge=1024, le=524288)  # 128KB max response — accommodates list_correspondents on real corpora (~70KB at ~900 entries) without truncating mid-payload
     # MCP exponential-backoff for reconnect / transient failures
     mcp_backoff_initial_delay: float = Field(default=1.0, ge=0.1, le=60.0)
@@ -778,6 +784,22 @@ class Settings(BaseSettings):
     folder_ingest_target_user: str = ""  # owner username/id; empty → admin/first user
     folder_ingest_default_tier: int = Field(default=0, ge=0, le=4)  # circle tier at create
     folder_ingest_to_paperless: bool = True
+    # Auto-populate the Paperless taxonomy: when on (default), the filing leg
+    # resolve-OR-CREATEs document types / tags (like it already does for
+    # correspondents) instead of only matching against the pre-curated taxonomy —
+    # so on a fresh or wiped Paperless the fields self-populate instead of staying
+    # empty. The fuzzy guardrail still prevents near-duplicates. Off = legacy
+    # resolve-only (assign existing taxonomy only).
+    paperless_autocreate_document_type: bool = True
+    paperless_autocreate_tags: bool = True
+    # Authoritative push token (optional). When set, the boot credential-reconciler
+    # (services/credential_reconciler) seeds the DB SystemSetting from this value, so
+    # a DB wipe SELF-HEALS the folder-ingest push token on next boot instead of
+    # diverging from the MCP's copy (the 2026-07 reset incident: wipe cleared the
+    # DB token → MCP push 403). Must equal the filesystem MCP's RENFIELD_INGEST_TOKEN
+    # (share one secret). Empty = legacy DB-authoritative behavior (admin-generated
+    # token via POST /api/folder-ingest/token, no reconcile).
+    folder_ingest_token: str = ""
     folder_ingest_notify_on_filed: bool = True
 
     # Async Paperless reconciler (Design Z): folder/email-ingest stamp
@@ -842,6 +864,10 @@ class Settings(BaseSettings):
     email_ingest_enabled: bool = False
     email_ingest_to_paperless: bool = True
     email_ingest_mailboxes_json: str = ""
+    # Authoritative push token (optional) — see folder_ingest_token above. Seeds the
+    # DB email-ingest token on boot so a wipe self-heals it. Must equal the
+    # email-ingest MCP's RENFIELD_INGEST_TOKEN. Empty = legacy DB-authoritative.
+    email_ingest_token: str = ""
     # Paperless cold-start confirm ramp: the first N archives show a metadata
     # confirm; after N the system trusts itself and archives silently. 0 =
     # never confirm (always silent). Tunable without a code change.

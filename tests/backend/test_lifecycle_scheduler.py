@@ -113,3 +113,4 @@ async def test_cancel_during_boot_run_terminates_cleanly():
     except asyncio.CancelledError:
         pass
     assert task.done()
+
