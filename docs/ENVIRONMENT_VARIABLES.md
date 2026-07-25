@@ -793,6 +793,16 @@ RAG_OCR_ENGINE=tesseract         # tesseract (Default, 148-Doc-Eval-Sieger) | ea
                                  # tesseract fällt fail-safe auf EasyOcr zurück, wenn die
                                  # Tesseract-Runtime (CLI+deu/eng oder tesserocr) fehlt.
 RAG_OCR_IMAGES_SCALE=1.5         # Page-Raster-Faktor beim Full-Page-OCR (Memory ~quadratisch)
+OCR_VLM_FALLBACK_ENABLED=false   # Wenn Tesseract/EasyOCR-Text weiter schlecht scored (rotiert/
+                                 # schlechter Scan → Zeichen-Garble), Seite(n) rendern und vom
+                                 # Vision-Modell (OLLAMA_VISION_MODEL) transkribieren lassen. Nur
+                                 # genutzt, wenn das VLM-Ergebnis strikt besser scored. Dark/opt-in.
+OCR_VLM_FALLBACK_SCORE_THRESHOLD=2  # OCR-Score <= dieser Wert → VLM-Fallback versuchen
+OCR_VLM_FALLBACK_MAX_PAGES=5     # Max. Seiten pro Dokument fürs VLM (Kosten-/Latenz-Grenze)
+OCR_VLM_GIBBERISH_GATE_ENABLED=false  # Schneller LM-Check (is_ocr_gibberish, Intent-Modell) als
+                                 # VLM-Trigger+Akzeptanz — fängt „aussprechbaren" Pseudo-Wort-Müll
+                                 # (ZOGEOLONIGGY), den Zeichenstatistik nicht erkennt. 1 kleiner
+                                 # Text-Modell-Call pro geprüftem Dokument, daher opt-in.
 ```
 
 **Defaults:**

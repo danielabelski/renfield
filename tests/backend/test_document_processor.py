@@ -595,3 +595,131 @@ def test_ocr_engine_easyocr_legacy():
     label, kwargs = _build_ocr_opts("easyocr")
     assert label == "easyocr"
     assert kwargs == {"lang": ["de", "en"], "force_full_page_ocr": True, "bitmap_area_threshold": 0.0}
+
+
+# ── VLM re-OCR fallback (rotated/poor scans that Tesseract garbles) ──────────
+
+import pytest as _pytest  # noqa: E402
+
+_VLM_GARBLE = (
+    "Rechnung KIJ Betrag Bez:-ihl unq Maa KNr lUGB Datum i;5.Lei "
+    "Nummer fff torC:a Summe Hqrq:nt Konto Aut:r Beleg Nmm:r Karte Nrq"
+)
+_VLM_CLEAN = (
+    "Sehr geehrte Damen und Herren, anbei die Rechnung fuer den Monat Mai. "
+    "Der Gesamtbetrag betraegt 149 Euro und ist in vierzehn Tagen zu zahlen."
+)
+
+
+class _FakeVision:
+    def __init__(self, text):
+        self._t = text
+
+    async def extract_text_from_image(self, img):
+        return self._t
+
+
+@_pytest.mark.unit
+@_pytest.mark.asyncio
+async def test_vlm_fallback_noop_when_disabled(monkeypatch):
+    from utils.config import settings
+
+    monkeypatch.setattr(settings, "ocr_vlm_fallback_enabled", False)
+    dp = DocumentProcessor()
+    rendered = []
+    dp._render_pages_b64 = lambda fp, mx: rendered.append(1) or ["img"]
+
+    assert await dp._vlm_ocr_fallback("/x.pdf", _VLM_GARBLE) is None
+    assert rendered == []  # never renders / calls the VLM when off
+
+
+@_pytest.mark.unit
+@_pytest.mark.asyncio
+async def test_vlm_fallback_skips_when_ocr_already_good(monkeypatch):
+    from utils.config import settings
+
+    monkeypatch.setattr(settings, "ocr_vlm_fallback_enabled", True)
+    dp = DocumentProcessor()
+    rendered = []
+    dp._render_pages_b64 = lambda fp, mx: rendered.append(1) or ["img"]
+    dp._ollama_service = _FakeVision(_VLM_CLEAN)
+
+    assert await dp._vlm_ocr_fallback("/x.pdf", _VLM_CLEAN) is None
+    assert rendered == []  # OCR scored fine → no VLM
+
+
+@_pytest.mark.unit
+@_pytest.mark.asyncio
+async def test_vlm_fallback_replaces_garbled_ocr_with_better_text(monkeypatch):
+    from utils.config import settings
+
+    monkeypatch.setattr(settings, "ocr_vlm_fallback_enabled", True)
+    dp = DocumentProcessor()
+    dp._render_pages_b64 = lambda fp, mx: ["img"]
+    dp._ollama_service = _FakeVision(_VLM_CLEAN)
+
+    assert await dp._vlm_ocr_fallback("/x.pdf", _VLM_GARBLE) == _VLM_CLEAN
+
+
+@_pytest.mark.unit
+@_pytest.mark.asyncio
+async def test_vlm_fallback_keeps_ocr_when_vlm_not_better(monkeypatch):
+    """If the VLM output isn't strictly better, keep the OCR text (no regression)."""
+    from utils.config import settings
+
+    monkeypatch.setattr(settings, "ocr_vlm_fallback_enabled", True)
+    dp = DocumentProcessor()
+    dp._render_pages_b64 = lambda fp, mx: ["img"]
+    dp._ollama_service = _FakeVision(_VLM_GARBLE)  # VLM also garbage
+
+    assert await dp._vlm_ocr_fallback("/x.pdf", _VLM_GARBLE) is None
+
+
+class _FakeVisionGate:
+    """Vision svc that also answers the LM gibberish gate; keyed by text prefix."""
+
+    def __init__(self, vlm_out, gibberish_prefix):
+        self._vlm = vlm_out
+        self._pfx = gibberish_prefix
+
+    async def extract_text_from_image(self, img):
+        return self._vlm
+
+    async def is_ocr_gibberish(self, text):
+        return text.startswith(self._pfx)
+
+
+@_pytest.mark.unit
+@_pytest.mark.asyncio
+async def test_vlm_fallback_gibberish_gate_triggers_on_pseudo_word_garble(monkeypatch):
+    """Style-2 garble scores OK by char stats but the LM gate flags it → VLM used."""
+    from utils.config import settings
+
+    monkeypatch.setattr(settings, "ocr_vlm_fallback_enabled", True)
+    monkeypatch.setattr(settings, "ocr_vlm_gibberish_gate_enabled", True)
+    dp = DocumentProcessor()
+    dp._render_pages_b64 = lambda fp, mx: ["img"]
+    # pronounceable pseudo-words: garble_ratio ~0 → score_ocr_quality would pass it
+    style2 = "ZOGEOLONIGGY bunaorstaoyuy NMCVAUN MOUYBOS aul Tuo readable looking here"
+    vlm_out = "Bezahlung MasterCard Betrag Gesamt Rechnung Nummer Datum Kunde Steuer"
+    dp._ollama_service = _FakeVisionGate(vlm_out, gibberish_prefix="ZOGEO")
+
+    assert await dp._vlm_ocr_fallback("/x.pdf", style2) == vlm_out
+
+
+@_pytest.mark.unit
+@_pytest.mark.asyncio
+async def test_vlm_fallback_gate_skips_readable_text(monkeypatch):
+    """Gate on + char score OK + LM says readable → no render, no VLM."""
+    from utils.config import settings
+
+    monkeypatch.setattr(settings, "ocr_vlm_fallback_enabled", True)
+    monkeypatch.setattr(settings, "ocr_vlm_gibberish_gate_enabled", True)
+    dp = DocumentProcessor()
+    rendered = []
+    dp._render_pages_b64 = lambda fp, mx: rendered.append(1) or ["img"]
+    dp._ollama_service = _FakeVisionGate("x", gibberish_prefix="ZZZ_NEVER")
+    clean = "Bezahlung MasterCard Betrag Gesamt Rechnung Nummer Datum Kunde Steuer heute"
+
+    assert await dp._vlm_ocr_fallback("/x.pdf", clean) is None
+    assert rendered == []

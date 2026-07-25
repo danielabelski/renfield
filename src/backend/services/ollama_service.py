@@ -300,6 +300,98 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             logger.warning(f"Vision occupancy count failed: {e}")
             return None
 
+    async def is_ocr_gibberish(self, text: str) -> bool | None:
+        """Fast text-model check: is this OCR output garbled gibberish or readable
+        document text? Catches the 'pronounceable pseudo-word' garble style
+        ('ZOGEOLONIGGY', 'bunaorstaoyuy') that character statistics can't tell from
+        real words — that needs language understanding, which is what an LM is for.
+
+        Returns True (gibberish), False (readable), or None (no verdict / failure /
+        breaker open). Used as the VLM re-OCR trigger + acceptance gate. Runs on a
+        text sample (cheap) with the fast intent model."""
+        import re as _re
+
+        model = settings.ollama_intent_model or settings.ollama_model
+        sample = (text or "").strip()[:800]
+        if not model or len(sample) < 20:
+            return None
+        if not await llm_circuit_breaker.allow_request():
+            return None
+        try:
+            prompt = (
+                "You are checking OCR output quality. Below is text extracted from a "
+                "scanned document. Decide if it is READABLE (real words in any "
+                "language — a receipt/invoice with codes, numbers and abbreviations "
+                "still counts as READABLE) or GIBBERISH (garbled OCR: nonsense letter "
+                "sequences and fake words like 'ZOGEOLONIGGY' or 'bunaorstaoyuy'). "
+                "Answer with ONE word only: READABLE or GIBBERISH. /no_think\n\n"
+                f"TEXT:\n{sample}"
+            )
+            resp = await self.client.chat(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                stream=False,
+                options={"num_ctx": settings.ollama_num_ctx},
+            )
+            await llm_circuit_breaker.record_success()
+            content = (resp.message.content if resp and resp.message else "") or ""
+            content = _re.sub(r"<think>.*?</think>", "", content, flags=_re.DOTALL | _re.IGNORECASE).upper()
+            if "GIBBERISH" in content:
+                return True
+            if "READABLE" in content:
+                return False
+            return None
+        except Exception as e:  # noqa: BLE001
+            await llm_circuit_breaker.record_failure()
+            logger.warning(f"OCR gibberish check failed: {e}")
+            return None
+
+    async def extract_text_from_image(self, image_b64: str) -> str | None:
+        """Transcribe ALL text from a document-page image via the vision model.
+
+        The VLM re-OCR fallback: when Tesseract/EasyOCR produced garbage on a
+        rotated or poor-quality scan, a vision model reads the page far better and
+        is robust to orientation/noise. Returns the transcribed text, or None if
+        there is no vision model / the breaker is open / the call fails.
+        """
+        import re as _re
+
+        vision_model = settings.ollama_vision_model
+        if not vision_model:
+            return None
+        if not await llm_circuit_breaker.allow_request():
+            logger.warning("🔴 LLM circuit breaker OPEN — skipping VLM OCR")
+            return None
+        try:
+            prompt = (
+                "You are an OCR engine. Transcribe ALL text visible in this document "
+                "image EXACTLY as written, preserving reading order and line breaks. "
+                "The page may be rotated or skewed — read it in its correct upright "
+                "orientation. Output ONLY the raw transcribed text — no commentary, "
+                "no markdown, no code fences. /no_think"
+            )
+            messages = [{"role": "user", "content": prompt, "images": [image_b64]}]
+            if settings.ollama_vision_url:
+                from utils.llm_client import _make_client_with_fallback
+                vision_client = _make_client_with_fallback(settings.ollama_vision_url)
+            else:
+                vision_client = self.client
+
+            resp = await vision_client.chat(
+                model=vision_model,
+                messages=messages,
+                stream=False,
+                options={"num_ctx": settings.ollama_num_ctx},
+            )
+            await llm_circuit_breaker.record_success()
+            content = (resp.message.content if resp and resp.message else "") or ""
+            content = _re.sub(r"<think>.*?</think>", "", content, flags=_re.DOTALL | _re.IGNORECASE)
+            return content.strip() or None
+        except Exception as e:  # noqa: BLE001
+            await llm_circuit_breaker.record_failure()
+            logger.warning(f"VLM OCR extraction failed: {e}")
+            return None
+
     async def chat_stream_with_image(
         self,
         message: str,
