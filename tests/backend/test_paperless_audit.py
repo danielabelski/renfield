@@ -1505,6 +1505,75 @@ class TestReviewOverlay:
                 service._validate_overrides(bad)
 
 
+class TestGetTaxonomy:
+    """get_taxonomy — the selectable Paperless taxonomy for the review lookups."""
+
+    @staticmethod
+    def _env(inner):
+        return {"success": True, "message": json.dumps(inner)}
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_get_taxonomy_shape(self, service, mock_mcp_manager):
+        env = self._env
+
+        async def _execute(tool, params, **_kw):
+            if tool == "mcp.paperless.list_correspondents":
+                return env({"items": [{"name": "Stadtwerke"}, {"name": "Finanzamt"}]})
+            if tool == "mcp.paperless.list_document_types":
+                return env({"items": [{"name": "Rechnung"}]})
+            if tool == "mcp.paperless.list_tags":
+                return env({"items": [{"name": "energie"}, {"name": "steuer"}]})
+            if tool == "mcp.paperless.list_storage_paths":
+                return env({"paths": [{"path": "Finanzen/2024"}]})
+            return env({})
+
+        mock_mcp_manager.execute_tool.side_effect = _execute
+        tax = await service.get_taxonomy()
+        assert tax["correspondents"] == ["Stadtwerke", "Finanzamt"]
+        assert tax["document_types"] == ["Rechnung"]
+        assert tax["tags"] == ["energie", "steuer"]
+        assert tax["storage_paths"] == ["Finanzen/2024"]
+        # allow_create mirrors the apply-side auto-create capability
+        assert tax["allow_create"]["correspondent"] is True
+        assert tax["allow_create"]["storage_path"] is False
+        assert set(tax["allow_create"]) == {"correspondent", "document_type", "tags", "storage_path"}
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_get_taxonomy_storage_paths_best_effort(self, service, mock_mcp_manager):
+        """A storage-paths transport failure yields [] without failing the whole call."""
+        env = self._env
+
+        async def _execute(tool, params, **_kw):
+            if tool == "mcp.paperless.list_storage_paths":
+                raise RuntimeError("mcp down")
+            if tool in ("mcp.paperless.list_correspondents", "mcp.paperless.list_document_types", "mcp.paperless.list_tags"):
+                return env({"items": []})
+            return env({})
+
+        mock_mcp_manager.execute_tool.side_effect = _execute
+        tax = await service.get_taxonomy()
+        assert tax["storage_paths"] == []
+        assert tax["correspondents"] == []
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_get_taxonomy_mcp_down_degrades_not_500(self, service, mock_mcp_manager):
+        """A transport exception from the correspondents/types/tags fetch degrades
+        to empty lists (best-effort) rather than propagating and 500-ing the route."""
+        async def _execute(tool, params, **_kw):
+            raise RuntimeError("mcp session terminated")
+
+        mock_mcp_manager.execute_tool.side_effect = _execute
+        tax = await service.get_taxonomy()
+        assert tax["correspondents"] == []
+        assert tax["document_types"] == []
+        assert tax["tags"] == []
+        assert tax["storage_paths"] == []
+        assert "allow_create" in tax
+
+
 class TestApplyResults:
     """Test apply_results method."""
 
