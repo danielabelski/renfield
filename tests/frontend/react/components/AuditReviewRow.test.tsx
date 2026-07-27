@@ -8,6 +8,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 import AuditReviewRow from '../../../../src/frontend/src/components/paperless/AuditReviewRow';
 import { renderWithProviders } from '../test-utils';
@@ -169,21 +170,25 @@ describe('AuditReviewRow', () => {
     ...over,
   });
 
-  it('correspondent is a creatable combobox (filter existing + create row)', () => {
+  it('correspondent is a creatable combobox (filter existing + create row)', async () => {
+    const user = userEvent.setup();
     renderRow(row(), _taxo({ correspondents: ['Stadtwerke', 'Finanzamt'] }));
-    fireEvent.click(screen.getByText('New Corp')); // open the combobox
+    await user.click(screen.getByText('New Corp')); // open the combobox
     const input = screen.getByRole('combobox', { name: 'Ansprechpartner bearbeiten' });
-    fireEvent.change(input, { target: { value: 'stadt' } });
-    expect(screen.getByRole('option', { name: /Stadtwerke/ })).toBeInTheDocument(); // existing match
-    expect(screen.getByRole('option', { name: /anlegen/i })).toBeInTheDocument();   // create row
+    await user.click(input);
+    await user.type(input, 'stadt');
+    expect(await screen.findByRole('option', { name: /Stadtwerke/ })).toBeInTheDocument(); // existing match
+    expect(await screen.findByRole('option', { name: /anlegen/i })).toBeInTheDocument();   // create row
   });
 
   it('picking a combobox option persists it as an override', async () => {
+    const user = userEvent.setup();
     renderRow(row(), _taxo({ correspondents: ['Stadtwerke', 'Finanzamt'] }));
-    fireEvent.click(screen.getByText('New Corp'));
+    await user.click(screen.getByText('New Corp'));
     const input = screen.getByRole('combobox', { name: 'Ansprechpartner bearbeiten' });
-    fireEvent.change(input, { target: { value: 'stadt' } });
-    fireEvent.mouseDown(screen.getByRole('button', { name: 'Stadtwerke' }));
+    await user.click(input);
+    await user.type(input, 'stadt');
+    await user.click(await screen.findByRole('option', { name: /Stadtwerke/ }));
     await waitFor(() => {
       expect(mockedPatch).toHaveBeenCalledWith(
         '/api/admin/paperless-audit/results/7',
@@ -192,12 +197,14 @@ describe('AuditReviewRow', () => {
     });
   });
 
-  it('Enter commits the typed value (create), not the first option', async () => {
+  it('the create row persists the typed new value', async () => {
+    const user = userEvent.setup();
     renderRow(row(), _taxo({ correspondents: ['Stadtwerke', 'Finanzamt'] }));
-    fireEvent.click(screen.getByText('New Corp'));
+    await user.click(screen.getByText('New Corp'));
     const input = screen.getByRole('combobox', { name: 'Ansprechpartner bearbeiten' });
-    fireEvent.change(input, { target: { value: 'Stadt' } }); // 'Stadtwerke' exists; user wants 'Stadt'
-    fireEvent.keyDown(input, { key: 'Enter' });
+    await user.click(input);
+    await user.type(input, 'Stadt'); // exists as 'Stadtwerke' but user creates 'Stadt'
+    await user.click(await screen.findByRole('option', { name: /anlegen/i }));
     await waitFor(() => {
       expect(mockedPatch).toHaveBeenCalledWith(
         '/api/admin/paperless-audit/results/7',
@@ -206,29 +213,72 @@ describe('AuditReviewRow', () => {
     });
   });
 
+  it('Enter commits the TYPED value (create), not the auto-active first option', async () => {
+    const user = userEvent.setup();
+    renderRow(row(), _taxo({ correspondents: ['Stadtwerke', 'Finanzamt'] }));
+    await user.click(screen.getByText('New Corp'));
+    const input = screen.getByRole('combobox', { name: 'Ansprechpartner bearbeiten' });
+    await user.click(input);
+    await user.type(input, 'Stadt'); // 'Stadtwerke' auto-activates; user wants 'Stadt'
+    await user.keyboard('{Enter}');
+    await waitFor(() => {
+      expect(mockedPatch).toHaveBeenCalledWith(
+        '/api/admin/paperless-audit/results/7',
+        expect.objectContaining({ overrides: expect.objectContaining({ correspondent: 'Stadt' }) }),
+      );
+    });
+    // and NEVER the superstring existing option
+    const persistedCorrespondents = mockedPatch.mock.calls
+      .map((c) => (c[1] as { overrides?: { correspondent?: string } }).overrides?.correspondent)
+      .filter((v) => v !== undefined);
+    expect(persistedCorrespondents).not.toContain('Stadtwerke');
+  });
+
+  it('Escape cancels a combobox edit without persisting the typed text', async () => {
+    const user = userEvent.setup();
+    renderRow(row(), _taxo({ correspondents: ['Stadtwerke', 'Finanzamt'] }));
+    await user.click(screen.getByText('New Corp'));
+    const input = screen.getByRole('combobox', { name: 'Ansprechpartner bearbeiten' });
+    await user.click(input);
+    await user.type(input, 'Stadt');
+    await user.keyboard('{Escape}');
+    // the abandoned text must NOT become a correspondent override
+    await waitFor(() =>
+      expect(screen.queryByRole('combobox', { name: 'Ansprechpartner bearbeiten' })).not.toBeInTheDocument(),
+    );
+    const persistedCorrespondents = mockedPatch.mock.calls
+      .map((c) => (c[1] as { overrides?: { correspondent?: string } }).overrides?.correspondent)
+      .filter((v) => v !== undefined);
+    expect(persistedCorrespondents).not.toContain('Stadt');
+  });
+
   it('calendar reset clears the date override', async () => {
+    const user = userEvent.setup();
     renderRow(row({ user_overrides: { date: '2024-09-09' } }));
-    fireEvent.click(screen.getByText('2024-09-09'));
-    fireEvent.click(screen.getByRole('button', { name: 'Zurücksetzen' }));
+    await user.click(screen.getByText('2024-09-09'));
+    await user.click(await screen.findByRole('button', { name: 'Zurücksetzen' }));
     await waitFor(() => expect(mockedPatch).toHaveBeenCalled());
     const body = mockedPatch.mock.calls[mockedPatch.mock.calls.length - 1][1] as { overrides: Record<string, unknown> };
     expect(body.overrides).not.toHaveProperty('date');
   });
 
-  it('existing-only field (storage_path) offers no create row', () => {
+  it('existing-only field (storage_path) offers no create row', async () => {
+    const user = userEvent.setup();
     renderRow(row({ suggested_storage_path: 'Finanzen/2024' }),
       _taxo({ storage_paths: ['Finanzen/2024', 'Fahrzeug/Belege'] }));
-    fireEvent.click(screen.getByText('Finanzen/2024'));
+    await user.click(screen.getByText('Finanzen/2024'));
     const input = screen.getByRole('combobox', { name: 'Ablageort bearbeiten' });
-    fireEvent.change(input, { target: { value: 'Neuer Pfad' } }); // not an existing path
-    expect(screen.queryByRole('option', { name: /anlegen|create/i })).not.toBeInTheDocument();
+    await user.click(input);
+    await user.type(input, 'Neuer Pfad'); // not an existing path
+    await waitFor(() => expect(screen.queryByRole('option', { name: /anlegen|create/i })).not.toBeInTheDocument());
   });
 
   it('date field opens a calendar popover and persists a picked day', async () => {
+    const user = userEvent.setup();
     renderRow(row());
-    fireEvent.click(screen.getByText('2024-02-02'));
+    await user.click(screen.getByText('2024-02-02'));
     expect(screen.getByRole('dialog', { name: 'Datum bearbeiten' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('gridcell', { name: '15' })); // Feb 2024 view
+    await user.click(screen.getByRole('button', { name: /15\. Februar 2024/ })); // Feb 2024 view
     await waitFor(() => {
       expect(mockedPatch).toHaveBeenCalledWith(
         '/api/admin/paperless-audit/results/7',
@@ -237,13 +287,26 @@ describe('AuditReviewRow', () => {
     });
   });
 
-  it('adding a tag persists a tags override', async () => {
-    renderRow(row());
-    fireEvent.click(screen.getByText('Tag hinzufügen')); // reveal the add input
-    const tagInput = screen.getByPlaceholderText('Tag hinzufügen');
-    fireEvent.change(tagInput, { target: { value: 'steuer' } });
-    fireEvent.keyDown(tagInput, { key: 'Enter' });
+  it('re-clicking the already-selected calendar day closes the popover (not a dead no-op)', async () => {
+    const user = userEvent.setup();
+    renderRow(row()); // suggested_date 2024-02-02 → rendered selected
+    await user.click(screen.getByText('2024-02-02'));
+    expect(screen.getByRole('dialog', { name: 'Datum bearbeiten' })).toBeInTheDocument();
+    // mode="single" fires onSelect(undefined) here; the popover must still close.
+    await user.click(screen.getByRole('button', { name: /2\. Februar 2024, selected/ }));
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Datum bearbeiten' })).not.toBeInTheDocument(),
+    );
+  });
 
+  it('adding a tag persists a tags override', async () => {
+    const user = userEvent.setup();
+    renderRow(row());
+    await user.click(screen.getByText('Tag hinzufügen')); // reveal the add combobox
+    const input = screen.getByRole('combobox', { name: 'Tag hinzufügen' });
+    await user.click(input);
+    await user.type(input, 'steuer');
+    await user.click(await screen.findByRole('option', { name: /anlegen/i })); // create the tag
     await waitFor(() => {
       expect(mockedPatch).toHaveBeenCalledWith(
         '/api/admin/paperless-audit/results/7',
