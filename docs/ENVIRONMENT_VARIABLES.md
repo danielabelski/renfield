@@ -920,6 +920,18 @@ EMAIL_INGEST_TOKEN=                    # dito für den email-ingest-MCP (email_i
 PAPERLESS_AUTOCREATE_DOCUMENT_TYPE=true
 PAPERLESS_AUTOCREATE_TAGS=true
 
+# internal.paperless_dedupe: eine Dublette liegt vor, wenn ALLE Metadaten identisch
+# sind (Korrespondent, Dokumenttyp, Datum, Titel, Seitenzahl) ODER der OCR-Text
+# byte-identisch ist — erkennt auch erneut eingescannte Kopien (gleiche Metadaten,
+# abweichender OCR). Identität kommt direkt aus der Suche (page_count seit
+# renfield-mcp-paperless 1.10.0), ohne get_document pro Dokument. Metadaten-Löschung
+# verlangt einen NICHT-LEEREN Titel UND eine vorhandene Seitenzahl; fehlt eines
+# (leerer Titel / keine Seitenzahl, z. B. ältere MCP), fällt die Gruppe auf den
+# byte-identischen Vergleich zurück (fail-safe: ein unvollständiges Metadatum ist
+# nicht „identisch", ein distinktes Dokument wird nie auf schwachem Signal gelöscht).
+# false = Legacy: nur byte-identischer OCR-Text.
+PAPERLESS_DEDUPE_METADATA_MATCH_ENABLED=true
+
 # Async Paperless-Reconciler (Design Z): der Push legt paperless_state='pending' an
 # und gibt sofort zurück; das eigentliche Ablegen läuft im document-worker
 # (post_document_ingest-Hook, der dessen Docling-OCR wiederverwendet). Dieser
