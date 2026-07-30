@@ -839,14 +839,35 @@ class QueryOrchestrator:
             return "\n\n".join(r["answer"] for r in sub_results if r["answer"])
 
         try:
-            router_model = settings.agent_router_model or settings.ollama_intent_model or settings.ollama_model
-            classification_kwargs = get_classification_chat_kwargs(router_model)
+            # Weaving ≥2 sub-agent answers into one coherent multi-domain report
+            # is dense composition — use the AGENT model (qwen3.6), not the tiny
+            # router model, which routinely dropped a whole domain from the
+            # combined answer (F4). Mirrors the planner's model/client selection
+            # in detect_multi_domain. On timeout the except below falls back to
+            # concatenation, which still shows every domain — strictly safer than
+            # a small model silently omitting one.
+            primary_role = next(
+                (r for r in self.router.roles.values() if r.has_agent_loop), None
+            )
+            synth_model = getattr(primary_role, "model", None) if primary_role else None
+            synth_url = getattr(primary_role, "ollama_url", None) if primary_role else None
+            if use_openai_for_tier("agent"):
+                synth_model = synth_model or settings.agent_model or settings.llm_openai_model
+            else:
+                synth_model = synth_model or settings.ollama_model
+            synth_url = synth_url or settings.agent_ollama_url
+
+            if synth_url:
+                client, _ = get_agent_client(fallback_url=synth_url)
+            else:
+                client = ollama.client
+            classification_kwargs = get_classification_chat_kwargs(synth_model)
 
             raw_response = await asyncio.wait_for(
-                ollama.client.chat(
-                    model=router_model,
+                client.chat(
+                    model=synth_model,
                     messages=[{"role": "user", "content": synthesize_prompt}],
-                    options={"temperature": 0.3, "num_predict": 500},
+                    options={"temperature": 0.3, "num_predict": 900},
                     **classification_kwargs,
                 ),
                 timeout=settings.orchestrator_synthesis_timeout,

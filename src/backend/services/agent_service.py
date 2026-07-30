@@ -315,6 +315,16 @@ class AgentContext:
         recent = tool_calls[-min_repetitions:]
         return len(set(recent)) == 1
 
+    def count_tool_calls(self, tool: str) -> int:
+        """How many times ``tool`` has been called this turn (any parameters).
+
+        Backs the same-tool loop guard for agents that retry one tool with
+        varied args — which detect_infinite_loop (identical-only) misses."""
+        return sum(
+            1 for s in self.steps
+            if s.step_type == "tool_call" and s.tool == tool
+        )
+
 
 def _is_empty_result(result: dict) -> bool:
     """Detect if a tool result is effectively empty (0 results).
@@ -423,6 +433,16 @@ def _serialize_for_prompt(data: any, budget_chars: int = 0) -> str:
 # hallucinated) never trip it. 3 mirrors detect_infinite_loop's min_repetitions:
 # give the LLM a couple of chances to self-correct off the error, then summarize.
 _INVALID_TOOL_ABORT_THRESHOLD = 3
+
+# Abort the ReAct loop after this many calls to the SAME tool in a turn,
+# REGARDLESS of parameters. detect_infinite_loop only catches identical
+# (tool + params) calls, so an agent that keeps re-calling one tool with
+# slightly-varied args — e.g. a jira sub-agent retrying jira_search with
+# tweaked JQL because it deems the (valid) results unsatisfactory — loops
+# right past it. Higher than detect_infinite_loop's 3 (varied args is a
+# weaker loop signal than identical), and the abort summarizes what was
+# already gathered, so the domain survives instead of returning nothing.
+_SAME_TOOL_ABORT_THRESHOLD = 5
 
 
 # LLM option defaults — used as fallback if prompts/agent.yaml lacks the key.
@@ -2107,9 +2127,27 @@ class AgentService:
                     yield summary_step
                     return
 
-            # Check for infinite loop (same tool called repeatedly)
+            # Check for infinite loop (same tool called repeatedly — identical args)
             if context.detect_infinite_loop(min_repetitions=3):
                 logger.warning(f"🔄 Agent infinite loop detected at step {step_num} (tool: {action})")
+                yield AgentStep(
+                    step_number=step_num,
+                    step_type="error",
+                    content=prompt_manager.get("agent", "error_loop_detected", lang=lang, tool=action),
+                    tool=action,
+                )
+                summary_step = await self._build_summary_answer(context, step_num, message, ollama, agent_model, lang=lang, agent_client=agent_client)
+                yield summary_step
+                return
+
+            # Same tool called too many times with VARYING args — a "retry for
+            # better data" loop the identical-only guard above misses. Abort to a
+            # summary of what was already gathered so the domain still answers.
+            if context.count_tool_calls(action) >= _SAME_TOOL_ABORT_THRESHOLD:
+                logger.warning(
+                    f"🔄 Agent called '{action}' {context.count_tool_calls(action)}× "
+                    f"(varied args) at step {step_num} — aborting to summary"
+                )
                 yield AgentStep(
                     step_number=step_num,
                     step_type="error",
