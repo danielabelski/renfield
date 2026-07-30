@@ -726,45 +726,46 @@ class QueryOrchestrator:
         with_data = [r for r in non_empty if _sub_agent_returned_data(r)]
         answer_sources = with_data if with_data else non_empty
 
+        # Sub-agents that ran but produced NO answer AND NO error — a max_steps
+        # abort or a degenerate loop yields answer="" with error=None. Without
+        # this, such a domain vanishes silently from the combined answer while the
+        # turn is presented as complete (F6). Surface it as a per-domain note.
+        truncated_roles = [
+            r.get("role", "?") for r in sub_results
+            if not r.get("answer") and not r.get("error")
+        ]
+
+        content: str | None = None
         if len(answer_sources) >= 2:
-            synthesized = await self._synthesize(message, answer_sources, ollama, lang)
-            if synthesized:
-                yield AgentStep(
-                    step_number=99,
-                    step_type="final_answer",
-                    content=synthesized,
-                )
-                return
-            # Synthesizer returned nothing — fall through to fallback.
+            content = await self._synthesize(message, answer_sources, ollama, lang)
+        if content is None and answer_sources:
+            content = answer_sources[0]["answer"]
 
-        if answer_sources:
-            yield AgentStep(
-                step_number=99,
-                step_type="final_answer",
-                content=answer_sources[0]["answer"],
-            )
-            return
-
-        # Every sub-agent failed. Surface a localized error so the user
-        # isn't left staring at an empty reply.
-        failed_roles = [r.get("role", "?") for r in sub_results]
-        if lang.startswith("de"):
-            msg = (
+        if content is None:
+            # Every sub-agent failed/empty. Surface a localized error so the user
+            # isn't left staring at an empty reply.
+            roles = [r.get("role", "?") for r in sub_results]
+            content = (
                 "Keine der angefragten Integrationen hat eine Antwort "
-                f"geliefert (betroffen: {', '.join(failed_roles)}). "
+                f"geliefert (betroffen: {', '.join(roles)}). "
                 "Bitte versuche es in einem Moment erneut."
-            )
-        else:
-            msg = (
+                if lang.startswith("de") else
                 "None of the requested integrations returned an answer "
-                f"(affected: {', '.join(failed_roles)}). "
-                "Please try again in a moment."
+                f"(affected: {', '.join(roles)}). Please try again in a moment."
             )
-        yield AgentStep(
-            step_number=99,
-            step_type="final_answer",
-            content=msg,
-        )
+        elif truncated_roles:
+            # Partial success: at least one domain answered, but others were
+            # truncated with no error. Tell the user so a domain isn't hidden.
+            content += (
+                f"\n\n_Hinweis: {', '.join(truncated_roles)} konnte in dieser "
+                "Anfrage nicht abgeschlossen werden — die Antwort deckt diesen "
+                "Bereich nicht ab._"
+                if lang.startswith("de") else
+                f"\n\n_Note: {', '.join(truncated_roles)} could not be completed "
+                "for this request — the answer does not cover that area._"
+            )
+
+        yield AgentStep(step_number=99, step_type="final_answer", content=content)
 
     async def _synthesize(
         self,
