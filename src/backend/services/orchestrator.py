@@ -457,12 +457,17 @@ class QueryOrchestrator:
             agent = AgentService(tool_registry, role=role)
 
             # run_hooks never raises (utils/hooks.py contract) — direct call.
+            # `agent_kwargs` is the SAME dict spread into `agent.run(**agent_kwargs)`
+            # below, so a handler may scope it in place per sub-agent (e.g. drop a
+            # cross-domain `current_release_id` from `context_vars_text` so a jira
+            # sub-agent's prompt can't be misled by a release entity from a prior turn).
             await run_hooks(
                 "pre_sub_agent",
                 step=sq,
                 role=role_name,
                 tool_registry=tool_registry,
                 lang=lang,
+                agent_kwargs=agent_kwargs,
             )
 
             steps: list = []
