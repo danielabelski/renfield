@@ -1825,8 +1825,36 @@ async def websocket_endpoint(
 
                     # Step 2 — if no plan, run the LLM planner. Skip the
                     # ~3-10s planner round-trip for chitchat roles.
+                    #
+                    # Also skip it when the router took a high-confidence entity-id
+                    # route (Layer 1, conf 0.9): a specific named entity matched and
+                    # ALL matches were in ONE domain (reference_resolver only sets
+                    # inferred_domain for single-domain entity sets), so the query is
+                    # about that entity. Letting the speculative multi-domain planner
+                    # override it over-fans single-entity lookups — e.g. "Zeige mir
+                    # REVA-1" fanned to release+jira, where the release sub-agent then
+                    # hallucinated a "Release REVA-1" and bled a stale current_release_id.
+                    # Genuine cross-domain queries either match entities in multiple
+                    # domains (inferred_domain stays None → not gated) or route to a
+                    # non-entity layer / "general" (→ not gated); and release↔jira
+                    # bridging is still covered by the single agent's own bridge tools
+                    # (find_jira_issues_for_release / find_release_for_jira_issue).
+                    _entity_id_routed = bool(
+                        _resolved
+                        and getattr(_resolved, "entity_matches", None)
+                        and getattr(_resolved, "inferred_domain", None) == role.name
+                    )
+                    if _entity_id_routed:
+                        logger.info(
+                            f"🎼 Orchestrator: skipping planner — entity-id route to "
+                            f"'{role.name}' (conf 0.9) is authoritative for a single-entity query"
+                        )
                     orchestrator = None
-                    if sub_queries is None and role.name not in ("conversation", "knowledge"):
+                    if (
+                        sub_queries is None
+                        and role.name not in ("conversation", "knowledge")
+                        and not _entity_id_routed
+                    ):
                         from services.orchestrator import QueryOrchestrator
                         orchestrator = QueryOrchestrator(agent_router, mcp_manager)
                         try:

@@ -250,6 +250,38 @@ def _coerce_arguments(arguments: dict, input_schema: dict) -> dict:
         logger.info(f"🔄 Unwrapping 'request' wrapper: {list(coerced['request'].keys())}")
         coerced = coerced["request"]
 
+    # Wrap flat LLM args INTO a single required object property the schema expects
+    # (the inverse of the unwrap above). Some MCP servers — notably the Digital.ai
+    # Release MCP — take every tool's parameters as one required `request` object,
+    # so a flat {"active": true} from the LLM fails validation with
+    # "'request' is a required property". When the schema has exactly one property,
+    # it is an object and required, and the LLM's keys are NOT top-level schema
+    # properties (i.e. they belong inside the wrapper), nest them. Handles the empty
+    # {} → {"request": {}} case too. Skipped when the wrapper key is already present,
+    # so a correctly-wrapped call is never double-wrapped.
+    if len(properties) == 1:
+        (wrap_key, wrap_schema), = properties.items()
+        # A single required "wrapper" property is object-like when it declares an
+        # object type OR references a model — FastMCP renders a Pydantic model
+        # parameter (e.g. release-mcp's `request: ListReleasesRequest`) as a bare
+        # $ref with no inline "type", so keying only on type=="object" misses it.
+        wrap_is_object = (
+            wrap_schema.get("type") == "object"
+            or "$ref" in wrap_schema
+            or "allOf" in wrap_schema
+            or "anyOf" in wrap_schema
+            or "oneOf" in wrap_schema
+            or "properties" in wrap_schema
+        )
+        if (
+            wrap_key not in coerced
+            and wrap_is_object
+            and wrap_key in input_schema.get("required", [])
+            and all(k not in properties for k in coerced)
+        ):
+            logger.info(f"🔄 Wrapping flat args into '{wrap_key}': {list(coerced.keys())}")
+            coerced = {wrap_key: coerced}
+
     # Strip invalid values: null for non-nullable fields, wrong types
     required = set(input_schema.get("required", []))
     _type_map = {"string": str, "integer": (int,), "number": (int, float), "boolean": (bool,),
