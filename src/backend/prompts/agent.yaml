@@ -580,6 +580,10 @@ de:
     2. Wenn eine einzige Domaene ausreicht -> genau das Wort: null
     3. "role" MUSS exakt einer der oben gelisteten Domaenen-Namen sein.
     4. "query" ist ein knapper Satz, der diese Domaene allein erledigen kann.
+    5. Konkrete Bezeichner aus der Anfrage (Ticket-Keys wie REVA-1/REL-100,
+       Release-IDs, exakte Namen) MUESSEN WOERTLICH in jede betreffende Teilaufgabe
+       uebernommen werden — niemals paraphrasieren oder weglassen. Der Sub-Agent
+       braucht den exakten Bezeichner als Anker.
 
     Beispiele:
 
@@ -1170,6 +1174,10 @@ en:
     2. If a single domain is enough -> exactly the word: null
     3. "role" MUST be exactly one of the listed domain names above.
     4. "query" is a short sentence that domain alone can complete.
+    5. Concrete identifiers from the request (ticket keys like REVA-1/REL-100,
+       release IDs, exact names) MUST be carried VERBATIM into every relevant
+       sub-task — never paraphrase or drop them. The sub-agent needs the exact
+       identifier as an anchor.
 
     Examples:
 
