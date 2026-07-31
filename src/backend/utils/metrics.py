@@ -46,6 +46,8 @@ _kg_conflation_candidates = None
 _speaker_inprocess_embedding_blocked_total = None
 _orchestrator_domains_requested_total = None
 _orchestrator_domains_rendered_total = None
+_orchestrator_contract_version_mismatch_total = None
+_orchestrator_contract_demotions_total = None
 
 
 def _init_metrics():
@@ -64,6 +66,7 @@ def _init_metrics():
     global _kg_conflation_candidates
     global _speaker_inprocess_embedding_blocked_total
     global _orchestrator_domains_requested_total, _orchestrator_domains_rendered_total
+    global _orchestrator_contract_version_mismatch_total, _orchestrator_contract_demotions_total
 
     if _metrics_initialized:
         return
@@ -226,6 +229,18 @@ def _init_metrics():
             "renfield_orchestrator_domains_rendered_total",
             "Sub-agent domains that contributed content to the combined answer",
         )
+        _orchestrator_contract_version_mismatch_total = Counter(
+            "renfield_orchestrator_contract_version_mismatch_total",
+            "Domain contract registrations refused due to version skew "
+            "(fail-closed to Tier 2)",
+            ["domain"],
+        )
+        _orchestrator_contract_demotions_total = Counter(
+            "renfield_orchestrator_contract_demotions_total",
+            "Tier-1 typed-contract renders that demoted to Tier 2 "
+            "(declined / verify-fail / raised)",
+            ["domain", "reason"],
+        )
 
         _metrics_initialized = True
         logger.info("Prometheus metrics initialized")
@@ -286,6 +301,20 @@ def record_orchestrator_render(requested: int, rendered: int):
         _orchestrator_domains_requested_total.inc(requested)
     if rendered > 0:
         _orchestrator_domains_rendered_total.inc(rendered)
+
+
+def record_contract_version_mismatch(domain: str):
+    """A domain contract was refused due to version skew (fail-closed to Tier 2)."""
+    if not _metrics_initialized:
+        return
+    _orchestrator_contract_version_mismatch_total.labels(domain=domain).inc()
+
+
+def record_contract_demotion(domain: str, reason: str):
+    """A Tier-1 typed render demoted to Tier 2 (reason: declined/verify/error)."""
+    if not _metrics_initialized:
+        return
+    _orchestrator_contract_demotions_total.labels(domain=domain, reason=reason).inc()
 
 
 def record_circuit_breaker_state(name: str, state: str):

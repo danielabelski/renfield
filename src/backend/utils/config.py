@@ -338,6 +338,14 @@ class Settings(BaseSettings):
     dropped or mislabeled) and removes an LLM round-trip per multi-domain turn.
     Kill-switch: set False to revert to _synthesize (Tier 3 break-glass).
     See docs/architecture/orchestrator-typed-contracts-plan.md."""
+    orchestrator_typed_contracts: bool = True
+    """Phase 2/3 of the typed-contracts plan. When True (default), a domain with
+    a registered DomainContract (services.domain_contract) is rendered Tier 1 —
+    the merge runs the contract's produce→verify→render on the sub-agent's tool
+    data, instead of juxtaposing its prose (Tier 2). Only affects domains that
+    have a registered contract; all others stay Tier 2. A contract that declines
+    (produce→None), fails verification, or raises demotes to Tier 2. Kill-switch:
+    set False to force every domain to Tier 2 (prose juxtaposition)."""
 
     # MCP Client (Model Context Protocol)
     mcp_enabled: bool = False             # Opt-in, disabled by default

@@ -844,12 +844,49 @@ class QueryOrchestrator:
         """
         sections: list[str] = []
         for r in answer_sources:
-            label = _role_label(r.get("role", "?"))
-            body = (r.get("answer") or "").strip()
+            role = r.get("role", "?")
+            label = _role_label(role)
+            body = self._render_section(r, role, lang)
             if not body:
                 continue
             sections.append(f"## {label}\n\n{body}")
         return "\n\n".join(sections)
+
+    def _render_section(self, sub_result: dict, role: str, lang: str) -> str:
+        """Render one domain's section body. Tier 1 (registered contract:
+        produce→verify→render) with graceful demotion to Tier 2 (the sub-agent's
+        own prose) on decline / verify-fail / raise. See services.domain_contract.
+        """
+        from services.domain_contract import get_domain_contract
+
+        contract = (
+            get_domain_contract(role)
+            if settings.orchestrator_typed_contracts else None
+        )
+        if contract is not None:
+            reason = None
+            try:
+                envelope = contract.produce(sub_result)
+                if envelope is None:
+                    reason = "declined"
+                elif not contract.verify(envelope, sub_result):
+                    reason = "verify"
+                else:
+                    rendered = (contract.render(envelope, lang) or "").strip()
+                    if rendered:
+                        return rendered
+                    reason = "empty_render"
+            except Exception as e:  # noqa: BLE001 — a buggy contract must not break the turn
+                logger.warning(f"domain contract '{role}' raised, demoting to Tier 2: {e}")
+                reason = "error"
+            if reason:
+                try:
+                    from utils.metrics import record_contract_demotion
+                    record_contract_demotion(role, reason)
+                except Exception:  # noqa: BLE001
+                    pass
+        # Tier 2 — the sub-agent's own answer, verbatim.
+        return (sub_result.get("answer") or "").strip()
 
     async def _synthesize(
         self,
