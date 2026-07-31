@@ -1789,6 +1789,47 @@ async def websocket_endpoint(
                         session_id=msg_session_id,
                     )
                     for hr in hook_results:
+                        # A plugin may fully own a cross-domain turn
+                        # DETERMINISTICALLY (a fixed-shape deliverable — e.g. a
+                        # portfolio status report the LLM planner + ReAct
+                        # sub-agents render unreliably) by returning a
+                        # ``{"handled": True, "answer", "card", "replace_text"}``
+                        # dict instead of a sub-query plan. Short-circuit the
+                        # planner + orchestration entirely — same effect as a
+                        # sub-intent dispatch, but reachable even when the router
+                        # classified a plain role (no sub_intent) for the turn.
+                        if isinstance(hr, dict) and hr.get("handled"):
+                            agent_used = True
+                            sub_intent_handled = True
+                            full_response = hr.get("answer", "") or ""
+                            card = hr.get("card")
+                            replace_text = hr.get("replace_text")
+                            intent = {
+                                "intent": "plugin.pre_orchestration",
+                                "confidence": 1.0,
+                                "parameters": {},
+                            }
+                            # Emit the assistant bubble + card NOW (mirrors the
+                            # sub-intent dispatch block). The shared persistence
+                            # block below only emits the ``done`` marker — without
+                            # these frames the deterministic answer/card is built
+                            # but never reaches the browser.
+                            if full_response:
+                                await websocket.send_json({
+                                    "type": "stream",
+                                    "content": full_response,
+                                })
+                            if card:
+                                _pre_card_msg: dict = {"type": "card", "card": card}
+                                if replace_text:
+                                    _pre_card_msg["replace_text"] = replace_text
+                                await websocket.send_json(_pre_card_msg)
+                            await _emit_turn_artifacts(hr.get("artifacts"))
+                            logger.info(
+                                "🎼 pre_orchestration: plugin handled the turn "
+                                "deterministically — skipping planner + orchestration"
+                            )
+                            break
                         if not (isinstance(hr, list) and hr):
                             continue
                         # Validate per-element shape — plugin plans are
@@ -1852,6 +1893,7 @@ async def websocket_endpoint(
                     orchestrator = None
                     if (
                         sub_queries is None
+                        and not sub_intent_handled
                         and role.name not in ("conversation", "knowledge")
                         and not _entity_id_routed
                     ):
