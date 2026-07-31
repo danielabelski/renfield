@@ -329,6 +329,15 @@ class Settings(BaseSettings):
     Short JSON-only response, deterministic — keep low to fail fast."""
     orchestrator_synthesis_timeout: float = Field(default=30.0, ge=5.0, le=300.0)
     """Timeout for orchestrator's synthesis call (combine sub-agent results into one answer)."""
+    orchestrator_deterministic_merge: bool = True
+    """Phase 0 of the typed-contracts plan. When True (default), the combined
+    multi-domain answer is assembled DETERMINISTICALLY by juxtaposing each
+    sub-agent's own answer under a role-keyed header — instead of the LLM
+    synthesizer (_synthesize). This removes the drop / conflate / cross-label
+    failure surface (a section is bound to its own sub-agent and cannot be
+    dropped or mislabeled) and removes an LLM round-trip per multi-domain turn.
+    Kill-switch: set False to revert to _synthesize (Tier 3 break-glass).
+    See docs/architecture/orchestrator-typed-contracts-plan.md."""
 
     # MCP Client (Model Context Protocol)
     mcp_enabled: bool = False             # Opt-in, disabled by default

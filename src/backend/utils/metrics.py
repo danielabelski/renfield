@@ -44,6 +44,8 @@ _login_failure_total = None
 _authz_denied_total = None
 _kg_conflation_candidates = None
 _speaker_inprocess_embedding_blocked_total = None
+_orchestrator_domains_requested_total = None
+_orchestrator_domains_rendered_total = None
 
 
 def _init_metrics():
@@ -61,6 +63,7 @@ def _init_metrics():
     global _login_failure_total, _authz_denied_total
     global _kg_conflation_candidates
     global _speaker_inprocess_embedding_blocked_total
+    global _orchestrator_domains_requested_total, _orchestrator_domains_rendered_total
 
     if _metrics_initialized:
         return
@@ -209,6 +212,21 @@ def _init_metrics():
             ["path"],
         )
 
+        # Orchestrator domain-coverage instrumentation (typed-contracts plan
+        # Phase 0 / outside-voice finding #1). requested = domains the planner
+        # fanned out to; rendered = domains that contributed content to the
+        # combined answer. The ratio rendered/requested over time is the
+        # measured residual domain-drop rate that gates the per-domain Phase-3
+        # rollout — so it's built on evidence, not speculation.
+        _orchestrator_domains_requested_total = Counter(
+            "renfield_orchestrator_domains_requested_total",
+            "Sub-agent domains the orchestrator planner fanned out to",
+        )
+        _orchestrator_domains_rendered_total = Counter(
+            "renfield_orchestrator_domains_rendered_total",
+            "Sub-agent domains that contributed content to the combined answer",
+        )
+
         _metrics_initialized = True
         logger.info("Prometheus metrics initialized")
 
@@ -253,6 +271,21 @@ def record_agent_steps(steps: int):
     if not _metrics_initialized:
         return
     _agent_steps_total.observe(steps)
+
+
+def record_orchestrator_render(requested: int, rendered: int):
+    """Record orchestrator domain coverage for a multi-domain turn.
+
+    requested = domains fanned out to; rendered = domains that contributed
+    content. A persistent gap (rendered < requested) is the residual
+    domain-drop rate the typed-contracts Phase-3 rollout is gated on.
+    """
+    if not _metrics_initialized:
+        return
+    if requested > 0:
+        _orchestrator_domains_requested_total.inc(requested)
+    if rendered > 0:
+        _orchestrator_domains_rendered_total.inc(rendered)
 
 
 def record_circuit_breaker_state(name: str, state: str):

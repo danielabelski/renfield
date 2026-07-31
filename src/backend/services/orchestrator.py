@@ -61,6 +61,25 @@ def _sub_agent_returned_data(result: dict) -> bool:
     """
     return bool(result.get("has_data", True))
 
+
+# Display labels for the deterministic per-domain section headers (Phase 0 of
+# the typed-contracts plan). Platform-generic: known roles get a pretty label,
+# anything else falls back to a title-cased role key. This is display text, not
+# domain logic — the sub-agent's own answer carries the substance.
+_ROLE_LABELS = {
+    "release": "Digital.ai Release",
+    "jira": "Jira",
+    "confluence": "Confluence",
+    "itsm": "ITSM",
+    "test": "Test Evidence",
+    "konfigure": "konfigure",
+}
+
+
+def _role_label(role: str) -> str:
+    return _ROLE_LABELS.get(role, (role or "?").replace("_", " ").title())
+
+
 if TYPE_CHECKING:
     from services.action_executor import ActionExecutor
     from services.agent_router import AgentRole, AgentRouter
@@ -748,13 +767,43 @@ class QueryOrchestrator:
             if r.get("incomplete") or (not r.get("answer") and not r.get("error"))
         ]
 
+        # Instrumentation (Phase 0 / outside-voice finding #1): requested =
+        # every domain the planner fanned out to; rendered = domains that
+        # contributed content. The persistent gap is the residual domain-drop
+        # rate that gates the per-domain Phase-3 rollout.
+        try:
+            from utils.metrics import record_orchestrator_render
+            record_orchestrator_render(len(sub_results), len(answer_sources))
+        except Exception:  # noqa: BLE001 — metrics must never break the turn
+            pass
+        _dropped = [
+            r.get("role", "?") for r in sub_results if r not in answer_sources
+        ]
+        logger.info(
+            f"🎼 orchestrator domain coverage: requested={len(sub_results)} "
+            f"rendered={len(answer_sources)} "
+            f"roles={[r.get('role') for r in answer_sources]} dropped={_dropped}"
+        )
+
         content: str | None = None
         if len(answer_sources) >= 2:
-            content = await self._synthesize(message, answer_sources, ollama, lang)
-        if content is None and answer_sources:
+            # Phase 0: assemble the combined answer DETERMINISTICALLY by
+            # juxtaposing each sub-agent's own answer under a role-keyed header
+            # — a section is bound to its own sub-agent, so a domain cannot be
+            # dropped or cross-labeled. The LLM synthesizer (Tier 3) stays
+            # behind the kill-switch for break-glass revert.
+            if settings.orchestrator_deterministic_merge:
+                content = self._assemble_deterministic(answer_sources, lang)
+            else:
+                content = await self._synthesize(message, answer_sources, ollama, lang)
+        # `not content` (not `is None`): the deterministic assembly strips each
+        # body, so a degenerate all-whitespace answer set yields "" — treat that
+        # like None so it can't be yielded as a silently-empty combined answer
+        # (defensive, per code review; closes the same silent-drop class).
+        if not content and answer_sources:
             content = answer_sources[0]["answer"]
 
-        if content is None:
+        if not content:
             # Every sub-agent failed/empty. Surface a localized error so the user
             # isn't left staring at an empty reply.
             roles = [r.get("role", "?") for r in sub_results]
@@ -779,6 +828,28 @@ class QueryOrchestrator:
             )
 
         yield AgentStep(step_number=99, step_type="final_answer", content=content)
+
+    def _assemble_deterministic(self, answer_sources: list[dict], lang: str) -> str:
+        """Phase 0 deterministic merge (Tier 2): juxtapose each sub-agent's own
+        answer under a role-keyed header. No LLM.
+
+        ``answer_sources`` has already excluded incomplete/errored sub-agents
+        (the ``non_empty`` filter drops ``incomplete`` results, so an
+        error_incomplete apology never reaches here — outside-voice finding #10),
+        and preferred data-bearing sources. Each section is bound to its own
+        sub-agent's role, so a domain can neither be dropped (every source gets a
+        section) nor cross-labeled (the header comes from the source's own role,
+        not an LLM's guess). The per-domain truncation note is still appended by
+        the caller for domains that produced no answer.
+        """
+        sections: list[str] = []
+        for r in answer_sources:
+            label = _role_label(r.get("role", "?"))
+            body = (r.get("answer") or "").strip()
+            if not body:
+                continue
+            sections.append(f"## {label}\n\n{body}")
+        return "\n\n".join(sections)
 
     async def _synthesize(
         self,
