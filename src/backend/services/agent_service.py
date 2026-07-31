@@ -2185,11 +2185,17 @@ class AgentService:
 
         if not collected:
             reason_text = "No results collected" if lang == "en" else "Keine Ergebnisse gesammelt"
+            # Structural incomplete marker: the agent was force-summarized (max_steps
+            # / loop abort) with NO usable tool results, so this "answer" is the
+            # error_incomplete apology, not real content. Downstream (the orchestrator)
+            # keys on data["incomplete"] to surface the failed domain instead of
+            # silently accepting the apology as the answer — no prose matching.
             return AgentStep(
                 step_number=step_num,
                 step_type="final_answer",
                 content=prompt_manager.get("agent", "error_incomplete", lang=lang),
                 reason=reason_text,
+                data={"incomplete": True},
             )
 
         # Build a summary prompt from externalized template

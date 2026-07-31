@@ -479,6 +479,7 @@ class QueryOrchestrator:
             # success flag + data payload (data is None for an empty response),
             # so this reflects the data flow, not the LLM's wording.
             has_data = False
+            incomplete = False
             try:
                 async for step in agent.run(
                     message=query,
@@ -511,6 +512,12 @@ class QueryOrchestrator:
                     steps.append(step)
                     if step.step_type == "final_answer":
                         final_answer = step.content
+                        # A max_steps/loop abort with no usable data tags the
+                        # summary step data["incomplete"] (set in _build_summary_answer);
+                        # surviving the sub_agent_role tagging above.
+                        incomplete = bool(
+                            isinstance(step.data, dict) and step.data.get("incomplete")
+                        )
                 agent_run_error: str | None = None
             except Exception as e:
                 logger.opt(exception=True).error(
@@ -527,6 +534,7 @@ class QueryOrchestrator:
                 "plugin_data": {},
                 "error": agent_run_error,
                 "has_data": has_data,
+                "incomplete": incomplete,
             }
 
             # post_sub_agent: fire even on agent.run crash so plugins can
@@ -715,7 +723,12 @@ class QueryOrchestrator:
         """
         from services.agent_service import AgentStep
 
-        non_empty = [r for r in sub_results if r.get("answer")]
+        # Exclude force-summarized (incomplete) sub-agents — their non-empty
+        # "answer" is the error_incomplete apology, not content. Without this the
+        # `with_data` filter below would silently erase that whole domain while the
+        # F6 note (which only checks empty answers) never fires — the report then
+        # looks complete but covers one domain (the silent-drop bug).
+        non_empty = [r for r in sub_results if r.get("answer") and not r.get("incomplete")]
 
         # Prefer sources that actually returned data: drop a legitimately-empty
         # source's "found nothing" narration when at least one data-bearing
@@ -732,7 +745,7 @@ class QueryOrchestrator:
         # turn is presented as complete (F6). Surface it as a per-domain note.
         truncated_roles = [
             r.get("role", "?") for r in sub_results
-            if not r.get("answer") and not r.get("error")
+            if r.get("incomplete") or (not r.get("answer") and not r.get("error"))
         ]
 
         content: str | None = None
