@@ -329,6 +329,23 @@ class Settings(BaseSettings):
     Short JSON-only response, deterministic — keep low to fail fast."""
     orchestrator_synthesis_timeout: float = Field(default=30.0, ge=5.0, le=300.0)
     """Timeout for orchestrator's synthesis call (combine sub-agent results into one answer)."""
+    orchestrator_deterministic_merge: bool = True
+    """Phase 0 of the typed-contracts plan. When True (default), the combined
+    multi-domain answer is assembled DETERMINISTICALLY by juxtaposing each
+    sub-agent's own answer under a role-keyed header — instead of the LLM
+    synthesizer (_synthesize). This removes the drop / conflate / cross-label
+    failure surface (a section is bound to its own sub-agent and cannot be
+    dropped or mislabeled) and removes an LLM round-trip per multi-domain turn.
+    Kill-switch: set False to revert to _synthesize (Tier 3 break-glass).
+    See docs/architecture/orchestrator-typed-contracts-plan.md."""
+    orchestrator_typed_contracts: bool = True
+    """Phase 2/3 of the typed-contracts plan. When True (default), a domain with
+    a registered DomainContract (services.domain_contract) is rendered Tier 1 —
+    the merge runs the contract's produce→verify→render on the sub-agent's tool
+    data, instead of juxtaposing its prose (Tier 2). Only affects domains that
+    have a registered contract; all others stay Tier 2. A contract that declines
+    (produce→None), fails verification, or raises demotes to Tier 2. Kill-switch:
+    set False to force every domain to Tier 2 (prose juxtaposition)."""
 
     # MCP Client (Model Context Protocol)
     mcp_enabled: bool = False             # Opt-in, disabled by default
