@@ -329,8 +329,18 @@ class OpenAICompatibleClient:
             oa["seed"] = opts["seed"]
         if "stop" in opts:
             oa["stop"] = opts["stop"]
-        if kwargs.get("format") == "json":
+        fmt = kwargs.get("format")
+        if fmt == "json":
             oa["response_format"] = {"type": "json_object"}
+        elif isinstance(fmt, dict):
+            # A JSON Schema → constrained decoding. llama-server enforces the
+            # schema (verified: json_object is NOT enforced on this build, but
+            # json_schema IS — see the typed-contracts Phase-1 spike). Guarantees
+            # a schema-conforming, always-parseable response.
+            oa["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": "schema", "schema": fmt, "strict": True},
+            }
         return oa
 
     @staticmethod

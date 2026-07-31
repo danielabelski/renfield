@@ -338,6 +338,15 @@ class Settings(BaseSettings):
     dropped or mislabeled) and removes an LLM round-trip per multi-domain turn.
     Kill-switch: set False to revert to _synthesize (Tier 3 break-glass).
     See docs/architecture/orchestrator-typed-contracts-plan.md."""
+    orchestrator_typed_planner: bool = True
+    """Phase 4b of the typed-contracts plan. When True (default), detect_multi_domain
+    constrains the planner LLM to a typed plan schema (json_schema, role as an
+    ENUM of eligible roles) via constrained decoding — so the plan is always
+    valid parseable JSON with valid roles (eliminating the free-text parse
+    failures that silently collapsed a real multi-domain query to single-role,
+    and the invalid-role entries). Kill-switch: set False to use the legacy
+    free-text prompt + substring-JSON parse. The parser handles both shapes, so
+    a flip is safe either way."""
     orchestrator_typed_contracts: bool = True
     """Phase 2/3 of the typed-contracts plan. When True (default), a domain with
     a registered DomainContract (services.domain_contract) is rendered Tier 1 —
