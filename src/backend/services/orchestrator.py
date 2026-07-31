@@ -80,6 +80,66 @@ def _role_label(role: str) -> str:
     return _ROLE_LABELS.get(role, (role or "?").replace("_", " ").title())
 
 
+def _build_plan_schema(enum_roles: list[str]) -> dict:
+    """JSON schema for the typed planner (Phase 4b): a strict object whose
+    sub_queries[].role is an ENUM of the eligible roles — so constrained decoding
+    guarantees valid, parseable JSON with only real roles. No minItems, so a
+    single-domain request can return {"sub_queries": []}."""
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["sub_queries"],
+        "properties": {
+            "sub_queries": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["role", "query"],
+                    "properties": {
+                        "role": {"type": "string", "enum": enum_roles},
+                        "query": {"type": "string"},
+                    },
+                },
+            }
+        },
+    }
+
+
+def _parse_plan(response_text: str) -> list | None:
+    """Parse an orchestrator plan response into a list of sub-query dicts.
+
+    Handles both shapes so the typed-planner flag can flip safely:
+    - typed (json_schema): a clean ``{"sub_queries": [...]}`` document;
+    - legacy free-text: a bare ``[...]`` array, sometimes wrapped in prose.
+
+    Returns the sub-query list, or None when nothing parseable is present.
+    """
+    import json as _json
+
+    text = (response_text or "").strip()
+    if not text or text.lower() in ("null", "none"):
+        return None
+    # Full-document parse first — always succeeds under json_schema.
+    try:
+        doc = _json.loads(text)
+        if isinstance(doc, dict):
+            return doc.get("sub_queries")
+        if isinstance(doc, list):
+            return doc
+    except _json.JSONDecodeError:
+        pass
+    # Legacy: extract the outermost [...] array from a prose-wrapped response.
+    start = text.find("[")
+    end = text.rfind("]") + 1
+    if start < 0 or end <= start:
+        return None
+    try:
+        return _json.loads(text[start:end])
+    except _json.JSONDecodeError:
+        return None
+
+
 if TYPE_CHECKING:
     from services.action_executor import ActionExecutor
     from services.agent_router import AgentRole, AgentRouter
@@ -249,13 +309,37 @@ class QueryOrchestrator:
                 client = ollama.client
 
             classification_kwargs = get_classification_chat_kwargs(planner_model)
+
+            # Phase 4b — typed planner. Constrain the plan to a JSON schema whose
+            # `role` is an ENUM of the eligible roles, so the planner can neither
+            # wrap the JSON in prose (parse failure → spurious single-role) nor
+            # invent a role name (the two failure modes noted above). Only used
+            # on the OpenAI-compat/llama-server path (json_schema isn't an Ollama
+            # concept); a small Ollama planner keeps the free-text prompt.
+            plan_prompt = detect_prompt
+            plan_format = None
+            _enum_roles = [n for n in sorted(eligible_names) if n in self.router.roles]
+            if (
+                settings.orchestrator_typed_planner
+                and use_openai_for_tier("agent")
+                and _enum_roles
+            ):
+                plan_format = _build_plan_schema(_enum_roles)
+                plan_prompt = (
+                    detect_prompt
+                    + '\n\nRespond ONLY with JSON: {"sub_queries": [{"role": <one '
+                    'of the roles above>, "query": <localized sub-query>}]}. For a '
+                    'single-domain request, return {"sub_queries": []}.'
+                )
+
             # num_predict=800 matches Reva's production planner budget — enough
             # for a 4-sub-agent plan with localized query strings.
             raw_response = await asyncio.wait_for(
                 client.chat(
                     model=planner_model,
-                    messages=[{"role": "user", "content": detect_prompt}],
+                    messages=[{"role": "user", "content": plan_prompt}],
                     options={"temperature": 0, "num_predict": 800, "num_ctx": 4096},
+                    format=plan_format,
                     **classification_kwargs,
                 ),
                 timeout=settings.agent_router_timeout,
@@ -266,20 +350,12 @@ class QueryOrchestrator:
             if response_text.lower() in ("null", "none", ""):
                 return None
 
-            # Extract the JSON array from a potentially-prose response.
-            # Even large models occasionally wrap the array in explanation.
-            start = response_text.find("[")
-            end = response_text.rfind("]") + 1
-            if start < 0 or end <= start:
-                logger.info(f"Orchestrator: no JSON array in response, single-role. Raw: {response_text[:200]}")
+            # Parse the plan (typed {"sub_queries":[...]} or legacy bare/prose
+            # array — see _parse_plan). None ⇒ unparseable ⇒ single-role.
+            sub_queries = _parse_plan(response_text)
+            if sub_queries is None:
+                logger.info(f"Orchestrator: no JSON plan in response, single-role. Raw: {response_text[:200]}")
                 return None
-
-            try:
-                sub_queries = json.loads(response_text[start:end])
-            except json.JSONDecodeError as e:
-                logger.info(f"Orchestrator: JSON parse failed ({e}), single-role. Raw: {response_text[start:end][:200]}")
-                return None
-
             if not isinstance(sub_queries, list) or len(sub_queries) < 2:
                 return None
 
