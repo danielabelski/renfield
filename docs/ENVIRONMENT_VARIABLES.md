@@ -1617,6 +1617,14 @@ OAUTH_APPLE_REDIRECT_URI=
 # Emitter (Reva) auf ?code= migriert ist. Aktiviert POST /api/auth/sso/exchange
 # (404 wenn aus). Design: docs/design/sso-token-handoff-hardening.md.
 SSO_HANDOFF_ENABLED=false
+
+# Frontend-Build-Flag (Vite, VITE_*). Der Legacy-OIDC-Fragment-Handler in
+# main.tsx (#access_token=<JWT> → localStorage) ist eine Token-Injection-Senke.
+# Bis der Emitter (Reva) auf ?code= migriert ist, bleibt er AKTIV (Default an),
+# akzeptiert aber nur noch ein strukturell gültiges, nicht abgelaufenes
+# access-JWT und entfernt das Fragment immer aus der URL. Nach dem Cutover:
+# VITE_SSO_LEGACY_FRAGMENT=false setzen (Kill-Switch) und den Handler entfernen.
+VITE_SSO_LEGACY_FRAGMENT=true
 ```
 
 **Defaults:**
@@ -1633,6 +1641,7 @@ SSO_HANDOFF_ENABLED=false
 - `LDAP_AUTH_ENABLED`: `false` · `LDAP_AUTH_USER_FILTER`: `(uid={username})` · `LDAP_CONNECT_TIMEOUT`: `5` · `LDAP_RECEIVE_TIMEOUT`: `10`
 - `OAUTH_{GOOGLE,GITHUB,APPLE}_ENABLED`: `false` (all social providers disabled by default — enabling is a config-only change)
 - `SSO_HANDOFF_ENABLED`: `false` (dark bis der Reva-Emitter auf `?code=` cutovert; Legacy-Fragment-Handler bleibt bis dahin)
+- `VITE_SSO_LEGACY_FRAGMENT`: `true` (Build-Flag; Legacy-`#access_token=`-Handler aktiv bis zum `?code=`-Cutover, dann auf `false` und entfernen)
 
 **Produktion:**
 ```bash

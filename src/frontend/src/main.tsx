@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router';
 import '@fontsource-variable/cormorant';
 import '@fontsource-variable/dm-sans';
 import App from './App';
+import { consumeSsoFragmentHandoff } from './utils/ssoFragment';
 import './index.css';
 import 'react-day-picker/style.css';
 import './i18n';
@@ -38,34 +39,18 @@ if (_edition === 'pro') {
   document.documentElement.dataset.edition = 'pro';
 }
 
-// OIDC URL-fragment hand-off. After a successful OIDC dance the backend
-// redirects to /#access_token=<JWT>&expires_in=<seconds>&provider=entra.
-// We move those tokens into localStorage (the standard storage the rest
-// of the app reads from) and clear the fragment before React mounts —
-// otherwise AuthContext's mount-time fetchUser() would miss the token
-// and the user would briefly see the login page before the fetch retried.
-// Fragment is never sent to the server, so the JWT does NOT show up in
-// any HTTP request log even though it lands in the URL bar momentarily.
-function _consumeOidcHashHandoff(): void {
-  const hash = window.location.hash;
-  if (!hash || !hash.startsWith('#access_token=')) {
-    return;
-  }
-  const params = new URLSearchParams(hash.slice(1));
-  const accessToken = params.get('access_token');
-  if (!accessToken) return;
-
-  localStorage.setItem('renfield_access_token', accessToken);
-  // Clear the fragment from the URL bar without triggering a navigation.
-  // Replacing with `window.location.pathname + window.location.search` keeps
-  // any path/query the backend included (e.g. ?from=/brain).
-  history.replaceState(
-    null,
-    '',
-    window.location.pathname + window.location.search,
-  );
-}
-_consumeOidcHashHandoff();
+// OIDC URL-fragment hand-off (LEGACY — security audit). See utils/ssoFragment.ts:
+// the old implicit flow redirects to /#access_token=<JWT>; we consume it into
+// localStorage before React mounts (else AuthContext's mount-time fetchUser()
+// would miss it and briefly flash the login page). It is a token-injection sink,
+// gated behind VITE_SSO_LEGACY_FRAGMENT (kill switch, default ON so a still-
+// migrating emitter isn't broken), accepts only a valid unexpired access JWT,
+// and always strips the fragment. The hardened replacement is the ?code=+PKCE
+// exchange (pages/AuthCallback.tsx / SSO_HANDOFF_ENABLED); flip the flag off and
+// delete this once the emitter is fully migrated to ?code=.
+consumeSsoFragmentHandoff(
+  (import.meta.env.VITE_SSO_LEGACY_FRAGMENT ?? 'true') !== 'false',
+);
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
