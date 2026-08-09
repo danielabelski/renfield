@@ -180,10 +180,81 @@ Module 3 (IMX708) fails on the sensor driver, not the cable.
    GREY — the ISP output). **All overlay values were correct first try** (csi_sel/mipi_sel=0,
    mclk_id=0, PE6/PE5 reset/pwdn) — no tunable iteration was needed. (A harmless
    `imx219_2 ... No such device` logs from a second base-DTB sensor slot with no camera.)
-4. ⏳ **Next:** mount `/dev/video0` + `/dev/media0` into the Esszimmer pod
-   (`k8s/satellite-esszimmer.yaml`, alongside the existing `/dev/snd` hostPath mounts).
-5. ⏳ Wire it to the occupancy/gesture prototypes (`prototypes/npu-occupancy/`) — the
-   detector + WS contract are camera-agnostic; only the frame source changes.
+4. ✅ Mount `/dev/video0` + `/dev/media0` into the Esszimmer pod
+   (`k8s/satellite-esszimmer.yaml`, alongside `/dev/snd`; `type: CharDevice`). Verified
+   visible in-container.
+5. ⏳ **Frame capture — needs the Allwinner GStreamer plugin (see below).** The detector
+   + WS contract are camera-agnostic; only the frame source needs this dependency.
+
+## Frame capture — WORKING via the Allwinner ISP userspace (verified 2026-08-09)
+
+**The sensor is detected and `/dev/video0` exists, but you cannot capture with plain V4L2 /
+OpenCV** — the device is a multiplanar media-controller whose ISP/scaler pipeline
+(sensor → mipi.0 → csi.0 → tdm_rx.0 → isp.0 → scaler.0 → vin_cap.0) produces nothing unless
+**Allwinner's ISP userspace is running**. `cv2.VideoCapture` / `v4l2-ctl --stream-mmap` →
+`VIDIOC_REQBUFS Invalid argument`, `vin_pipeline_try_format failed`,
+`scaler get_selection error`.
+
+**Red herring:** the board's `/usr/local/bin/test_camera.sh` uses `gst-launch-1.0 v4l2src …
+en-awisp=1`, but `en-awisp` exists in **no binary** (grep of the whole desktop rootfs found it
+only in that script). It's not a real property. Don't chase GStreamer.
+
+**What actually works: the AW ISP userspace** — `libAWIspApi.so` + `libisp.so` + `libisp_ini.so`
+(pkg `libawispapi-isp-602`, extracted from the OPi Zero 3W **desktop** image; tuning is baked
+into `libisp_ini.so`, no `/vendor/camera/isp_tuning` needed). Start the ISP
+(`CreateAWIspApi → ispApiInit → ispGetIspId(0) → ispStart`), then do the sunxi V4L2 mplane grab
+(`S_INPUT`, `VIDIOC_SET_SENSOR_ISP_CFG {0,0}`, `S_PARM`, `S_FMT` `V4L2_PIX_FMT_YUV420M` @ 640×480,
+`REQBUFS`/`QUERYBUF`+mmap/`QBUF`, `STREAMON`, `DQBUF`). The ISP does debayer + 3A.
+
+Shipped tool: **`prototypes/npu-occupancy/isp_capture/renfield_isp_capture.c`** — grabs ONE frame
+(skips ~8 frames for 3A warmup) and writes raw **I420**. Built + run on the board:
+```
+gcc -O2 -o renfield_isp_capture renfield_isp_capture.c -I/opt/awisp -L/opt/awisp/lib -lAWIspApi -Wl,-rpath,/opt/awisp/lib
+LD_LIBRARY_PATH=/opt/awisp/lib ./renfield_isp_capture /dev/video0 1920 1080 /tmp/frame.i420 8
+```
+→ `/tmp/frame.i420` = **3110400 bytes (1920×1080 I420)**, a real image (Y mean≈128, stddev≈28).
+`V4L2Camera` (satellite_occupancy.py) calls this tool → I420 → BGR (numpy, no cv2); degrades to
+"capture disabled" if the tool/libs are absent. Also verified **from inside the pod** (see mount
+below): 1080p frame captured in-container.
+
+**Resolution ceiling = 1920×1080.** The IMX219 is 8 MP (3280×2464) and captures 1080p natively,
+but this ISP config's **scaler output caps at 1920×1080** — `S_FMT` clamps any higher request
+(2560×1440 / 3280×2464 all come back as 1080p). Full-sensor res needs the ISP "large image" path
+(large-scaler / tiled capture); the `sensor_isp_cfg.large_image` + `ispSetIspLargeImage()` flags
+alone do NOT unlock it (tested — still clamped, and broke the simple grab). Not worth pursuing:
+1080p is ample for occupancy/gesture (the YOLO detector letterboxes to 640 anyway) and good for
+document reading. 640×480 / 1280×720 also work (lighter/less heat). The tool caps requests at
+1920×1080.
+
+**Deploy — DONE via hostPath (not baked into the image).** `/opt/awisp` (the `renfield_isp_capture`
+binary + `lib/{libAWIspApi,libisp,libisp_ini}.so`) lives on the **host** and is hostPath-mounted
+read-only into the pod (`k8s/satellite-esszimmer.yaml`, `awisp` volume). Applied + verified: the
+pod sees `/opt/awisp/*` and captures a frame in-container. The `.c` is in-repo; the three AW
+`.so`s are Allwinner proprietary (from the OPi desktop image) — they live on the host, NOT in git.
+(A later hardening option is to bake them into the satellite image instead of the host hostPath.)
+
+### Reproducibility (how this survives a reflash) — NOT Ansible
+
+The Esszimmer host is **not** the bare-metal-satellite Ansible target (`src/satellite/provisioning/`
+is for the Pi Zero 2 W sats, which have no A733/ISP and no camera). Instead the HOST-side camera
+setup is captured in a committed, idempotent script — **`k8s/orangepi-esszimmer-camera-setup.sh`**
+(same pattern as `k8s/orangepi-node-resilience.sh`), run as root on the node from a repo checkout.
+It: (1) compiles+installs the DT overlay + enables it in `orangepiEnv.txt`, (2) writes
+`/etc/modules-load.d/renfield-camera.conf`, (3) builds `renfield_isp_capture` and installs the AW
+ISP libs into `/opt/awisp`. The AW `.so`s are proprietary → staged from `private/awisp/` (or
+extracted from the desktop image), never committed. So: reflash the node → run k8s node setup +
+this script → reboot → `kubectl apply` the pod manifest → camera back. The POD side is fully
+git-managed; only these host bits + the proprietary libs are out-of-band.
+
+## Thermal note (observed during bring-up)
+
+The board runs **warm: ~72 °C** on the CPU cores at idle-ish load (1.3), driven by the
+baseline satellite ML workload (wakeword + BLE + audio) + k8s overhead — **not** the camera
+(idle vin draws ~nothing). It **has a PWM fan, already at max** (`pwm-fan cur=4/max=4`), and
+is not throttling (cores at 1794 MHz, no dmesg thermal warnings), skin only 38 °C. There is
+little cooling headroom left, so **continuous** vision inference would push it toward the
+throttle point — another reason the non-verbal design uses *gated, bounded-window* capture
+rather than a persistent stream.
 
 ### DT overlay
 

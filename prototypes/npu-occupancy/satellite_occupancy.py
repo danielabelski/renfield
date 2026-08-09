@@ -29,34 +29,83 @@ from occupancy_detector import DetectorConfig, OccupancyDetector
 
 
 class V4L2Camera:
-    """Single-frame grabber for a CSI sensor exposed as /dev/videoN.
+    """Single-frame grabber for the A733 CSI sensor exposed as /dev/videoN.
 
     CSI (not a webcam): the sensor driver lives on the HOST; the privileged pod mounts
-    /dev/video* + /dev/media*. We open lazily and read one frame per request — no
-    continuous streaming (occupancy checks are occasional, and a persistent stream would
-    fight the audio loop for USB/DMA bandwidth and power).
+    /dev/video* + /dev/media*. One frame per request — no continuous streaming (occupancy
+    checks are occasional; a persistent stream adds heat on the passively-hot A733).
+
+    HOW CAPTURE WORKS ON THE A733 (verified working on the Esszimmer board 2026-08-09).
+    ----------------------------------------------------------------------------------
+    sunxi-vin will NOT capture via plain V4L2 / OpenCV: the device is a multiplanar
+    media-controller whose ISP/scaler pipeline won't produce frames unless Allwinner's ISP
+    userspace (libAWIspApi/libisp) is running. So capture goes through
+    `renfield_isp_capture` — a small C tool (isp_capture/renfield_isp_capture.c) that starts
+    the AW ISP (`CreateAWIspApi → ispStart`), does the sunxi V4L2 mplane grab, and writes one
+    frame as raw I420. Confirmed: a real 640×480 frame (Y mean≈113, stddev≈22). The vendor
+    `test_camera.sh`'s `en-awisp` GStreamer property was a red herring (exists in no binary).
+
+    Deploy dependency: the satellite image must contain the tool + the AW ISP libs:
+        /opt/awisp/renfield_isp_capture
+        /opt/awisp/lib/{libAWIspApi.so, libisp.so, libisp_ini.so}   (from the OPi desktop image)
+    See docs/design/a733-satellite-camera.md. Degrades to "capture disabled" when absent.
     """
 
-    def __init__(self, device: str = "/dev/video0", width: int = 1280, height: int = 720) -> None:
-        self._device, self._w, self._h = device, width, height
+    _CAP = "/opt/awisp/renfield_isp_capture"
+    _LIBS = "/opt/awisp/lib"
+
+    def __init__(self, device: str = "/dev/video0", width: int = 1920, height: int = 1080,
+                 warmup: int = 8) -> None:
+        # IMX219 is 8 MP; the ISP downscales, so 1280x720 / 640x480 also work if a lighter
+        # frame is wanted (the occupancy YOLO letterboxes to 640 regardless — higher res
+        # mainly helps document-reading / gesture detail, at more capture time + heat).
+        self._device, self._w, self._h, self._warmup = device, width, height, warmup
 
     async def grab_bgr(self):
-        # Run the blocking V4L2 read off the event loop so it never stalls wakeword/WS.
         return await asyncio.to_thread(self._grab_sync)
 
     def _grab_sync(self):
-        import cv2  # opencv-python-headless on the satellite image
-        cap = cv2.VideoCapture(self._device, cv2.CAP_V4L2)
+        """Capture one frame via renfield_isp_capture → raw I420 → BGR (numpy, no cv2).
+
+        Returns None if the ISP capture tool/libs aren't installed (so the occupancy gate
+        degrades gracefully), or on any capture error."""
+        import os, subprocess, tempfile
+        import numpy as np
+        if not os.path.exists(self._CAP):
+            print("[camera] renfield_isp_capture not installed — capture disabled")
+            return None
+        out = tempfile.mktemp(suffix=".i420")
+        env = {**os.environ, "LD_LIBRARY_PATH": self._LIBS}
         try:
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, self._w)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self._h)
-            # Drop the first couple of frames — CSI sensors need AE/AWB to settle,
-            # else the first frame is black/over-exposed and the count is garbage.
-            for _ in range(3):
-                ok, frame = cap.read()
-            return frame if ok else None
+            subprocess.run([self._CAP, self._device, str(self._w), str(self._h), out,
+                            str(self._warmup)], env=env, timeout=20, capture_output=True)
+            if not os.path.exists(out) or os.path.getsize(out) < self._w * self._h:
+                return None
+            buf = np.fromfile(out, dtype=np.uint8)
+            return self._i420_to_bgr(buf, self._w, self._h)
+        except Exception as e:  # noqa: BLE001
+            print(f"[camera] capture failed: {e}")
+            return None
         finally:
-            cap.release()
+            try:
+                os.unlink(out)
+            except OSError:
+                pass
+
+    @staticmethod
+    def _i420_to_bgr(buf, w: int, h: int):
+        """Raw I420 (Y, then U, then V; chroma at w/2×h/2) → BGR uint8 (BT.601)."""
+        import numpy as np
+        ysz, csz = w * h, (w // 2) * (h // 2)
+        Y = buf[:ysz].reshape(h, w).astype(np.float32)
+        U = buf[ysz:ysz + csz].reshape(h // 2, w // 2).astype(np.float32) - 128.0
+        V = buf[ysz + csz:ysz + 2 * csz].reshape(h // 2, w // 2).astype(np.float32) - 128.0
+        U = np.repeat(np.repeat(U, 2, 0), 2, 1)          # upsample chroma to full res
+        V = np.repeat(np.repeat(V, 2, 0), 2, 1)
+        R = Y + 1.402 * V
+        G = Y - 0.344 * U - 0.714 * V
+        B = Y + 1.772 * U
+        return np.stack([B, G, R], axis=2).clip(0, 255).astype(np.uint8)
 
 
 class OccupancyProbe:
