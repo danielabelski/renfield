@@ -490,3 +490,38 @@ re-shapes into a cheap near-term slice + a later motion phase.
   production** — per-room full-household BLE enrollment. Phase 3b (motion gestures,
   Jester-trained temporal model) and Head B (body-language) remain deferred behind
   their own gates.
+
+---
+
+## Addendum (2026-08-09) — camera + NPU-rail reconciliation
+
+Two findings from the NPU-vision-offload work update assumptions in this doc. They do
+**not** change any decision; they de-risk the hardware + acceleration story.
+
+1. **CSI IMX219 IS viable on the Zero 3W — full hardware reference:
+   [`a733-satellite-camera.md`](a733-satellite-camera.md).** This doc (2026-06-27) assumed
+   the A733 "needs a USB camera." The board's own **schematic** (sheet 13) settles it: the
+   camera port `CAM1` is a **Raspberry-Pi-standard 22-pin 0.5 mm MIPI CSI** connector
+   (footprint `fpc22-20-sm-RPI-TOP-h2`) on **CSI0**, i2c **TWI11**, control GPIOs
+   **PE6/PE5** — and the **IMX219 driver is already `=m`** in the running kernel. So an
+   IMX219 camera + a **Raspberry Pi "Standard-Mini" 15↔22-pin cable** + **one DT overlay**
+   (values in the reference doc) is the path — no kernel/driver work. The no-boot an
+   operator hit was a 15-pin camera in the 22-pin socket *without* the adapter cable.
+   (Not Camera Module 3 / IMX708 — no driver; not OV5640 — DVP, wrong interface.) This
+   corrects earlier drafts of this addendum that mis-called it "24-pin / CSI dead end /
+   use RTSP" — all wrong extrapolations from lookalike boards.
+
+2. **The MediaPipe→NPU conversion rail now exists (demonstrated).** §Risks and
+   T-SILICON-PROBE note NPU acceleration needs "a separate Verisilicon TFLite→NBG
+   conversion port" and is deferred (Phase 3a runs MediaPipe on the A76 CPU). That exact
+   rail — ACUITY toolkit (ONNX/TFLite → INT8 NBG) → VIPLite runtime — is now built and
+   documented in `prototypes/npu-occupancy/` (for occupancy + object/document
+   recognition). When the deferred MediaPipe-landmark NPU port is picked up, reuse that
+   rail; it does **not** change the Phase-3a-on-CPU decision.
+
+**Prototype scaffold** for the buildable slices lives in `prototypes/npu-occupancy/`:
+`nonverbal_starter.py` implements Phase-3a static gestures (stock MediaPipe, CPU) + the
+deferred Head-B facial-expression affect read (FaceLandmarker blendshapes, advisory),
+faithful to the decisions above (fail-closed actuation, advisory affect, nothing
+persisted, separate PSK-bound gesture WS). It is prototype scaffolding, not wired into
+prod — the productization PR is the Implementation Tasks above.
