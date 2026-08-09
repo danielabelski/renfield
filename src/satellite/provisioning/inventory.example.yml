@@ -46,3 +46,25 @@ all:
       hosts:
         hifiberry-livingroom:
           ansible_host: hifiberry-livingroom.local
+
+    # Orange Pi A733 node(s) — e.g. Esszimmer. These run the satellite as a k8s POD
+    # (k8s/satellite-esszimmer.yaml), so the main provision.yml (hosts: satellites) does
+    # NOT target them. But their MIPI-CSI camera needs host-side setup, applied by the
+    # config-driven provision-camera.yml (targets `all`, gated on camera_enabled +
+    # camera_backend). root login on the node. Set in host_vars/satellite-esszimmer.yml:
+    #     camera_enabled: true
+    #     camera_backend: sunxi_isp
+    # (needs the proprietary AW ISP libs staged at files/awisp/ — see provision-camera.yml).
+    orangepi_nodes:
+      vars:
+        ansible_user: root
+      hosts:
+        satellite-esszimmer:
+          ansible_host: 192.168.1.82
+
+# CAMERA is a per-host capability, not a group:
+#   * Pi + Pi-camera (arbeitszimmer, kinderbad): host_vars set `camera_enabled: true`
+#     (camera_backend defaults to "rpicam" → no host provisioning, the OS handles it).
+#   * Pi + no camera (wohnzimmer, benszimmer, fitnessraum): camera_enabled stays false.
+#   * A733 + CSI (esszimmer): host_vars set camera_enabled: true + camera_backend: sunxi_isp.
+# provision-camera.yml applies the right thing per host from these vars.

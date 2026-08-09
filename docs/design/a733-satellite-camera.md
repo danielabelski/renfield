@@ -233,18 +233,30 @@ pod sees `/opt/awisp/*` and captures a frame in-container. The `.c` is in-repo; 
 `.so`s are Allwinner proprietary (from the OPi desktop image) — they live on the host, NOT in git.
 (A later hardening option is to bake them into the satellite image instead of the host hostPath.)
 
-### Reproducibility (how this survives a reflash) — NOT Ansible
+### Reproducibility (how this survives a reflash) — Ansible, config-driven
 
-The Esszimmer host is **not** the bare-metal-satellite Ansible target (`src/satellite/provisioning/`
-is for the Pi Zero 2 W sats, which have no A733/ISP and no camera). Instead the HOST-side camera
-setup is captured in a committed, idempotent script — **`k8s/orangepi-esszimmer-camera-setup.sh`**
-(same pattern as `k8s/orangepi-node-resilience.sh`), run as root on the node from a repo checkout.
-It: (1) compiles+installs the DT overlay + enables it in `orangepiEnv.txt`, (2) writes
-`/etc/modules-load.d/renfield-camera.conf`, (3) builds `renfield_isp_capture` and installs the AW
-ISP libs into `/opt/awisp`. The AW `.so`s are proprietary → staged from `private/awisp/` (or
-extracted from the desktop image), never committed. So: reflash the node → run k8s node setup +
-this script → reboot → `kubectl apply` the pod manifest → camera back. The POD side is fully
-git-managed; only these host bits + the proprietary libs are out-of-band.
+Camera is a **per-host capability**, driven by two vars (group_vars/host_vars), NOT a special
+group — the fleet has every combination:
+
+| Host | `camera_enabled` | `camera_backend` | Host provisioning |
+|---|---|---|---|
+| Pi + Pi-camera (arbeitszimmer, kinderbad) | true | `rpicam` (default) | none — OS libcamera/rpicam + app rpicam-still |
+| Pi, no camera (wohnzimmer, benszimmer, fitnessraum) | false | — | skipped |
+| **A733 (esszimmer)** | true | **`sunxi_isp`** | DT overlay + sunxi-vin modules + `/opt/awisp` (ISP libs + `renfield_isp_capture`) |
+
+**`src/satellite/provisioning/provision-camera.yml`** is config-driven (targets `all`, gated on
+those vars): a no-op for rpicam hosts, the full host setup for `sunxi_isp`. The bare-metal
+`provision.yml` (`hosts: satellites`) is untouched — the A733 runs the satellite as a **k8s pod**,
+so it's a separate `orangepi_nodes` inventory group that only `provision-camera.yml` targets.
+```
+cd src/satellite/provisioning
+ansible-playbook -i inventory.yml provision-camera.yml --limit satellite-esszimmer -e camera_reboot=true
+```
+The AW ISP `.so`s are Allwinner **proprietary** → staged on the control machine at
+`files/awisp/` (git-ignored), extracted from the OPi desktop image; never committed. So for the
+A733: reflash node → k8s node setup → `provision-camera.yml` → reboot → `kubectl apply` the pod →
+camera back. The POD side (device + `/opt/awisp` mounts) is fully git-managed; only these host
+bits + the proprietary libs are out-of-band.
 
 ## Thermal note (observed during bring-up)
 
