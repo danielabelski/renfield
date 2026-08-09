@@ -1178,3 +1178,285 @@ class TestGetDedicatedClient:
         result = get_dedicated_client("http://router-ollama:11434")
 
         assert isinstance(result, _FallbackLLMClient)
+
+
+async def _agen(*chunks):
+    """Async generator yielding the given chunks (for streaming tests)."""
+    for c in chunks:
+        yield c
+
+
+async def _agen_raises(exc):
+    """Async generator that raises *exc* on the first __anext__ (models a
+    connection failure at stream open, before any chunk is produced)."""
+    raise exc
+    yield  # pragma: no cover — makes this an async generator
+
+
+class TestOpenAICompatFallbackClient:
+    """Tests for _OpenAICompatFallbackClient — OpenAI-compat primary → in-cluster
+    Ollama fallback (resilience for a downed external llama-server)."""
+
+    def _wrapper(self, monkeypatch, primary, fallback, *, openai_model="qwen3.6",
+                 ollama_model="qwen3:14b", fallback_model=""):
+        from utils import llm_client
+        monkeypatch.setattr(llm_client.settings, "llm_openai_model", openai_model, raising=False)
+        monkeypatch.setattr(llm_client.settings, "ollama_model", ollama_model, raising=False)
+        monkeypatch.setattr(llm_client.settings, "llm_openai_fallback_model", fallback_model, raising=False)
+        return llm_client._OpenAICompatFallbackClient(primary, fallback)
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_primary_success_no_fallback(self, monkeypatch):
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.chat.return_value = "primary"
+        w = self._wrapper(monkeypatch, primary, fallback)
+        assert await w.chat(model="qwen3.6", messages=[]) == "primary"
+        fallback.chat.assert_not_called()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_connect_error_falls_back_and_remaps_alias_model(self, monkeypatch):
+        """Primary alias model (qwen3.6) is remapped to ollama_model on fallback."""
+        import httpx
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.chat.side_effect = httpx.ConnectError("refused")
+        fallback.chat.return_value = "fallback"
+        w = self._wrapper(monkeypatch, primary, fallback)
+        result = await w.chat(model="qwen3.6", messages=[])
+        assert result == "fallback"
+        assert fallback.chat.call_args.kwargs["model"] == "qwen3:14b"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_empty_model_remapped_to_ollama_model(self, monkeypatch):
+        import httpx
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.chat.side_effect = httpx.ConnectError("refused")
+        fallback.chat.return_value = "ok"
+        w = self._wrapper(monkeypatch, primary, fallback)
+        await w.chat(model="", messages=[])
+        assert fallback.chat.call_args.kwargs["model"] == "qwen3:14b"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_always_maps_to_configured_model(self, monkeypatch):
+        """Fail-over ALWAYS uses the configured in-cluster model — even a name
+        Ollama might not have is NOT passed through (would 404 during the outage)."""
+        import httpx
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.chat.side_effect = httpx.ConnectError("refused")
+        fallback.chat.return_value = "ok"
+        w = self._wrapper(monkeypatch, primary, fallback)
+        await w.chat(model="some-external-only-name", messages=[])
+        assert fallback.chat.call_args.kwargs["model"] == "qwen3:14b"
+
+    @staticmethod
+    def _status_error(code: int):
+        import httpx
+        import openai
+        resp = httpx.Response(code, request=httpx.Request("POST", "http://cuda.local:8081/v1/chat/completions"))
+        return openai.APIStatusError("err", response=resp, body=None)
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_5xx_cold_model_falls_back(self, monkeypatch):
+        """A 5xx (cold-model 503 / server error) → primary can't serve → fall over."""
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.chat.side_effect = self._status_error(503)
+        fallback.chat.return_value = "ok"
+        w = self._wrapper(monkeypatch, primary, fallback)
+        assert await w.chat(model="qwen3.6", messages=[]) == "ok"
+        assert fallback.chat.call_args.kwargs["model"] == "qwen3:14b"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_4xx_reraised_not_fallback(self, monkeypatch):
+        """A 4xx (our bad request) must surface, NOT be masked by fallback."""
+        import openai
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.chat.side_effect = self._status_error(400)
+        w = self._wrapper(monkeypatch, primary, fallback)
+        with pytest.raises(openai.APIStatusError):
+            await w.chat(model="qwen3.6", messages=[])
+        fallback.chat.assert_not_called()
+
+    @staticmethod
+    def _apitimeout(cause=None):
+        """Build an openai.APITimeoutError the way the SDK does — wrapping (via
+        __cause__) the underlying httpx timeout (connect vs read/pool)."""
+        import httpx
+        import openai
+        exc = openai.APITimeoutError(request=httpx.Request("POST", "http://cuda.local:8081/v1"))
+        if cause is not None:
+            exc.__cause__ = cause
+        return exc
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_apitimeout_connect_cause_falls_over(self, monkeypatch):
+        """Host-down surfaces as APITimeoutError wrapping ConnectTimeout → MUST fall over
+        (the real-world outage shape the first fix wrongly excluded)."""
+        import httpx
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.chat.side_effect = self._apitimeout(httpx.ConnectTimeout("connect timed out"))
+        fallback.chat.return_value = "ok"
+        w = self._wrapper(monkeypatch, primary, fallback)
+        assert await w.chat(model="qwen3.6", messages=[]) == "ok"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_apitimeout_read_cause_reraised(self, monkeypatch):
+        """Slow-but-healthy primary (APITimeoutError wrapping ReadTimeout) → do NOT degrade."""
+        import openai
+        import httpx
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.chat.side_effect = self._apitimeout(httpx.ReadTimeout("slow"))
+        w = self._wrapper(monkeypatch, primary, fallback)
+        with pytest.raises(openai.APITimeoutError):
+            await w.chat(model="qwen3.6", messages=[])
+        fallback.chat.assert_not_called()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_apitimeout_bare_falls_over(self, monkeypatch):
+        """A bare APITimeoutError (no chained cause) errs toward falling over — host-down priority."""
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.chat.side_effect = self._apitimeout(None)
+        fallback.chat.return_value = "ok"
+        w = self._wrapper(monkeypatch, primary, fallback)
+        assert await w.chat(model="qwen3.6", messages=[]) == "ok"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_fallback_forces_think_false_for_thinking_model(self, monkeypatch):
+        """Fallover to a thinking model (qwen3:14b) without an explicit think= must
+        set think=False (else the ollama-python empty-content trap)."""
+        import httpx
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.chat.side_effect = httpx.ConnectError("down")
+        fallback.chat.return_value = "ok"
+        w = self._wrapper(monkeypatch, primary, fallback)  # ollama_model=qwen3:14b
+        await w.chat(model="qwen3.6", messages=[])
+        assert fallback.chat.call_args.kwargs.get("think") is False
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_fallback_respects_explicit_think(self, monkeypatch):
+        """An explicit caller think= is not overridden on fallover."""
+        import httpx
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.chat.side_effect = httpx.ConnectError("down")
+        fallback.chat.return_value = "ok"
+        w = self._wrapper(monkeypatch, primary, fallback)
+        await w.chat(model="qwen3.6", messages=[], think=True)
+        assert fallback.chat.call_args.kwargs.get("think") is True
+
+    @pytest.mark.unit
+    def test_getattr_delegates_capability_flag_to_primary(self, monkeypatch):
+        """Unknown attrs (e.g. supports_native_tools) pass through to the primary,
+        so wrapping doesn't silently hide capability flags."""
+        from utils import llm_client
+        primary = MagicMock(); primary.supports_native_tools = True
+        fallback = MagicMock()
+        w = llm_client._OpenAICompatFallbackClient(primary, fallback)
+        assert w.supports_native_tools is True
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_read_timeout_reraised_not_fallback(self, monkeypatch):
+        import httpx
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.chat.side_effect = httpx.ReadTimeout("slow")
+        w = self._wrapper(monkeypatch, primary, fallback)
+        with pytest.raises(httpx.ReadTimeout):
+            await w.chat(model="qwen3.6", messages=[])
+        fallback.chat.assert_not_called()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_list_delegates_to_primary_no_fallback(self, monkeypatch):
+        """list() is a health probe → reflect the PRIMARY, never mask with Ollama."""
+        import httpx
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.list.side_effect = httpx.ConnectError("down")
+        w = self._wrapper(monkeypatch, primary, fallback)
+        with pytest.raises(httpx.ConnectError):
+            await w.list()
+        fallback.list.assert_not_called()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_embeddings_delegates_to_primary_no_fallback(self, monkeypatch):
+        import httpx
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.embeddings.side_effect = httpx.ConnectError("down")
+        w = self._wrapper(monkeypatch, primary, fallback)
+        with pytest.raises(httpx.ConnectError):
+            await w.embeddings(model="x", prompt="y")
+        fallback.embeddings.assert_not_called()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_fallback_model_setting_wins(self, monkeypatch):
+        import httpx
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.chat.side_effect = httpx.ConnectError("refused")
+        fallback.chat.return_value = "ok"
+        w = self._wrapper(monkeypatch, primary, fallback, fallback_model="qwen3:32b")
+        await w.chat(model="qwen3.6", messages=[])
+        assert fallback.chat.call_args.kwargs["model"] == "qwen3:32b"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_openai_apiconnectionerror_caught(self, monkeypatch):
+        import httpx
+        import openai
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.chat.side_effect = openai.APIConnectionError(request=httpx.Request("POST", "http://cuda.local:8081/v1"))
+        fallback.chat.return_value = "ok"
+        w = self._wrapper(monkeypatch, primary, fallback)
+        assert await w.chat(model="qwen3.6", messages=[]) == "ok"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_stream_primary_success_no_fallback(self, monkeypatch):
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.chat.return_value = _agen("a", "b", "c")
+        w = self._wrapper(monkeypatch, primary, fallback)
+        out = [c async for c in await w.chat(model="qwen3.6", messages=[], stream=True)]
+        assert out == ["a", "b", "c"]
+        fallback.chat.assert_not_called()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_stream_first_chunk_connect_error_falls_back(self, monkeypatch):
+        """Connection failure at stream open → fail over to the Ollama stream."""
+        import httpx
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.chat.return_value = _agen_raises(httpx.ConnectError("refused"))
+        fallback.chat.return_value = _agen("x", "y")
+        w = self._wrapper(monkeypatch, primary, fallback)
+        out = [c async for c in await w.chat(model="qwen3.6", messages=[], stream=True)]
+        assert out == ["x", "y"]
+        assert fallback.chat.call_args.kwargs["model"] == "qwen3:14b"
+
+    @pytest.mark.unit
+    def test_maybe_wrap_respects_flag(self, monkeypatch):
+        from utils import llm_client
+        sentinel = MagicMock()
+        monkeypatch.setattr(llm_client.settings, "llm_openai_fallback_enabled", False, raising=False)
+        assert llm_client._maybe_wrap_openai_fallback(sentinel) is sentinel
+
+    @pytest.mark.unit
+    @patch("ollama.AsyncClient")
+    def test_maybe_wrap_wraps_when_enabled(self, mock_cls, monkeypatch):
+        from utils import llm_client
+        llm_client.clear_client_cache()
+        monkeypatch.setattr(llm_client.settings, "llm_openai_fallback_enabled", True, raising=False)
+        monkeypatch.setattr(llm_client.settings, "ollama_url", "http://ollama:11434", raising=False)
+        monkeypatch.setattr(llm_client.settings, "ollama_connect_timeout", 10.0, raising=False)
+        monkeypatch.setattr(llm_client.settings, "ollama_read_timeout", 300.0, raising=False)
+        mock_cls.return_value = MagicMock()
+        wrapped = llm_client._maybe_wrap_openai_fallback(MagicMock())
+        assert isinstance(wrapped, llm_client._OpenAICompatFallbackClient)

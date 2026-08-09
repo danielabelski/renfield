@@ -293,6 +293,24 @@ class Settings(BaseSettings):
     llm_openai_for_kg: bool | None = None
     llm_openai_for_memory: bool | None = None
 
+    # In-cluster LLM fallback (resilience). The OpenAI-compat primary
+    # (llm_openai_base_url, e.g. the external cuda.local llama-server) is a
+    # single point of failure: when it is UNREACHABLE the chat/agent/intent
+    # call raises and the whole turn fails (observed outage 2026-08-08). When
+    # this is on, a connection-level failure against the primary is
+    # transparently retried against the in-cluster Ollama (ollama_url) so a
+    # downed external GPU box degrades to the local model instead of a total
+    # outage. Recovery is automatic: every call tries the primary first.
+    # Off by default (opt-in per instance). Only the OpenAI-compat path needs
+    # this — the Ollama path already has ollama_fallback_url.
+    llm_openai_fallback_enabled: bool = False
+    # Model to use on the Ollama fallback. The primary's model name (its alias
+    # like "qwen3.6", or a per-role name) is NOT reused — it may not exist on
+    # Ollama and would 404 during the very outage this covers. On fail-over EVERY
+    # tier that routes here (chat/agent/intent) uses THIS one known-resident
+    # model. Empty => ollama_model (recommended: qwen3:14b, pulled in-cluster).
+    llm_openai_fallback_model: str = ""
+
     # Separate OpenAI-compatible endpoint for embeddings (a llama-server pod
     # configured with `--embedding`, hosting an embedding-specific GGUF like
     # Qwen3-Embedding-4B). When set, embeddings route here instead of Ollama.
