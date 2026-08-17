@@ -96,11 +96,17 @@ spec:
             requests:
               cpu: "2"
               memory: 4Gi
-              nvidia.com/gpu: 1
+              # BOTH k8s-gpu-1 GPUs (5070 Ti + 5060 Ti = 32 GB). Previously 1,
+              # which pinned Ollama to a single card — so the vision model
+              # (qwen3-vl:8b, renfield PDF/paperless OCR) + embeddings filled it
+              # and the qwen3:14b agent-router load 500'd (VRAM), failing the
+              # Reva router over to the `general` role. Voice moved off gpu-1 to
+              # gpu-3 (renfield.io/role=voice-llm) to free the 2nd card. 2026-08-17.
+              nvidia.com/gpu: 2
             limits:
               cpu: "6"
               memory: 16Gi
-              nvidia.com/gpu: 1
+              nvidia.com/gpu: 2
       volumes:
         - name: models
           hostPath:
