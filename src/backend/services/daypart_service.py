@@ -148,10 +148,14 @@ def get_daypart_info(_now: datetime | None = None) -> dict:
 
 
 def build_time_context(lang: str = "de") -> str:
-    """Build a short prompt string describing the current time-of-day.
+    """Build a short prompt string describing the current date + time-of-day.
 
-    Example (de): ``"ZEITKONTEXT: Aktuelle Zeit: 22:14 Uhr (Nacht, Donnerstag)"``
-    Example (en): ``"TIME CONTEXT: Current time: 22:14 (Night, Thursday)"``
+    Example (de): ``"ZEITKONTEXT: Heute ist Donnerstag, der 2026-06-11. Aktuelle Zeit: 22:14 Uhr (Nacht)."``
+    Example (en): ``"TIME CONTEXT: Today is Thursday, 2026-06-11. Current time: 22:14 (Night)."``
+
+    The **date (with year)** is included, not just the time-of-day: without it
+    the LLM invents a year from its training cutoff when asked "what's today"
+    or when reasoning about relative dates ("next week", scheduling windows).
 
     Wraps everything in try/except and returns "" on ANY error so the agent
     path can never be broken by this helper.
@@ -163,9 +167,16 @@ def build_time_context(lang: str = "de") -> str:
         label = _DAYPART_LABELS[lang_key][daypart]
         weekday = _WEEKDAYS[lang_key][now.weekday()]
         hhmm = now.strftime("%H:%M")
+        iso_date = now.strftime("%Y-%m-%d")
         if lang_key == "en":
-            return f"TIME CONTEXT: Current time: {hhmm} ({label}, {weekday})"
-        return f"ZEITKONTEXT: Aktuelle Zeit: {hhmm} Uhr ({label}, {weekday})"
+            return (
+                f"TIME CONTEXT: Today is {weekday}, {iso_date}. "
+                f"Current time: {hhmm} ({label})."
+            )
+        return (
+            f"ZEITKONTEXT: Heute ist {weekday}, der {iso_date}. "
+            f"Aktuelle Zeit: {hhmm} Uhr ({label})."
+        )
     except Exception as e:  # noqa: BLE001 — must never break the agent
         logger.warning(f"build_time_context failed, returning empty: {e}")
         return ""

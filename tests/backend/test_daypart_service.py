@@ -134,6 +134,7 @@ def test_build_time_context_de_contains_label():
         assert "Nacht" in out
         assert "Donnerstag" in out
         assert "22:14" in out
+        assert "2026-06-11" in out  # the date (with year) must be present
 
 
 def test_build_time_context_en_contains_label():
@@ -148,6 +149,7 @@ def test_build_time_context_en_contains_label():
         assert "Night" in out
         assert "Thursday" in out
         assert "22:14" in out
+        assert "2026-06-11" in out  # the date (with year) must be present
 
 
 def test_build_time_context_day_label_de():
