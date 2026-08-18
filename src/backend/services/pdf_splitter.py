@@ -82,6 +82,11 @@ from utils.config import settings
 # worker's flag-independent guard).
 SPLIT_OWNED_STATUSES = DOC_SPLIT_OWNED_STATUSES
 
+# A split_pending row whose split_heartbeat_at is younger than this belongs to
+# a LIVE slow-lane job (the pdf-split worker refreshes it every 30 s) — other
+# actors must not un-park it. Matches the worker's ROW_HEARTBEAT_STALE_S.
+SPLIT_ROW_HEARTBEAT_STALE_S = 120
+
 
 def _slug(title: str, cap: int = 40) -> str:
     text = (title or "").lower()
@@ -490,12 +495,24 @@ async def maybe_split_at_ingest(
         await execute_split(db, doc, stored, user_id=user_id, plan_row=plan_row)
         return True
     if doc.status == DOC_STATUS_SPLIT_PENDING:
-        # Mid-split but the plan is unusable (corrupt / missing — should not
-        # happen given the store-then-stamp order). Un-park and re-detect
-        # loudly rather than stranding the doc.
+        # Mid-split without a usable plan: either slow-lane-queued (no plan by
+        # design) or a corrupt plan. A LIVE slow-lane job (fresh row heartbeat)
+        # owns the doc — ack this duplicate delivery rather than un-parking a
+        # file the worker is mid-VLM on (which would race a concurrent normal
+        # ingest against the imminent split). Only a stale/absent heartbeat
+        # un-parks for fresh detection.
+        hb = doc.split_heartbeat_at
+        if hb is not None and (
+            datetime.now(UTC).replace(tzinfo=None) - hb
+        ).total_seconds() < SPLIT_ROW_HEARTBEAT_STALE_S:
+            logger.info(
+                f"pdf-split: doc {doc.id} has a live slow-lane job (fresh "
+                f"heartbeat) — acking duplicate delivery"
+            )
+            return True
         logger.warning(
             f"pdf-split: doc {doc.id} is mid-split but has no usable stored "
-            f"plan — un-parking for fresh detection"
+            f"plan and no live slow-lane job — un-parking for fresh detection"
         )
         doc.status = DOC_STATUS_PENDING
         await db.commit()
@@ -519,16 +536,16 @@ async def maybe_split_at_ingest(
         )
         if not signals:
             return False
+        if len(signals) == 1:
+            # Analytic, not a heuristic: one page cannot contain two documents
+            # (detect_boundaries short-circuits identically). Decided BEFORE
+            # slow-lane routing so the dominant single-page-scan case never
+            # burns a queued VLM transcription whose result the length check
+            # would discard anyway.
+            return False
         slow_reason = classify_slow_lane(signals)
         if slow_reason:
-            # PR3 routes these to the dedicated split worker (VLM fill-in /
-            # multi-window). Until then: status quo, loudly.
-            logger.warning(
-                f"pdf-split: doc {doc.id} needs the slow split lane "
-                f"({slow_reason}) — processing as a single document until the "
-                f"split worker ships"
-            )
-            return False
+            return await _route_to_slow_lane(db, doc, slow_reason, user_id)
         verdict = await detect_boundaries(signals)
     except SplitTransientError:
         raise
@@ -536,8 +553,22 @@ async def maybe_split_at_ingest(
         logger.warning(f"pdf-split: detection failed for doc {doc_id}: {e}")
         return False
 
+    outcome = await act_on_verdict(db, doc, verdict, user_id)
+    return outcome != "single"
+
+
+async def act_on_verdict(
+    db: AsyncSession,
+    doc: Document,
+    verdict: SplitVerdict,
+    user_id: int | None,
+) -> str:
+    """Shared verdict handling for the inline pre-stage AND the slow-lane
+    worker: ``'split'`` (confident — plan persisted + executed), ``'review'``
+    (uncertain — pending proposal filed, parent parked), or ``'single'``
+    (caller proceeds with / hands back to normal ingest)."""
     if verdict.kind != VERDICT_MULTI:
-        return False
+        return "single"
     if verdict.min_confidence < settings.pdf_split_auto_threshold:
         # Uncertain boundaries → owner review: file/refresh the PENDING
         # proposal, park the parent in split_review (this ack + the worker
@@ -563,21 +594,21 @@ async def maybe_split_at_ingest(
                 f"({e}) — processing as a single document"
             )
             await db.rollback()
-            return False
+            return "single"
         logger.info(
             f"pdf-split: doc {doc.id} looks like {len(verdict.pieces)} "
             f"documents at min confidence {verdict.min_confidence:.2f} < "
             f"{settings.pdf_split_auto_threshold} — held for owner review "
             f"(proposal {row.id})"
         )
-        return True
+        return "review"
 
     # -- Execution: persist the plan FIRST (crash-resume determinism), then
     #    execute — which stamps split_pending before the first child (NOT
     #    swallowed; see docstring) --
     plan_row = await _store_plan(db, doc, verdict, user_id)
     await execute_split(db, doc, verdict.pieces, user_id=user_id, plan_row=plan_row)
-    return True
+    return "split"
 
 
 async def _rejection_recorded(db: AsyncSession, document_id: int) -> bool:
@@ -586,3 +617,55 @@ async def _rejection_recorded(db: AsyncSession, document_id: int) -> bool:
     from services.pdf_split_proposals import has_rejected_proposal
 
     return await has_rejected_proposal(db, document_id)
+
+
+async def _route_to_slow_lane(
+    db: AsyncSession, doc: Document, slow_reason: str, user_id: int | None
+) -> bool:
+    """Hand a VLM-needing / multi-window file to the dedicated split worker:
+    park the parent ``split_pending`` and enqueue on the pdfsplit stream.
+    Returns True (caller acks). Fail-safe gates keep the PRE-PR3 status quo
+    (single-document ingest, loud log) when the slow lane cannot help:
+    no split worker deployed/alive, or a VLM-needing file with no vision
+    model configured."""
+    from services.task_queue import PdfSplitTaskQueue, pdf_split_worker_is_alive
+
+    if slow_reason == "vlm" and not settings.ollama_vision_model:
+        logger.warning(
+            f"pdf-split: doc {doc.id} needs VLM page transcription but no "
+            f"vision model is configured (OLLAMA_VISION_MODEL) — processing "
+            f"as a single document"
+        )
+        return False
+    if not await pdf_split_worker_is_alive():
+        logger.warning(
+            f"pdf-split: doc {doc.id} needs the slow split lane "
+            f"({slow_reason}) but no pdf-split worker is alive — processing "
+            f"as a single document"
+        )
+        return False
+
+    # Park BEFORE enqueue (crash between the two self-heals: a redelivered
+    # document-queue entry finds split_pending without a plan, un-parks and
+    # re-routes here).
+    doc.status = DOC_STATUS_SPLIT_PENDING
+    await db.commit()
+    from services.redis_client import get_redis
+
+    try:
+        await PdfSplitTaskQueue(redis_client=get_redis()).enqueue(
+            {"document_id": doc.id, "user_id": user_id}
+        )
+    except Exception as e:
+        # The parent is already parked; a swallowed enqueue failure would let
+        # the caller normally ingest the combined multi-doc PDF (permanent —
+        # COMPLETED dedups every re-push). Raise TRANSIENT: the entry
+        # PEL-retries, finds split_pending without a plan, un-parks and
+        # re-routes.
+        raise SplitTransientError(
+            f"slow-lane enqueue failed for doc {doc.id}: {e}"
+        ) from e
+    logger.info(
+        f"pdf-split: doc {doc.id} routed to the slow split lane ({slow_reason})"
+    )
+    return True
