@@ -37,6 +37,9 @@ from sqlalchemy import exists, func, or_, select, update
 from models.database import (
     DOC_STATUS_COMPLETED,
     DOC_STATUS_PENDING,
+    DOC_STATUS_SPLIT_ARCHIVED,
+    DOC_STATUS_SPLIT_PENDING,
+    DOC_STATUS_SPLIT_REVIEW,
     Document,
     DocumentChunk,
     DocumentProcessingHistory,
@@ -291,6 +294,12 @@ async def ingest_status(params: dict, user_id: int | None = None) -> dict:
         processing = status_counts.get("processing", 0)
         completed = status_counts.get("completed", 0)
         failed = status_counts.get("failed", 0)
+        # PDF-split lifecycle (status contract): archived combined originals +
+        # split-lane in-flight rows must not vanish from the narrative counts.
+        split_archived = status_counts.get(DOC_STATUS_SPLIT_ARCHIVED, 0)
+        split_in_flight = status_counts.get(
+            DOC_STATUS_SPLIT_PENDING, 0
+        ) + status_counts.get(DOC_STATUS_SPLIT_REVIEW, 0)
         pl_pending = pl_counts.get("pending", 0)
         pl_failed = pl_counts.get("failed", 0)
         chunkless = int(chunkless or 0)
@@ -301,6 +310,19 @@ async def ingest_status(params: dict, user_id: int | None = None) -> dict:
             f"KB-Verarbeitung: {completed} fertig, {pending} in Warteschlange, "
             f"{processing} in Arbeit, {failed} fehlgeschlagen."
         ]
+        if split_archived or split_in_flight:
+            split_bits = []
+            if split_archived:
+                split_bits.append(
+                    f"{split_archived} kombinierte Original-PDF(s) nach "
+                    f"Aufteilung archiviert (Einzeldokumente separat indexiert, "
+                    f"Original bewusst NICHT in Paperless)"
+                )
+            if split_in_flight:
+                split_bits.append(
+                    f"{split_in_flight} PDF(s) in der Split-Prüfung/-Verarbeitung"
+                )
+            parts.append("PDF-Split: " + "; ".join(split_bits) + ".")
         if chunkless:
             if unindexable and reindexable:
                 detail = (
