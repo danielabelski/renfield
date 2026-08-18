@@ -364,6 +364,7 @@ def _wire_prestage(
     store_row = SimpleNamespace(id=2)
     store = AsyncMock(return_value=store_row)
     monkeypatch.setattr(ps, "_store_plan", store)
+    monkeypatch.setattr(ps, "_rejection_recorded", AsyncMock(return_value=False))
     monkeypatch.setattr(
         ps, "extract_page_signals", MagicMock(return_value=signals or [])
     )
@@ -541,14 +542,26 @@ async def test_prestage_single_verdict_falls_through(monkeypatch):
     execute.assert_not_called()
 
 
-async def test_prestage_low_confidence_is_status_quo_in_pr1(monkeypatch):
+async def test_prestage_low_confidence_files_review_proposal(monkeypatch):
+    """Uncertain multi verdict → PENDING proposal + parent parked in
+    split_review (True = ack); the split itself does NOT execute."""
     verdict = SplitVerdict(
         kind=VERDICT_MULTI, pieces=[_piece(1, 1, conf=0.95), _piece(2, 2, conf=0.5)]
     )
+    doc = _parent()
     db, execute, _ = _wire_prestage(
-        monkeypatch, doc=_parent(), signals=[_sig(1), _sig(2)], verdict=verdict
+        monkeypatch, doc=doc, signals=[_sig(1), _sig(2)], verdict=verdict
     )
-    assert await maybe_split_at_ingest(db, 7) is False
+    create = AsyncMock(return_value=SimpleNamespace(id=9))
+    monkeypatch.setattr(
+        "services.pdf_split_proposals.create_review_proposal", create
+    )
+
+    assert await maybe_split_at_ingest(db, 7, user_id=5) is True
+
+    create.assert_awaited_once()
+    args = create.await_args.args
+    assert args[1] is doc and args[2] is verdict and args[3] == 5
     execute.assert_not_called()
 
 
@@ -661,3 +674,17 @@ async def test_execute_split_uses_recorded_resolutions_on_resume(monkeypatch):
     ] == [(3, 5)]
     # the newly resolved part was recorded too
     assert plan_row.proposal[1]["document_id"] == 102
+
+
+async def test_prestage_honors_durable_rejection(monkeypatch):
+    """An owner-REJECTED proposal outlives its one skip_split task: any later
+    plain task for the doc must skip detection entirely (treat-as-single)."""
+    db, execute, _ = _wire_prestage(monkeypatch, doc=_parent())
+    monkeypatch.setattr(ps, "_rejection_recorded", AsyncMock(return_value=True))
+    detector = MagicMock()
+    monkeypatch.setattr(ps, "extract_page_signals", detector)
+
+    assert await maybe_split_at_ingest(db, 7) is False
+
+    detector.assert_not_called()
+    execute.assert_not_called()
