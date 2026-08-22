@@ -217,6 +217,50 @@ class TokenBucketRateLimiter:
         self.last_update = time.monotonic()
 
 
+# Bound for tearing down a (half-)broken transport stack. anyio teardown of a
+# wedged streamable_http session can hang on stream drain; every teardown site
+# below is bounded by this so no caller (esp. one holding reconnect_lock) can
+# freeze on cleanup (#1107).
+_TEARDOWN_TIMEOUT_S = 5.0
+
+
+# Strong references to detached cleanup tasks: the event loop only holds weak
+# refs, so a fire-and-forget close task could be garbage-collected before it
+# runs ("Task was destroyed but it is pending!"). Done tasks self-remove.
+_detached_cleanup_tasks: set["asyncio.Task"] = set()
+
+
+async def _close_stack_bounded(stack: AsyncExitStack) -> None:
+    """Bounded best-effort close of a transport stack (shared idiom for every
+    teardown site — a wedged anyio teardown must never hold a caller). Swallows
+    teardown failures/timeouts; an OUTER cancellation still propagates."""
+    try:
+        async with asyncio.timeout(_TEARDOWN_TIMEOUT_S):
+            await stack.__aexit__(None, None, None)
+    except asyncio.CancelledError:
+        raise
+    except BaseException:  # teardown of a half-broken stack — nothing to surface
+        pass
+
+
+def _close_stack_detached(stack: AsyncExitStack) -> None:
+    """Schedule a detached best-effort close (used from a CANCELLED connect,
+    where awaiting anything would insta-cancel). Keeps a strong task reference
+    so the closer can't be GC'd before it runs; fully silent — cross-task anyio
+    cancel-scope errors are expected here."""
+
+    async def _run() -> None:
+        try:
+            async with asyncio.timeout(_TEARDOWN_TIMEOUT_S):
+                await stack.__aexit__(None, None, None)
+        except BaseException:  # detached cleanup — nothing to surface
+            pass
+
+    task = asyncio.get_running_loop().create_task(_run())
+    _detached_cleanup_tasks.add(task)
+    task.add_done_callback(_detached_cleanup_tasks.discard)
+
+
 def _coerce_arguments(arguments: dict, input_schema: dict) -> dict:
     """
     Coerce LLM-produced flat arguments to match nested JSON schemas.
@@ -1118,6 +1162,7 @@ class MCPManager:
     async def _connect_server(self, state: MCPServerState) -> None:
         """Connect to a single MCP server and discover its tools."""
         config = state.config
+        exit_stack: AsyncExitStack | None = None
         try:
             from mcp import ClientSession
             from mcp.client.sse import sse_client
@@ -1134,19 +1179,28 @@ class MCPManager:
                 if token:
                     headers["Authorization"] = f"Bearer {token}"
 
-            # Connect based on transport type
+            # Connect based on transport type. The WHOLE transport establishment
+            # is bounded by a same-task asyncio.timeout: init/list_tools below were
+            # always wait_for-bounded, but the transport __aenter__ itself was not —
+            # a pathological upstream could wedge here indefinitely while holding
+            # the reconnect_lock, silencing every reconnect path incl. the health
+            # monitor's self-heal tick (#1107). asyncio.timeout (not wait_for)
+            # keeps the cancellation in THIS task, so anyio cancel scopes entered
+            # by the transport contexts stay task-consistent for later teardown.
             if config.transport == MCPTransportType.STREAMABLE_HTTP:
                 if not config.url:
                     raise ValueError("URL required for streamable_http transport")
-                transport = await exit_stack.enter_async_context(
-                    streamablehttp_client(url=config.url, headers=headers)
-                )
+                async with asyncio.timeout(settings.mcp_connect_timeout):
+                    transport = await exit_stack.enter_async_context(
+                        streamablehttp_client(url=config.url, headers=headers)
+                    )
             elif config.transport == MCPTransportType.SSE:
                 if not config.url:
                     raise ValueError("URL required for SSE transport")
-                transport = await exit_stack.enter_async_context(
-                    sse_client(url=config.url, headers=headers)
-                )
+                async with asyncio.timeout(settings.mcp_connect_timeout):
+                    transport = await exit_stack.enter_async_context(
+                        sse_client(url=config.url, headers=headers)
+                    )
             elif config.transport == MCPTransportType.STDIO:
                 if not config.command:
                     raise ValueError("Command required for stdio transport")
@@ -1179,9 +1233,10 @@ class MCPManager:
                     args=config.args,
                     env=subprocess_env,
                 )
-                transport = await exit_stack.enter_async_context(
-                    stdio_client(server=params)
-                )
+                async with asyncio.timeout(settings.mcp_connect_timeout):
+                    transport = await exit_stack.enter_async_context(
+                        stdio_client(server=params)
+                    )
             else:
                 raise ValueError(f"Unknown transport: {config.transport}")
 
@@ -1225,6 +1280,11 @@ class MCPManager:
                 )
                 all_tools.append(info)
 
+            # A STALE stack from a prior session can still be set here (direct
+            # refresh_tools reconnects skip the teardown in _reconnect_server) —
+            # close it bounded before overwriting, else its transport leaks.
+            if state.exit_stack is not None and state.exit_stack is not exit_stack:
+                await _close_stack_bounded(state.exit_stack)
             state.session = session
             state.exit_stack = exit_stack
             self._set_connected(state, True)
@@ -1253,9 +1313,28 @@ class MCPManager:
             else:
                 logger.info(f"MCP server '{config.name}' connected: {len(state.tools)} tools")
 
+        except asyncio.CancelledError:
+            # Cancelled mid-connect (self-heal hang-guard or shutdown): mark the
+            # state honestly and hand the partially-entered transport — plus a
+            # possibly still-live STALE stack from a prior session (direct
+            # refresh_tools reconnects don't tear down first) — to a detached
+            # best-effort closer; awaiting here would insta-cancel, and a rare
+            # leak beats a frozen loop. The same slow-upstream condition must
+            # advance backoff like an inner-timeout failure does.
+            self._set_connected(state, False)
+            state.last_error = "connect cancelled (timeout/shutdown)"
+            if state.backoff:
+                state.backoff.record_failure()
+            if state.exit_stack is not None and state.exit_stack is not exit_stack:
+                _close_stack_detached(state.exit_stack)
+            state.exit_stack = None
+            if exit_stack is not None:
+                _close_stack_detached(exit_stack)
+            raise
         except Exception as e:
             self._set_connected(state, False)
-            state.last_error = str(e)
+            # str(TimeoutError()) is "" — always keep a meaningful error text.
+            state.last_error = str(e) or type(e).__name__
 
             # Record failure for exponential backoff
             if state.backoff:
@@ -1267,13 +1346,19 @@ class MCPManager:
             else:
                 logger.warning(f"MCP server '{config.name}' connection failed: {e}")
 
-            # Clean up exit stack on failure
-            if state.exit_stack:
-                try:
-                    await state.exit_stack.__aexit__(None, None, None)
-                except Exception:
-                    pass
-                state.exit_stack = None
+            # Clean up BOTH stacks on failure, bounded: the LOCAL partially-
+            # entered one (previously leaked — only state.exit_stack was closed,
+            # which the reconnect path has already torn down), AND a possibly
+            # still-live STALE state.exit_stack from a prior session — direct
+            # refresh_tools reconnects (a list_tools failure flips connected
+            # without teardown) reach here with the old stack still set, and
+            # dropping it unclosed would orphan its transport/subprocess.
+            if exit_stack is not None:
+                await _close_stack_bounded(exit_stack)
+            if state.exit_stack is not None and state.exit_stack is not exit_stack:
+                await _close_stack_bounded(state.exit_stack)
+            state.exit_stack = None
+            state.session = None
 
     async def _reconnect_server(self, state: MCPServerState) -> bool:
         """Tear down a stale session and re-establish.
@@ -1290,12 +1375,12 @@ class MCPManager:
             if state.connected and state.session is not None:
                 return True
             # Tear down old session/streams. Failures here are expected
-            # (the resource is half-broken — that's why we're here).
+            # (the resource is half-broken — that's why we're here). Bounded:
+            # anyio teardown of a broken streamable_http session can hang on
+            # stream drain, and this runs under reconnect_lock — an unbounded
+            # hang here would freeze every reconnect path for the server.
             if state.exit_stack is not None:
-                try:
-                    await state.exit_stack.__aexit__(None, None, None)
-                except Exception:
-                    pass
+                await _close_stack_bounded(state.exit_stack)
                 state.exit_stack = None
                 state.session = None
             logger.info(f"MCP reconnecting to '{state.config.name}'...")
@@ -2568,10 +2653,11 @@ class MCPManager:
 
         for state in self._servers.values():
             if state.exit_stack:
-                try:
-                    await state.exit_stack.__aexit__(None, None, None)
-                except Exception as e:
-                    logger.warning(f"MCP shutdown error for '{state.config.name}': {e}")
+                # Bounded like every other teardown site: a session wedged on
+                # stream drain (the #1107 failure mode) must not block graceful
+                # shutdown past the k8s grace period — later shutdown steps
+                # (plugin hooks, cleanup) still have to run.
+                await _close_stack_bounded(state.exit_stack)
             self._set_connected(state, False)
             state.session = None
             state.exit_stack = None

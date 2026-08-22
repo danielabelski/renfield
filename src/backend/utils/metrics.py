@@ -49,6 +49,8 @@ _orchestrator_domains_requested_total = None
 _orchestrator_domains_rendered_total = None
 _orchestrator_contract_version_mismatch_total = None
 _orchestrator_contract_demotions_total = None
+_mcp_health_ticks_total = None
+_mcp_health_problem_servers = None
 
 
 def _init_metrics():
@@ -69,6 +71,7 @@ def _init_metrics():
     global _speaker_inprocess_embedding_blocked_total
     global _orchestrator_domains_requested_total, _orchestrator_domains_rendered_total
     global _orchestrator_contract_version_mismatch_total, _orchestrator_contract_demotions_total
+    global _mcp_health_ticks_total, _mcp_health_problem_servers
 
     if _metrics_initialized:
         return
@@ -173,6 +176,18 @@ def _init_metrics():
             "renfield_output_guard_violations_total",
             "Output guard violations detected",
             ["violation"],
+        )
+
+        # MCP self-detection tick heartbeat (#1107): a monitor whose tick wedged
+        # used to be indistinguishable from "all healthy" (both are silent).
+        # A flatlining counter under a running backend = the monitor is stuck.
+        _mcp_health_ticks_total = Counter(
+            "renfield_mcp_health_ticks_total",
+            "Completed MCP health monitor ticks",
+        )
+        _mcp_health_problem_servers = Gauge(
+            "renfield_mcp_health_problem_servers",
+            "Degraded/down MCP servers seen by the last completed monitor tick",
         )
 
         # Answers cut off at the output-token cap. This used to be entirely
@@ -379,6 +394,18 @@ def record_mcp_tool_call(server: str, tool: str, duration: float, success: bool)
     _mcp_tool_duration_seconds.labels(server=server, tool=tool).observe(duration)
     if not success:
         _mcp_tool_errors_total.labels(server=server, tool=tool).inc()
+
+
+def record_mcp_health_tick(problem_count: int | None):
+    """Record one MCP health monitor tick (heartbeat, #1107). The counter ticks
+    for every ATTEMPTED tick (liveness — a flatline means the loop is stuck);
+    the gauge is only set when the tick completed with a verdict
+    (``problem_count is not None``) so a failing get_status can't fake 0."""
+    if not _metrics_initialized:
+        return
+    _mcp_health_ticks_total.inc()
+    if problem_count is not None:
+        _mcp_health_problem_servers.set(problem_count)
 
 
 def record_agent_outcome(outcome: str):
