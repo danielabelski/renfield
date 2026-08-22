@@ -305,11 +305,19 @@ HOOK_EVENTS: frozenset[str] = frozenset({
     # ``MCPManager.execute_tool`` for any ``mcp.*`` intent. Handlers
     # receive ``intent: str, parameters: dict, user_id: int | None`` and
     # may return a ``dict`` to **replace** the parameters before the MCP
-    # call, or ``None`` to leave them unchanged. First well-shaped
-    # non-None result wins — registration order determines precedence.
-    # Used by plugins to repair LLM tool calls (e.g. resolve a release
-    # title to its API id when the LLM passed the wrong parameter
-    # shape). Platform default (no handler) is a no-op.
+    # call, or ``None`` to leave them unchanged. **CHAINED** (since the
+    # 2026-08 twin-guard hardening): handlers run in registration order and
+    # each receives the CURRENT parameters — i.e. including earlier
+    # handlers' rewrites — and a well-shaped dict result becomes the new
+    # current parameters for the next handler and, ultimately, the call.
+    # (The old first-dict-wins contract let any earlier plugin's repair
+    # silently discard a later security rewrite.) Handlers must therefore
+    # be idempotent and preserve keys they don't own. NOTE: a handler that
+    # RAISES is skipped (logged) — a security-critical handler must be
+    # exception-free by construction rather than rely on ordering.
+    # Used by plugins to repair LLM tool calls and by the twin adapter's
+    # self-access guard (host-resolved ``user_subject`` override).
+    # Platform default (no handler) is a no-op.
     "pre_mcp_call",
     # Pre-MCP tool call gate — fired by ActionExecutor BEFORE
     # ``pre_mcp_call`` for any ``mcp.*`` intent. Handlers receive
@@ -362,11 +370,29 @@ HookFn = Callable[..., Coroutine[Any, Any, Any]]
 _hooks: dict[str, list[HookFn]] = defaultdict(list)
 
 
-def register_hook(event: str, fn: HookFn) -> None:
-    """Register an async callback for *event*. Raises ValueError for unknown events."""
+# (event, fn) -> priority for handlers registered with a non-default priority.
+# Kept OUTSIDE _hooks so the list representation (and every test doing
+# `_hooks[event].remove(fn)`) stays untouched; a stale entry after a direct
+# list removal is harmless (keyed by fn identity, re-registration overwrites).
+_hook_priorities: dict[tuple[str, int], int] = {}
+
+
+def register_hook(event: str, fn: HookFn, *, priority: int = 0) -> None:
+    """Register an async callback for *event*. Raises ValueError for unknown events.
+
+    ``priority`` orders handlers for callers that consume them via
+    ``get_hook_handlers`` (higher runs LATER; ties keep registration order).
+    Security handlers that must have the last word in a CHAINED consumer
+    (e.g. the twin self-access guard on ``pre_mcp_call``) register with a
+    high priority so no later-loaded plugin can sit behind them by accident.
+    ``run_hooks`` deliberately ignores priority (its results are unordered
+    contributions, not a chain).
+    """
     if event not in HOOK_EVENTS:
         raise ValueError(f"Unknown hook event {event!r}. Valid: {sorted(HOOK_EVENTS)}")
     _hooks[event].append(fn)
+    if priority:
+        _hook_priorities[(event, id(fn))] = priority
     logger.debug(f"Hook registered: {event} → {getattr(fn, '__qualname__', repr(fn))}")
 
 
@@ -444,6 +470,22 @@ def is_hook_registered(event: str, fn: HookFn) -> bool:
     return fn in _hooks.get(event, [])
 
 
+def get_hook_handlers(event: str) -> list[HookFn]:
+    """Snapshot of the registered handlers for *event*, sorted by priority
+    (ascending — higher priority runs LATER), ties in registration order.
+
+    For callers that must CHAIN handler results (feed each handler the
+    previous handler's output — e.g. the ``pre_mcp_call`` parameter rewrite),
+    which ``run_hooks``' same-kwargs-for-all model cannot express. Returns a
+    copy; the internal registry stays private to this module.
+    """
+    handlers = _hooks.get(event, [])
+    return sorted(
+        handlers, key=lambda fn: _hook_priorities.get((event, id(fn)), 0)
+    )
+
+
 def clear_hooks() -> None:
     """Remove all registered hooks. Used for test isolation."""
     _hooks.clear()
+    _hook_priorities.clear()

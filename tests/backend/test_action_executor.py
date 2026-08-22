@@ -295,18 +295,24 @@ class TestActionExecutorPreMCPCall:
         assert call_args.args[1] == {"id": "Applications/Folder/Release1"}
 
     @pytest.mark.unit
-    async def test_pre_mcp_call_first_dict_wins(self, action_executor):
-        """When multiple handlers return dicts, the first one wins."""
-        from utils.hooks import register_hook, _hooks
+    async def test_pre_mcp_call_handlers_chain(self, action_executor):
+        """Handlers CHAIN: each receives the previous handler's rewrite, and a
+        later (security) handler's override survives an earlier repair — the
+        old first-dict-wins contract let it be silently discarded (2026-08-22
+        twin-guard review, Finding 2)."""
+        from utils.hooks import _hooks, register_hook
 
-        async def first(intent, parameters, user_id=None, **_):
-            return {"id": "first"}
+        seen_by_second = {}
 
-        async def second(intent, parameters, user_id=None, **_):
-            return {"id": "second"}
+        async def repair(intent, parameters, user_id=None, **_):
+            return {**parameters, "id": "repaired", "user_subject": "model-supplied"}
 
-        register_hook("pre_mcp_call", first)
-        register_hook("pre_mcp_call", second)
+        async def security_guard(intent, parameters, user_id=None, **_):
+            seen_by_second.update(parameters)
+            return {**parameters, "user_subject": "host-resolved"}
+
+        register_hook("pre_mcp_call", repair)
+        register_hook("pre_mcp_call", security_guard)
         try:
             await action_executor.execute({
                 "intent": "mcp.release.get_release",
@@ -314,11 +320,70 @@ class TestActionExecutorPreMCPCall:
                 "confidence": 0.9,
             })
         finally:
-            _hooks["pre_mcp_call"].remove(first)
-            _hooks["pre_mcp_call"].remove(second)
+            _hooks["pre_mcp_call"].remove(repair)
+            _hooks["pre_mcp_call"].remove(security_guard)
+
+        # The second handler saw the first handler's rewrite...
+        assert seen_by_second.get("id") == "repaired"
+        # ...and the FINAL parameters carry BOTH: the repair and the override.
+        call_args = action_executor.mcp_manager.execute_tool.call_args
+        assert call_args.args[1]["id"] == "repaired"
+        assert call_args.args[1]["user_subject"] == "host-resolved"
+
+    @pytest.mark.unit
+    async def test_pre_mcp_call_high_priority_guard_runs_last(self, action_executor):
+        """A priority-registered security guard has the LAST word even when a
+        later-loaded plugin returns a fresh dict that drops its key."""
+        from utils.hooks import _hooks, register_hook
+
+        async def guard(intent, parameters, user_id=None, **_):
+            return {**parameters, "user_subject": "host-resolved"}
+
+        async def careless_plugin(intent, parameters, user_id=None, **_):
+            return {"id": "rebuilt"}  # fresh dict, drops user_subject
+
+        # Guard registers FIRST (plugin load order) but with high priority;
+        # the careless plugin registers after it.
+        register_hook("pre_mcp_call", guard, priority=100)
+        register_hook("pre_mcp_call", careless_plugin)
+        try:
+            await action_executor.execute({
+                "intent": "mcp.release.get_release",
+                "parameters": {"title": "x"},
+                "confidence": 0.9,
+            })
+        finally:
+            _hooks["pre_mcp_call"].remove(guard)
+            _hooks["pre_mcp_call"].remove(careless_plugin)
 
         call_args = action_executor.mcp_manager.execute_tool.call_args
-        assert call_args.args[1] == {"id": "first"}
+        assert call_args.args[1]["user_subject"] == "host-resolved"
+
+    @pytest.mark.unit
+    async def test_pre_mcp_call_crashing_handler_is_skipped(self, action_executor):
+        """A raising handler is skipped (logged); later handlers still run."""
+        from utils.hooks import _hooks, register_hook
+
+        async def boom(intent, parameters, user_id=None, **_):
+            raise RuntimeError("handler bug")
+
+        async def rewrite(intent, parameters, user_id=None, **_):
+            return {**parameters, "id": "rewritten"}
+
+        register_hook("pre_mcp_call", boom)
+        register_hook("pre_mcp_call", rewrite)
+        try:
+            await action_executor.execute({
+                "intent": "mcp.release.get_release",
+                "parameters": {"title": "x"},
+                "confidence": 0.9,
+            })
+        finally:
+            _hooks["pre_mcp_call"].remove(boom)
+            _hooks["pre_mcp_call"].remove(rewrite)
+
+        call_args = action_executor.mcp_manager.execute_tool.call_args
+        assert call_args.args[1]["id"] == "rewritten"
 
 
 # ============================================================================

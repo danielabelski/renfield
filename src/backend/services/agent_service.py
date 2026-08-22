@@ -465,11 +465,9 @@ _SAME_TOOL_ABORT_THRESHOLD = 5
 # (server --ctx-size governs), while on the in-cluster Ollama fallback it
 # protects the fallback model from an oversized KV-cache allocation. The
 # backend token budget scales via effective_agent_num_ctx() instead.
-# KNOWN GAP (pre-existing): on an Ollama-PRIMARY agent path with a raised
-# OLLAMA_NUM_CTX (> 32768), the budget follows ollama_num_ctx while the
-# request still carries this 32768 — Ollama then truncates the prompt head.
-# Tracked as a follow-up; align these if you raise OLLAMA_NUM_CTX without
-# an OpenAI-compat endpoint.
+# Ollama-PRIMARY gap CLOSED (#1104): _llm_options_or_default raises num_ctx
+# to settings.ollama_num_ctx for the budgeted option sets when the agent tier
+# runs on Ollama, so budget and request window stay in step.
 _DEFAULT_LLM_OPTIONS = {
     "temperature": 0.1, "top_p": 0.2, "num_predict": 2048, "num_ctx": 32768,
 }
@@ -519,6 +517,11 @@ def _with_required_companions(selected_names: list[str]) -> list[str]:
 # Option sets whose completion the token budget reserves room for, and which
 # therefore must not carry an output cap below that reservation.
 _BUDGETED_OPTION_KEYS = frozenset({"llm_options", "llm_options_retry"})
+
+# Minimum per-result char budget for the ADVISORY soft-target pass to be worth
+# applying — below this the agent can't meaningfully read its own tool results
+# and the pass is skipped (the hard budget's 200-char emergency floor stays).
+_SOFT_TARGET_MIN_RESULT_CHARS = 1000
 
 
 def _warn_if_truncated(raw_response: Any, model: str, call_type: str, step_num: int | None = None) -> bool:
@@ -577,6 +580,18 @@ def _llm_options_or_default(prompt_key: str, fallback: dict) -> dict:
         opts["num_predict"] = max(
             int(opts.get("num_predict") or 0), settings.agent_default_num_predict
         )
+        # #1104 follow-up: on an OLLAMA-PRIMARY agent path the request's
+        # options.num_ctx governs the actual window, while the token budget
+        # follows settings.ollama_num_ctx — a raised OLLAMA_NUM_CTX with the
+        # stale 32768 literal meant Ollama silently truncated the prompt HEAD.
+        # Keep them in step (max(): a deliberately larger YAML value wins).
+        # OpenAI-compat path: untouched — the server drops num_ctx anyway and
+        # the 32768 literal deliberately protects the in-cluster FALLBACK
+        # model from an oversized KV-cache allocation.
+        if not use_openai_for_tier("agent"):
+            opts["num_ctx"] = max(
+                int(opts.get("num_ctx") or 0), settings.ollama_num_ctx
+            )
     return opts
 
 
@@ -1009,6 +1024,56 @@ class AgentService:
             logger.warning(f"Tool pre-selection failed (using all tools): {e}")
             return None
 
+    async def _apply_adaptive_tool_budget(
+        self,
+        message: str,
+        context: AgentContext,
+        conversation_history: list[dict] | None,
+        memory_context: str,
+        document_context: str,
+        lang: str,
+        build_kwargs: dict,
+        *,
+        budget_tokens: int,
+        reserved: int,
+    ) -> tuple[str, int, int, int] | None:
+        """Shared adaptive tool-result pass (Pass 0 of the budget ladder, also
+        the soft-target pass): measure the prompt skeleton, distribute the
+        remaining headroom over the tool results via
+        ``context.tool_result_budget_chars``, rebuild.
+
+        Returns ``(prompt, prompt_tokens, per_result_chars, n_results)``, or
+        ``None`` when there are no tool results to shrink. Leaves
+        ``tool_result_budget_chars`` at the applied value (the returned prompt
+        was built with it).
+        """
+        from utils.token_counter import token_counter
+
+        tool_result_steps = [
+            s for s in context.steps
+            if s.step_type == "tool_result" and (s.data is not None or s.content)
+        ]
+        if not tool_result_steps:
+            return None
+        context.tool_result_budget_chars = 1  # minimal — just get the skeleton
+        prompt = await self._build_agent_prompt(
+            message, context, conversation_history,
+            memory_context=memory_context, document_context=document_context,
+            lang=lang, **build_kwargs,
+        )
+        skeleton_tokens = token_counter.count(prompt)
+        token_headroom = max(0, budget_tokens - reserved - skeleton_tokens)
+        total_chars_budget = int(token_headroom * 3.5)
+        n_results = len(tool_result_steps)
+        per_result_chars = max(200, total_chars_budget // max(1, n_results))
+        context.tool_result_budget_chars = per_result_chars
+        prompt = await self._build_agent_prompt(
+            message, context, conversation_history,
+            memory_context=memory_context, document_context=document_context,
+            lang=lang, **build_kwargs,
+        )
+        return prompt, token_counter.count(prompt), per_result_chars, n_results
+
     async def _enforce_token_budget(
         self,
         prompt: str,
@@ -1050,6 +1115,45 @@ class AgentService:
 
         try:
             if utilization <= threshold:
+                # Soft prompt target (#1104): the hard budget only protects the
+                # context WINDOW; on a 256k server a legally huge prompt still
+                # costs painful prefill latency. Above the (optional) target,
+                # run ONLY the adaptive tool-result pass against the target —
+                # history/memory/documents stay untouched.
+                target = settings.agent_prompt_target_tokens
+                if target and prompt_tokens + reserved > target:
+                    from utils.metrics import record_budget_reduction
+
+                    soft_budget = min(target, int(max_tokens * threshold))
+                    soft = await self._apply_adaptive_tool_budget(
+                        message, context, conversation_history,
+                        memory_context, document_context, lang, build_kwargs,
+                        budget_tokens=soft_budget, reserved=reserved,
+                    )
+                    # The soft target is ADVISORY (latency control), never an
+                    # emergency: if the target is so tight relative to the
+                    # prompt skeleton that tool results would be crushed to
+                    # near the 200-char floor (agent can't read its own
+                    # results any more), revert and let the prompt pass — the
+                    # hard budget still protects the window.
+                    if soft is not None and soft[2] >= _SOFT_TARGET_MIN_RESULT_CHARS:
+                        prompt, prompt_tokens, per_result_chars, n_results = soft
+                        utilization = (prompt_tokens + reserved) / max_tokens
+                        record_budget_reduction("soft_target_tool_budget")
+                        passes_run.append("soft_target_tool_budget")
+                        logger.info(
+                            f"Budget soft-target pass: {prompt_tokens + reserved}"
+                            f"/{target} target ({per_result_chars} chars/result "
+                            f"x {n_results} results)"
+                        )
+                    elif soft is not None:
+                        context.tool_result_budget_chars = 0
+                        logger.warning(
+                            f"Soft prompt target {target} leaves <"
+                            f"{_SOFT_TARGET_MIN_RESULT_CHARS} chars/result "
+                            f"(skeleton too large) — soft pass skipped; raise "
+                            f"AGENT_PROMPT_TARGET_TOKENS"
+                        )
                 return prompt, memory_context, document_context, conversation_history
 
             logger.warning(
@@ -1058,29 +1162,22 @@ class AgentService:
             )
             from utils.metrics import record_budget_reduction
 
-            # Pass 0: Adaptive tool result budgeting via _serialize_for_prompt
-            tool_result_steps = [
-                s for s in context.steps if s.step_type == "tool_result" and (s.data is not None or s.content)
-            ]
-            if tool_result_steps:
-                context.tool_result_budget_chars = 1  # minimal — just get the skeleton
-                prompt = await self._build_agent_prompt(
-                    message, context, conversation_history,
-                    memory_context=memory_context, document_context=document_context,
-                    lang=lang, **build_kwargs,
-                )
-                skeleton_tokens = token_counter.count(prompt)
-                token_headroom = max(0, int(max_tokens * threshold) - reserved - skeleton_tokens)
-                total_chars_budget = int(token_headroom * 3.5)
-                n_results = len(tool_result_steps)
-                per_result_chars = max(200, total_chars_budget // max(1, n_results))
-                context.tool_result_budget_chars = per_result_chars
-                prompt = await self._build_agent_prompt(
-                    message, context, conversation_history,
-                    memory_context=memory_context, document_context=document_context,
-                    lang=lang, **build_kwargs,
-                )
-                prompt_tokens = token_counter.count(prompt)
+            # Pass 0: Adaptive tool result budgeting via _serialize_for_prompt.
+            # With a soft target set, Pass 0 sizes toward min(target, hard) —
+            # otherwise a prompt just OVER the hard threshold would come out
+            # ~3x LARGER than one just under it (the soft pass squeezed the
+            # latter to the target, while Pass 0 refilled the former to 85%
+            # of the window — a non-monotonic latency inversion).
+            pass0_budget = int(max_tokens * threshold)
+            if settings.agent_prompt_target_tokens:
+                pass0_budget = min(settings.agent_prompt_target_tokens, pass0_budget)
+            pass0 = await self._apply_adaptive_tool_budget(
+                message, context, conversation_history,
+                memory_context, document_context, lang, build_kwargs,
+                budget_tokens=pass0_budget, reserved=reserved,
+            )
+            if pass0 is not None:
+                prompt, prompt_tokens, per_result_chars, n_results = pass0
                 utilization = (prompt_tokens + reserved) / max_tokens
                 record_budget_reduction("adaptive_tool_budget")
                 passes_run.append("adaptive_tool_budget")
