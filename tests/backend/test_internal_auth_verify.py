@@ -197,3 +197,94 @@ def test_verify_accepts_service_token(monkeypatch):
     assert body["user_id"] == "service:whisper"
     assert body["scope"] == "voice"
     assert "jti" not in body
+
+
+# --- Shared-secret gate (login-audit finding) ----------------------------
+
+
+def _set_verify_secret(monkeypatch, value):
+    """Set (or clear) settings.internal_auth_verify_secret for the route's
+    module-level `settings` reference."""
+    from pydantic import SecretStr
+
+    import api.routes.internal_auth as mod
+    monkeypatch.setattr(
+        mod.settings, "internal_auth_verify_secret",
+        (SecretStr(value) if value is not None else None),
+        raising=False,
+    )
+
+
+def test_verify_secret_unset_is_backward_compatible(monkeypatch):
+    """No configured secret → endpoint works without any header (legacy)."""
+    _set_verify_secret(monkeypatch, None)
+    _install_service_stubs(
+        monkeypatch,
+        decode_return={"sub": "42", "username": "alice", "type": "access", "jti": "a", "exp": 9999999999},
+    )
+    resp = _client().post("/api/internal/auth/verify", json={"token": "x"})
+    assert resp.status_code == 200
+
+
+def test_verify_secret_missing_header_rejected(monkeypatch):
+    """Configured secret + no header → 401. The decode stub raises if reached,
+    proving the gate fires BEFORE any token work (no validity oracle)."""
+    _set_verify_secret(monkeypatch, "s3cr3t")
+
+    def _boom(_t):
+        raise AssertionError("token decode must not run when the secret gate fails")
+
+    _install_service_stubs(monkeypatch, decode_return={"sub": "42", "type": "access"})
+    import api.routes.internal_auth as _  # noqa: F401
+    # Override the stubbed decode with one that fails if the gate is skipped.
+    sys.modules["services.auth_service"].decode_token = _boom
+
+    resp = _client().post("/api/internal/auth/verify", json={"token": "x"})
+    assert resp.status_code == 401
+
+
+def test_verify_secret_wrong_header_rejected(monkeypatch):
+    _set_verify_secret(monkeypatch, "s3cr3t")
+    _install_service_stubs(
+        monkeypatch,
+        decode_return={"sub": "42", "type": "access", "jti": "a", "exp": 9999999999},
+    )
+    resp = _client().post(
+        "/api/internal/auth/verify", json={"token": "x"},
+        headers={"X-Verify-Secret": "wrong"},
+    )
+    assert resp.status_code == 401
+
+
+def test_verify_secret_correct_header_accepted(monkeypatch):
+    _set_verify_secret(monkeypatch, "s3cr3t")
+    _install_service_stubs(
+        monkeypatch,
+        decode_return={"sub": "42", "username": "alice", "type": "access", "jti": "a", "exp": 9999999999},
+    )
+    resp = _client().post(
+        "/api/internal/auth/verify", json={"token": "x"},
+        headers={"X-Verify-Secret": "s3cr3t"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["user_id"] == "42"
+
+
+def test_verify_secret_non_ascii_header_is_401_not_500(monkeypatch):
+    """A non-ASCII X-Verify-Secret must yield the opaque 401, never a 500:
+    hmac.compare_digest raises TypeError on non-ASCII str, so the compare runs
+    on bytes. A 500 would be an ugly crash + a weak 'secret is configured'
+    oracle. The header is sent as raw latin-1 bytes (how a non-ASCII header
+    actually arrives on the wire — Starlette decodes headers latin-1), since the
+    HTTP client refuses to ASCII-encode a non-ASCII str header value."""
+    _set_verify_secret(monkeypatch, "s3cr3t")
+    _install_service_stubs(
+        monkeypatch,
+        decode_return={"sub": "42", "type": "access", "jti": "a", "exp": 9999999999},
+    )
+    resp = _client().post(
+        "/api/internal/auth/verify", json={"token": "x"},
+        headers={"X-Verify-Secret": "café-ÿ".encode("latin-1")},
+    )
+    assert resp.status_code == 401
+    assert resp.json()["detail"] == "unauthorized"

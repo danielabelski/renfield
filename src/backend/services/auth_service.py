@@ -662,7 +662,6 @@ async def ensure_admin_user(db: AsyncSession) -> User | None:
     configured_password = settings.default_admin_password.get_secret_value()
     if configured_password == "changeme":
         password = secrets.token_urlsafe(16)
-        must_change = True
         # Print to stdout only (not captured by file-based loggers)
         print(f"ADMIN_PASSWORD={password}")
         logger.warning(
@@ -671,7 +670,13 @@ async def ensure_admin_user(db: AsyncSession) -> User | None:
         )
     else:
         password = configured_password
-        must_change = False
+
+    # The bootstrap admin ALWAYS starts with must_change_password=True, even
+    # when DEFAULT_ADMIN_PASSWORD is operator-set (login audit): otherwise a
+    # weak/shared env password becomes a permanent standing credential. The
+    # frontend forced-rotation gate makes this actionable in-app; change-password
+    # rejects reuse of the same/default value so the rotation is real.
+    must_change = True
 
     # Create default admin user
     admin_user = User(

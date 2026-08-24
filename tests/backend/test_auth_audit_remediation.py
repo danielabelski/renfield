@@ -39,7 +39,7 @@ from api.routes.users import (
     update_user,
 )
 from models.database import Role, User
-from models.permissions import Permission, missing_grantable_permissions
+from models.permissions import missing_grantable_permissions
 from services.auth_service import (
     active_admin_ids,
     authenticate_user,
@@ -403,6 +403,63 @@ class TestChangePasswordRevocation:
             )
         assert exc.value.status_code == 400
 
+    async def test_reuse_of_current_password_rejected(self, db_session):
+        """Login audit: the new password must differ from the current one, so a
+        forced rotation can't be satisfied by re-entering the same value."""
+        role = await _mk_role(db_session, "CP3", ["chat.own"])
+        user = await _mk_user(db_session, "cpuser3", role, password="SamePass123!")
+        with pytest.raises(HTTPException) as exc:
+            await change_password(
+                request=ChangePasswordRequest(
+                    current_password="SamePass123!", new_password="SamePass123!"
+                ),
+                user=user,
+                db=db_session,
+            )
+        assert exc.value.status_code == 400
+        assert "differ" in exc.value.detail.lower()
+
+    async def test_reuse_of_default_admin_password_rejected(self, db_session, monkeypatch):
+        """The new password must not be the operator-set DEFAULT_ADMIN_PASSWORD —
+        otherwise a forced rotation can restore the weak standing credential."""
+        from pydantic import SecretStr
+
+        from api.routes import auth as auth_routes
+
+        monkeypatch.setattr(
+            auth_routes.settings, "default_admin_password",
+            SecretStr("weak-default-pw"), raising=False,
+        )
+        role = await _mk_role(db_session, "CP4", ["chat.own"])
+        user = await _mk_user(db_session, "cpuser4", role, password="CurrentPass123!")
+        with pytest.raises(HTTPException) as exc:
+            await change_password(
+                request=ChangePasswordRequest(
+                    current_password="CurrentPass123!", new_password="weak-default-pw"
+                ),
+                user=user,
+                db=db_session,
+            )
+        assert exc.value.status_code == 400
+        assert "default" in exc.value.detail.lower()
+
+    async def test_non_ascii_new_password_succeeds(self, db_session):
+        """Regression (login audit): the default-password reuse check must compare
+        bytes — hmac.compare_digest raises TypeError on non-ASCII str, so an umlaut
+        password (common here) would 500 and soft-lock a forced-rotation user."""
+        role = await _mk_role(db_session, "CP5", ["chat.own"])
+        user = await _mk_user(db_session, "cpuser5", role, password="OldPass123!")
+        resp = await change_password(
+            request=ChangePasswordRequest(
+                current_password="OldPass123!", new_password="Grüße2026!ÄÖÜ"
+            ),
+            user=user,
+            db=db_session,
+        )
+        assert resp["access_token"]
+        await db_session.refresh(user)
+        assert user.must_change_password is False
+
 
 # ---------------------------------------------------------------------------
 # H4 — logout revokes the refresh token too
@@ -504,8 +561,8 @@ class TestBlacklistWriteFailure:
 class TestRefreshEpoch:
     @pytest.fixture(autouse=True)
     def _no_limiter(self, monkeypatch):
-        from services.api_rate_limiter import limiter as app_limiter
         from services import token_blacklist as tb_mod
+        from services.api_rate_limiter import limiter as app_limiter
 
         monkeypatch.setattr(app_limiter, "enabled", False)
         monkeypatch.setattr(tb_mod, "token_blacklist", _FakeBlacklist())
