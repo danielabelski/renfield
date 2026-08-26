@@ -29,7 +29,8 @@ def _doc(did, page_count=None, snippet="same", **over):
     return {"id": did, **_META, "page_count": page_count, "snippet": snippet, **over}
 
 
-def _make_mcp(docs, contents=None, pages=None, rate_limit_first=0, search_error_after=None):
+def _make_mcp(docs, contents=None, pages=None, rate_limit_first=0, search_error_after=None,
+              all_docs=None, total_count=None):
     """Mock mcp_manager.
     ``docs``           = single-page search results (len < 500 ends pagination).
     ``contents``       = {id: ocr_text} returned by get_document (OFF/byte path only).
@@ -38,6 +39,10 @@ def _make_mcp(docs, contents=None, pages=None, rate_limit_first=0, search_error_
     ``rate_limit_first`` = the first N delete calls return an MCP rate-limit error.
     ``search_error_after`` = the search errors once this many pages have been returned
                          (simulates a mid-sweep failure → partial coverage).
+    ``all_docs``       = when set, list_all_documents serves these (with checksum);
+                         when None, list_all_documents ERRORS so the code falls back to
+                         the legacy search_documents sweep (preserves the old tests).
+    ``total_count``    = list_all_documents summary total (default len(all_docs)).
     Records deletes in ``.deleted`` and get_document calls in ``.get_document_calls``."""
     contents = contents or {}
 
@@ -49,6 +54,22 @@ def _make_mcp(docs, contents=None, pages=None, rate_limit_first=0, search_error_
             self._del_i = 0
 
         async def execute_tool(self, tool, params, **kw):
+            if tool == "mcp.paperless.list_all_documents":
+                if all_docs is None:
+                    # Reproduce MCPManager's REAL behavior on an OLD MCP that lacks
+                    # this tool: it does NOT error — it fuzzy-falls-back to
+                    # search_documents, returning a success-shaped result with a
+                    # DIFFERENT summary (total_matching, NO total_count, no checksum).
+                    # The dedupe MUST reject this and fall back to the date sweep.
+                    return {"success": True, "message": json.dumps(
+                        {"summary": {"total_matching": len(docs), "returned": len(docs)},
+                         "results": docs})}
+                tc = total_count if total_count is not None else len(all_docs)
+                return {"success": True, "message": json.dumps({
+                    "summary": {"total_count": tc, "returned": len(all_docs),
+                                "truncated": len(all_docs) < tc},
+                    "results": all_docs,
+                })}
             if tool == "mcp.paperless.search_documents":
                 if search_error_after is not None and self._search_i >= search_error_after:
                     self._search_i += 1
@@ -410,3 +431,120 @@ async def test_no_mcp_returns_error():
     result = await paperless_dedupe({}, mcp_manager=None)
     assert result["success"] is False
     assert result["action_taken"] is False
+
+
+# --------------------------------------------------------------------------
+# checksum-primary path (Fix C) — index-independent list_all_documents,
+# exact byte-identical grouping that survives metadata drift
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_checksum_groups_survive_metadata_drift():
+    # Two byte-identical copies whose TITLE, DATE and page_count all differ — the
+    # metadata key would NOT group them, but the checksum does. This is the
+    # re-ingest-loop case the old path missed.
+    all_docs = [
+        _doc(1, checksum="X", title="Alpha", created="2024-01-01T00:00:00Z", page_count=2),
+        _doc(2, checksum="X", title="Beta", created="2024-09-09T00:00:00Z", page_count=3),
+    ]
+    mcp = _make_mcp([], all_docs=all_docs)
+    res = await paperless_dedupe({}, mcp_manager=mcp)
+    assert res["data"]["groups"] == 1
+    assert res["data"]["duplicate_copies"] == 1
+    assert res["data"]["sweep_complete"] is True
+    assert mcp.deleted == [2]  # keep lowest id
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_large_same_checksum_same_date_group_fully_enumerated():
+    # 600 byte-identical copies ALL sharing one creation date — the exact shape the
+    # legacy created_before day-window sweep could not page past (>500 in one date).
+    # list_all_documents returns them all → the group is seen in full.
+    all_docs = [_doc(i, checksum="LOOP", page_count=1) for i in range(1, 601)]
+    mcp = _make_mcp([], all_docs=all_docs)
+    res = await paperless_dedupe({"dry_run": True}, mcp_manager=mcp)
+    assert res["data"]["documents_scanned"] == 600
+    assert res["data"]["groups"] == 1
+    assert res["data"]["duplicate_copies"] == 599  # keep 1, 599 extras
+    assert res["data"]["sweep_complete"] is True
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_completeness_guard_when_enumeration_short_of_total():
+    # list_all_documents returns fewer than total_count (e.g. hit the ceiling) →
+    # sweep must NOT be reported complete; the message discloses partial coverage.
+    all_docs = [_doc(1, checksum="X"), _doc(2, checksum="X")]
+    mcp = _make_mcp([], all_docs=all_docs, total_count=5000)
+    res = await paperless_dedupe({"dry_run": True}, mcp_manager=mcp)
+    assert res["data"]["sweep_complete"] is False
+    assert "TEILWEISE" in res["message"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_checksum_and_metadata_rescan_both_found():
+    # A byte-identical pair (same checksum) AND a re-scan pair (same metadata+page,
+    # DIFFERENT checksums) — both must be caught, by the two passes respectively.
+    all_docs = [
+        _doc(1, checksum="X", page_count=2),
+        _doc(2, checksum="X", page_count=2),                       # byte-identical dup of 1
+        _doc(3, checksum="Y", page_count=5, snippet="scan-a"),
+        _doc(4, checksum="Z", page_count=5, snippet="scan-b"),     # re-scan of 3 (diff bytes)
+    ]
+    mcp = _make_mcp([], all_docs=all_docs)
+    res = await paperless_dedupe({"dry_run": True}, mcp_manager=mcp)
+    assert res["data"]["groups"] == 2
+    assert res["data"]["duplicate_copies"] == 2       # one extra per group (2 and 4)
+    assert res["data"]["metadata_groups"] == 1        # the re-scan group (text differs)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_falls_back_to_search_sweep_on_old_mcp_fuzzy_result():
+    # all_docs=None → list_all_documents fuzzy-falls-back to a search-shaped result
+    # (no total_count). The dedupe must REJECT that and dedupe via the legacy sweep.
+    docs = [_doc(1, page_count=2), _doc(2, page_count=2)]
+    mcp = _make_mcp(docs)
+    res = await paperless_dedupe({}, mcp_manager=mcp)
+    assert res["data"]["groups"] == 1
+    assert mcp.deleted == [2]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_gather_rejects_totalcount_less_result_and_falls_back(monkeypatch):
+    # CRITICAL guard: a success-shaped response WITHOUT total_count (the old-MCP
+    # fuzzy fallback to search_documents) must NOT be accepted — must invoke the sweep.
+    called = {"sweep": False}
+
+    async def _fake_sweep(_mgr):
+        called["sweep"] = True
+        return [{"id": 9}], True, None
+
+    monkeypatch.setattr(mod, "_gather_via_date_windows", _fake_sweep)
+    mcp = _make_mcp([_doc(1)])  # all_docs=None → fuzzy (no total_count)
+    gathered, complete, err = await mod._gather_all_documents(mcp)
+    assert called["sweep"] is True
+    assert [d["id"] for d in gathered] == [9] and err is None
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_gather_uses_list_all_when_total_count_present(monkeypatch):
+    # A genuine list_all_documents response (has total_count) is used directly — the
+    # date-window sweep is NOT invoked.
+    called = {"sweep": False}
+
+    async def _fake_sweep(_mgr):
+        called["sweep"] = True
+        return [], True, None
+
+    monkeypatch.setattr(mod, "_gather_via_date_windows", _fake_sweep)
+    mcp = _make_mcp([], all_docs=[_doc(1, checksum="X")])
+    gathered, complete, err = await mod._gather_all_documents(mcp)
+    assert called["sweep"] is False
+    assert [d["id"] for d in gathered] == [1] and complete is True
