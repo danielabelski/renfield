@@ -499,3 +499,218 @@ class TestShutdownDrain:
 
         assert not engine._running_tasks   # handles cleared
         assert not engine._inflight        # in-flight guard cleared
+
+
+@pytest.mark.unit
+class TestBatchAHandlers:
+    """Phase 3 Batch A migrated handlers (daypart / paperless-finalize / mcp-health)."""
+
+    def _app(self, **state):
+        return SimpleNamespace(state=SimpleNamespace(**state))
+
+    async def test_daypart_fires_hook_on_transition(self, monkeypatch):
+        import services.daypart_service as dp
+        import utils.hooks as hooks
+        from services.scheduled_tasks import builtins
+
+        builtins._daypart_watcher_state["last"] = "day"
+        monkeypatch.setattr(dp, "get_daypart_info", lambda *a, **k: {"daypart": "night", "local_time": "22:00"})
+        calls = []
+
+        async def _run_hooks(name, **kw):
+            calls.append((name, kw))
+
+        monkeypatch.setattr(hooks, "run_hooks", _run_hooks)
+        out = await builtins._daypart_watcher_handler(self._app(), {})
+        assert calls and calls[0][0] == "daypart_changed"
+        assert builtins._daypart_watcher_state["last"] == "night"
+        assert "day -> night" in out
+
+    async def test_daypart_noop_when_unchanged(self, monkeypatch):
+        import services.daypart_service as dp
+        from services.scheduled_tasks import builtins
+
+        builtins._daypart_watcher_state["last"] = "night"
+        monkeypatch.setattr(dp, "get_daypart_info", lambda *a, **k: {"daypart": "night", "local_time": "22:00"})
+        out = await builtins._daypart_watcher_handler(self._app(), {})
+        assert out is None
+
+    async def test_finalize_calls_service_with_mcp_manager(self, monkeypatch):
+        import services.paperless_finalize_reconciler as pf
+        from services.scheduled_tasks import builtins
+
+        seen = {}
+
+        async def _reconcile(mcp_manager=None):
+            seen["mcp"] = mcp_manager
+
+        monkeypatch.setattr(pf, "reconcile_pending_finalizes", _reconcile)
+        mcp = object()
+        await builtins._paperless_finalize_reconciler_handler(self._app(mcp_manager=mcp), {})
+        assert seen["mcp"] is mcp
+
+    async def test_mcp_health_gate_off_skips(self, monkeypatch):
+        import services.mcp_health_monitor as mh
+        from services.scheduled_tasks import builtins
+        from utils.config import settings
+
+        monkeypatch.setattr(settings, "mcp_health_monitor_enabled", False)
+        called = []
+
+        async def _tick(app):
+            called.append(1)
+
+        monkeypatch.setattr(mh, "monitor_tick", _tick)
+        out = await builtins._mcp_health_monitor_handler(self._app(), {})
+        assert "skipped" in out
+        assert not called
+
+    async def test_mcp_health_gate_on_calls_monitor(self, monkeypatch):
+        import services.mcp_health_monitor as mh
+        from services.scheduled_tasks import builtins
+        from utils.config import settings
+
+        monkeypatch.setattr(settings, "mcp_health_monitor_enabled", True)
+        called = []
+
+        async def _tick(app):
+            called.append(app)
+
+        monkeypatch.setattr(mh, "monitor_tick", _tick)
+        app = self._app()
+        await builtins._mcp_health_monitor_handler(app, {})
+        assert called == [app]
+
+
+# --- Phase 3 Batch B + C: gate re-assertion (H4) -----------------------------
+
+# Each gated handler must return "skipped" (NOT touch its service) when its
+# runtime gate is off — the core H4 safety property. (handler, {flag: value}).
+_GATE_OFF_CASES = [
+    ("_notification_cleanup_handler", {"proactive_enabled": False}),
+    ("_memory_cleanup_handler", {"memory_enabled": False}),
+    ("_meeting_retention_handler", {"meeting_transcription_enabled": False}),
+    ("_trajectory_cleanup_handler", {"trajectory_capture_enabled": False}),
+    ("_kg_conflation_monitor_handler", {"kg_conflation_monitor_enabled": False}),
+    ("_paperless_reconciler_handler", {"folder_ingest_to_paperless": False, "email_ingest_to_paperless": False}),
+    ("_obligation_deadline_notifier_handler", {"obligation_notifier_enabled": False}),
+    ("_obligation_digest_handler", {"obligation_digest_enabled": False}),
+    ("_obligation_calendar_sync_handler", {"obligation_calendar_sync_enabled": False}),
+    ("_speaker_vocab_rebuild_handler", {"speaker_vocab_capture_enabled": False}),
+    ("_skill_curator_handler", {"skill_curator_enabled": False}),
+    ("_kg_reconciler_handler", {"kg_reconciler_enabled": False}),
+    ("_skill_shadow_log_cleanup_handler", {"skill_shadow_log_enabled": False}),
+]
+
+
+@pytest.mark.unit
+class TestBatchBCHandlers:
+    def _app(self, **state):
+        return SimpleNamespace(state=SimpleNamespace(**state))
+
+    @pytest.mark.parametrize("handler_name,flags", _GATE_OFF_CASES)
+    async def test_gate_off_skips(self, monkeypatch, handler_name, flags):
+        from services.scheduled_tasks import builtins
+        from utils.config import settings
+
+        for k, v in flags.items():
+            monkeypatch.setattr(settings, k, v)
+        out = await getattr(builtins, handler_name)(self._app(), {})
+        assert out is not None and "skipped" in out
+
+    async def test_obligation_notifier_gate_on_calls_scan(self, monkeypatch):
+        """The compound-gate H4 hazard: with BOTH flags on, the handler DOES run
+        scan_all_users (which consumes the ledger) — with either off it must not."""
+        import services.obligation_deadline_notifier as notifier
+        from services.scheduled_tasks import builtins
+        from utils.config import settings
+
+        monkeypatch.setattr(settings, "obligation_notifier_enabled", True)
+        monkeypatch.setattr(settings, "proactive_enabled", True)
+        called = []
+
+        async def _scan():
+            called.append(1)
+
+        monkeypatch.setattr(notifier, "scan_all_users", _scan)
+        await builtins._obligation_deadline_notifier_handler(self._app(), {})
+        assert called == [1]
+
+    async def test_obligation_notifier_proactive_off_skips(self, monkeypatch):
+        import services.obligation_deadline_notifier as notifier
+        from services.scheduled_tasks import builtins
+        from utils.config import settings
+
+        monkeypatch.setattr(settings, "obligation_notifier_enabled", True)
+        monkeypatch.setattr(settings, "proactive_enabled", False)  # the ledger-consume trap
+        called = []
+
+        async def _scan():
+            called.append(1)
+
+        monkeypatch.setattr(notifier, "scan_all_users", _scan)
+        out = await builtins._obligation_deadline_notifier_handler(self._app(), {})
+        assert "skipped" in out
+        assert called == []  # ledger NOT consumed
+
+    async def test_obligation_digest_gate_on_calls_scan(self, monkeypatch):
+        import services.obligation_digest as digest
+        from services.scheduled_tasks import builtins
+        from utils.config import settings
+
+        monkeypatch.setattr(settings, "obligation_digest_enabled", True)
+        monkeypatch.setattr(settings, "proactive_enabled", True)
+        called = []
+
+        async def _scan():
+            called.append(1)
+
+        monkeypatch.setattr(digest, "scan_all_users", _scan)
+        await builtins._obligation_digest_handler(self._app(), {})
+        assert called == [1]
+
+    async def test_calendar_sync_no_mcp_skips(self, monkeypatch):
+        from services.scheduled_tasks import builtins
+        from utils.config import settings
+
+        monkeypatch.setattr(settings, "obligation_calendar_sync_enabled", True)
+        out = await builtins._obligation_calendar_sync_handler(self._app(mcp_manager=None), {})
+        assert "skipped" in out
+
+    async def test_paperless_ui_edit_sweep_no_mcp_skips(self, monkeypatch):
+        from services.scheduled_tasks import builtins
+
+        out = await builtins._paperless_ui_edit_sweep_handler(self._app(mcp_manager=None), {})
+        assert "skipped" in out
+
+    async def test_paperless_abandoned_confirm_calls_service(self, monkeypatch):
+        import services.paperless_ui_edit_sweeper as sweeper
+        from services.scheduled_tasks import builtins
+
+        called = []
+
+        async def _run():
+            called.append(1)
+
+        monkeypatch.setattr(sweeper, "run_abandoned_confirm_sweep", _run)
+        await builtins._paperless_abandoned_confirm_sweep_handler(self._app(), {})
+        assert called == [1]
+
+    def test_all_builtins_registered_and_valid(self):
+        """The real seed list resolves (every settings.*_interval exists), every
+        seed's handler is registered, and no seed is below the engine-tick floor."""
+        from services.scheduled_tasks import builtins, engine, registry
+        from utils.config import settings
+
+        registry.clear_handlers()
+        builtins.register_builtin_handlers()
+        seeds = builtins.builtin_task_seeds()
+
+        assert len(seeds) == 21
+        names = [s.name for s in seeds]
+        assert len(set(names)) == 21  # unique names
+        for seed in seeds:
+            assert registry.get_handler(seed.handler_key) is not None, seed.handler_key
+            if seed.interval_seconds is not None:
+                # must not be below the engine tick (interval floor)
+                engine._validate_interval_floor(seed.interval_seconds)
