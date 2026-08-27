@@ -329,33 +329,9 @@ def _schedule_memory_cleanup():
     )
 
 
-def _schedule_upload_cleanup():
-    """Schedule periodic cleanup of old non-indexed chat uploads."""
-    if not settings.chat_upload_cleanup_enabled:
-        return
-
-    async def _tick():
-        from api.routes.chat_upload import _cleanup_uploads
-
-        async with AsyncSessionLocal() as db_session:
-            deleted_count, deleted_files = await _cleanup_uploads(
-                db_session, settings.chat_upload_retention_days
-            )
-            if deleted_count > 0:
-                logger.info(
-                    f"Upload cleanup: {deleted_count} uploads deleted "
-                    f"({deleted_files} files, retention={settings.chat_upload_retention_days}d)"
-                )
-
-    _spawn_periodic_task(
-        name="Upload cleanup",
-        interval=3600,
-        work=_tick,
-        started_msg=(
-            f"Upload Cleanup Scheduler gestartet "
-            f"(retention={settings.chat_upload_retention_days}d, stündlich)"
-        ),
-    )
+# NOTE: the former _schedule_upload_cleanup + _schedule_federation_audit_cleanup
+# schedulers were migrated to the Scheduled Tasks engine (#1137) — their tick
+# bodies now live as handlers in services/scheduled_tasks/builtins.py.
 
 
 def _schedule_meeting_retention():
@@ -384,24 +360,6 @@ def _schedule_meeting_retention():
             f"Meeting Retention Scheduler gestartet "
             f"(audio-grace={settings.meeting_audio_grace_days}d, täglich)"
         ),
-    )
-
-
-def _schedule_federation_audit_cleanup():
-    """F4d — periodic retention prune of the federation query audit log.
-
-    Pivots on `initiated_at`; hourly cadence matches the upload cleanup
-    pattern.
-    """
-    async def _tick():
-        from services.federation_audit import prune_old_audit_rows
-        await prune_old_audit_rows()
-
-    _spawn_periodic_task(
-        name="Federation audit cleanup",
-        interval=3600,
-        work=_tick,
-        started_msg="Federation Audit Cleanup Scheduler gestartet (stündlich, retention=90d)",
     )
 
 
@@ -1222,6 +1180,65 @@ async def _init_paperless_audit(app: "FastAPI") -> None:
         logger.opt(exception=True).warning("Paperless audit init failed")
 
 
+async def _setup_task_engine(app):
+    """Start the Scheduled Tasks engine (#1137, docs/design/scheduled-tasks.md).
+
+    One-time boot work (register handlers, seed built-ins ON CONFLICT DO NOTHING,
+    boot-force run_at_boot tasks — the #678 fix) then the periodic engine tick.
+    The engine always runs; built-ins carry their existing enabled-defaults and
+    the paperless-dedupe job self-gates on its runtime flag, so this is inert
+    until a task is activated. Failures log at ERROR (a dead engine stops every
+    scheduled task) but never break startup."""
+    from services.scheduled_tasks.builtins import register_builtin_handlers
+    from services.scheduled_tasks.engine import (
+        ensure_builtin_tasks,
+        force_run_at_boot_tasks,
+        run_engine_tick,
+    )
+
+    # Handler registration is pure in-process dict inserts and must succeed for
+    # tasks to resolve; if it somehow fails, don't start a tick loop that can only
+    # skip everything.
+    try:
+        register_builtin_handlers()
+    except Exception:  # noqa: BLE001
+        logger.opt(exception=True).error(
+            "Scheduled Tasks handler registration failed — engine not started"
+        )
+        return
+
+    # One-time seed + boot-force is BEST-EFFORT and DECOUPLED from the tick loop:
+    # run_engine_tick only SELECTs due rows (already present from a prior boot), so
+    # a transient DB error here must not stop the resilient periodic tick for the
+    # pod's whole lifetime. Log at ERROR (new built-ins may be missing this boot).
+    try:
+        await ensure_builtin_tasks()
+        await force_run_at_boot_tasks()
+    except Exception:  # noqa: BLE001
+        logger.opt(exception=True).error(
+            "Scheduled Tasks seeding/boot-force failed — starting the engine anyway "
+            "(existing rows still run; new built-ins may be missing until next boot)"
+        )
+
+    async def _tick():
+        await run_engine_tick(app)
+
+    try:
+        _spawn_periodic_task(
+            name="Scheduled tasks engine",
+            interval=settings.scheduled_tasks_engine_tick_seconds,
+            work=_tick,
+            started_msg=(
+                f"Scheduled Tasks Engine gestartet "
+                f"(tick={settings.scheduled_tasks_engine_tick_seconds}s, "
+                f"max_concurrent={settings.scheduled_tasks_max_concurrent})"
+            ),
+            run_at_boot=True,
+        )
+    except Exception:  # noqa: BLE001
+        logger.opt(exception=True).error("Scheduled Tasks engine tick loop failed to start")
+
+
 @asynccontextmanager
 async def lifespan(app: "FastAPI"):
     """
@@ -1330,9 +1347,7 @@ async def lifespan(app: "FastAPI"):
     _schedule_reminder_checker()
     _schedule_notification_poller(app)
     _schedule_memory_cleanup()
-    _schedule_upload_cleanup()
     _schedule_meeting_retention()
-    _schedule_federation_audit_cleanup()
     _schedule_trajectory_cleanup()
     _schedule_skill_curator()
     _schedule_kg_reconciler()
@@ -1348,6 +1363,7 @@ async def lifespan(app: "FastAPI"):
     _schedule_kiosk_weather_refresh(app)
     _schedule_kiosk_internal_health_refresh(app)
     _schedule_kiosk_peer_status_refresh(app)
+    await _setup_task_engine(app)
 
     # Self-learning Phase 1: load bundled seed skills into the database.
     # Idempotent — seeds with a matching title are skipped, so re-running
@@ -1439,6 +1455,15 @@ async def lifespan(app: "FastAPI"):
     await run_hooks("shutdown", app=app)
 
     await _cancel_startup_tasks()
+
+    # Drain in-flight Scheduled Tasks runs (the tick loop is cancelled above, but
+    # the per-task runs it spawned are tracked separately) — BEFORE MCP shutdown
+    # so a mid-flight handler using the MCP (e.g. paperless-dedupe) unwinds cleanly.
+    try:
+        from services.scheduled_tasks.engine import drain_running_tasks
+        await drain_running_tasks()
+    except Exception:  # noqa: BLE001 — shutdown drain must never break teardown
+        logger.opt(exception=True).warning("Scheduled Tasks drain failed")
 
     # Stop paperless audit before MCP shutdown
     if getattr(app.state, "paperless_audit", None):
