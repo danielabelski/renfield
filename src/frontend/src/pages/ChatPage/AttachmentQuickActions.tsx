@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
 import type { MouseEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { MoreVertical, BookOpen, Send, FileSearch, Mail, Loader, Layers } from 'lucide-react';
+import { MoreVertical, BookOpen, Send, FileSearch, Mail, Loader, Layers, Landmark } from 'lucide-react';
 import apiClient from '../../utils/axios';
+import { useFeatureFlags } from '../../api/resources/brain';
 import type { MessageAttachment } from './context/ChatContext';
 
 interface KnowledgeBase {
@@ -11,14 +12,17 @@ interface KnowledgeBase {
 }
 
 // Which submenu the user is currently viewing inside the popover.
-// `null` = top-level menu; the others show a per-action KB picker.
-type SubMenu = null | 'kb' | 'both';
+// `null` = top-level menu; 'kb'/'both' show a KB picker; 'simba'/'simba_both'
+// show the Simba category → type picker.
+type SubMenu = null | 'kb' | 'both' | 'simba' | 'simba_both';
 
 interface AttachmentQuickActionsProps {
   attachment: MessageAttachment;
   onIndexToKb: (attachmentId: string, kbId: string | number) => void;
   onSendToPaperless: (attachmentId: string) => void;
   onSendToBoth: (attachmentId: string, kbId: string | number) => void;
+  onSendToSimba?: (attachmentId: string, category: string, type: string) => void;
+  onSendToPaperlessAndSimba?: (attachmentId: string, category: string, type: string) => void;
   onSendViaEmail?: (attachmentId: string) => void;
   onSummarize: (attachmentId: string) => void;
   actionLoading?: Record<string, string>;
@@ -29,6 +33,8 @@ export default function AttachmentQuickActions({
   onIndexToKb,
   onSendToPaperless,
   onSendToBoth,
+  onSendToSimba,
+  onSendToPaperlessAndSimba,
   onSendViaEmail,
   onSummarize,
   actionLoading,
@@ -42,6 +48,13 @@ export default function AttachmentQuickActions({
   const [submenu, setSubmenu] = useState<SubMenu>(null);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
   const [kbLoading, setKbLoading] = useState(false);
+  // Simba (tax portal) — categories→types and the drilled-in category. The
+  // menu items only render when the simba MCP is configured (config flag).
+  const { data: features } = useFeatureFlags();
+  const simbaEnabled = !!features?.simba_upload_enabled;
+  const [simbaCategories, setSimbaCategories] = useState<Record<string, string[]>>({});
+  const [simbaCategory, setSimbaCategory] = useState<string | null>(null);
+  const [simbaLoading, setSimbaLoading] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   const isLoading = actionLoading?.[attachment.id];
@@ -54,6 +67,7 @@ export default function AttachmentQuickActions({
       if (menuRef.current && target && !menuRef.current.contains(target)) {
         setOpen(false);
         setSubmenu(null);
+        setSimbaCategory(null);
       }
     };
     document.addEventListener('mousedown', handleMouseDown);
@@ -65,6 +79,57 @@ export default function AttachmentQuickActions({
     if (isDisabled) return;
     setOpen((prev) => !prev);
     setSubmenu(null);
+    setSimbaCategory(null);
+  };
+
+  // Lazy-load the Simba category→type map the first time the Simba submenu opens
+  // (the menu items' visibility is gated by the config flag, not this fetch).
+  const ensureSimbaCategories = async () => {
+    if (Object.keys(simbaCategories).length > 0) return;
+    setSimbaLoading(true);
+    try {
+      const response = await apiClient.get<{ categories: Record<string, string[]> }>(
+        '/api/chat/upload/simba/categories',
+      );
+      setSimbaCategories(response.data?.categories || {});
+    } catch {
+      setSimbaCategories({});
+    } finally {
+      setSimbaLoading(false);
+    }
+  };
+
+  const handleSimba = async (e: MouseEvent<HTMLButtonElement>, both: boolean) => {
+    e.stopPropagation();
+    const target: SubMenu = both ? 'simba_both' : 'simba';
+    if (submenu === target) {
+      setSubmenu(null);
+      return;
+    }
+    setSimbaCategory(null);
+    await ensureSimbaCategories();
+    setSubmenu(target);
+  };
+
+  const handleSelectSimbaType = (e: MouseEvent<HTMLButtonElement>, type: string) => {
+    e.stopPropagation();
+    const category = simbaCategory;
+    const both = submenu === 'simba_both';
+    if (!category) return;
+    // Irreversible transfer to the tax accountant → explicit confirm.
+    const question = both
+      ? t('chat.confirmSimbaBoth', { category, type })
+      : t('chat.confirmSimba', { category, type });
+    // eslint-disable-next-line no-alert
+    if (!window.confirm(question)) return;
+    setOpen(false);
+    setSubmenu(null);
+    setSimbaCategory(null);
+    if (both) {
+      onSendToPaperlessAndSimba?.(attachment.id, category, type);
+    } else {
+      onSendToSimba?.(attachment.id, category, type);
+    }
   };
 
   // Lazy-load the KB list the first time any submenu opens, then reuse
@@ -210,6 +275,77 @@ export default function AttachmentQuickActions({
             <Send className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
             {t('chat.sendToPaperless')}
           </button>
+
+          {/* Send to Simba (tax portal) — only where the simba MCP is reachable.
+              Needs a category → type pick (Simba metadata) and is irreversible,
+              so it drills into a picker + confirms before uploading. */}
+          {simbaEnabled && onSendToSimba && (
+            <button
+              onClick={(e) => handleSimba(e, false)}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            >
+              <Landmark className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
+              {t('chat.sendToSimba')}
+            </button>
+          )}
+          {simbaEnabled && onSendToPaperlessAndSimba && (
+            <button
+              onClick={(e) => handleSimba(e, true)}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            >
+              <Layers className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
+              {t('chat.sendToPaperlessAndSimba')}
+            </button>
+          )}
+
+          {/* Simba category → type picker, shared by 'simba' and 'simba_both'. */}
+          {(submenu === 'simba' || submenu === 'simba_both') && (
+            <div className="border-t border-gray-100 dark:border-gray-700 max-h-40 overflow-y-auto">
+              {simbaLoading ? (
+                <div className="px-3 py-1.5 text-xs text-gray-400">
+                  <Loader className="w-3 h-3 animate-spin inline mr-1" aria-hidden="true" />
+                  {t('common.loading')}
+                </div>
+              ) : Object.keys(simbaCategories).length === 0 ? (
+                <div className="px-3 py-1.5 text-xs text-gray-400">{t('common.noResults')}</div>
+              ) : simbaCategory === null ? (
+                Object.keys(simbaCategories).map((cat) => (
+                  <button
+                    key={cat}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSimbaCategory(cat);
+                    }}
+                    className="w-full text-left px-5 py-1.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors truncate flex items-center justify-between"
+                  >
+                    <span className="truncate">{cat}</span>
+                    <span className="text-gray-400">›</span>
+                  </button>
+                ))
+              ) : (
+                <>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSimbaCategory(null);
+                    }}
+                    className="w-full text-left px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors truncate"
+                  >
+                    ‹ {simbaCategory}
+                  </button>
+                  {(simbaCategories[simbaCategory] || []).map((tp) => (
+                    <button
+                      key={tp}
+                      onClick={(e) => handleSelectSimbaType(e, tp)}
+                      className="w-full text-left px-6 py-1.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors truncate"
+                    >
+                      {tp}
+                    </button>
+                  ))}
+                </>
+              )}
+            </div>
+          )}
 
           {/* Send via Email */}
           <button
