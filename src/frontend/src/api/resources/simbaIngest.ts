@@ -47,16 +47,24 @@ export function useConfirmSimbaProposal() {
       category,
       type,
       description,
+      month,
+      year,
+      force,
     }: {
       id: number;
       category: string;
       type: string;
       description: string;
+      month: number;
+      year: number;
+      force?: boolean;
     }) => {
-      const r = await apiClient.post<{ success: boolean; message: string }>(
-        `/api/simba-ingest/${id}/confirm`,
-        { category, type, description },
-      );
+      const r = await apiClient.post<{
+        success: boolean;
+        message: string;
+        already_in_simba?: boolean;
+        existing?: string | null;
+      }>(`/api/simba-ingest/${id}/confirm`, { category, type, description, month, year, force });
       return r.data;
     },
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: PROPOSALS_KEY }),
