@@ -445,3 +445,213 @@ async def test_ingest_status_no_split_line_when_no_split_docs(monkeypatch):
     out = await kb.ingest_status({})
 
     assert "PDF-Split:" not in out["message"]
+
+
+# --------------------------------------------------------------------------
+# list_unfiled_documents — Paperless filing status by name (#1170 follow-up)
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_list_unfiled_lists_failed_and_pending(monkeypatch):
+    # list mode: count query then rows query
+    cm, _ = _session([
+        _scalar_result(2),
+        _all_result([
+            (44, "Rechnung A", "failed", None),
+            (45, "Rechnung B", "pending", None),
+        ]),
+    ])
+    monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
+
+    out = await kb.list_unfiled_documents({})
+    assert out["success"] is True
+    assert out["data"]["total"] == 2
+    assert "nicht (erfolgreich) in Paperless" in out["message"]
+    states = {d["paperless_state"] for d in out["data"]["documents"]}
+    assert states == {"failed", "pending"}
+    assert all(d["in_paperless"] is False for d in out["data"]["documents"])
+
+
+@pytest.mark.asyncio
+async def test_list_unfiled_all_filed(monkeypatch):
+    cm, _ = _session([_scalar_result(0), _all_result([])])
+    monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
+
+    out = await kb.list_unfiled_documents({})
+    assert out["success"] is True
+    assert out["empty_result"] is True
+    assert "Alle" in out["message"] and "abgelegt" in out["message"]
+
+
+@pytest.mark.asyncio
+async def test_list_unfiled_query_reports_filed_doc(monkeypatch):
+    # query mode: ONE rows query; a done+linked doc → in_paperless True
+    cm, _ = _session([
+        _all_result([(44, "Rechnung Taxon", "done", 50)]),
+    ])
+    monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
+
+    out = await kb.list_unfiled_documents({"query": "Taxon"})
+    assert out["success"] is True
+    doc = out["data"]["documents"][0]
+    assert doc["in_paperless"] is True
+    assert doc["paperless_document_id"] == 50
+    assert "Paperless-Dokument #50" in out["message"]
+
+
+@pytest.mark.asyncio
+async def test_list_unfiled_query_reports_failed_doc(monkeypatch):
+    cm, _ = _session([
+        _all_result([(60, "Rechnung X", "failed", None)]),
+    ])
+    monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
+
+    out = await kb.list_unfiled_documents({"query": "Rechnung X"})
+    doc = out["data"]["documents"][0]
+    assert doc["in_paperless"] is False
+    assert "FEHLGESCHLAGEN" in out["message"]
+
+
+@pytest.mark.asyncio
+async def test_list_unfiled_query_done_unlinked_is_in_paperless(monkeypatch):
+    # done but no linked id = Paperless accepted it as a duplicate → still "in Paperless"
+    cm, _ = _session([
+        _all_result([(45, "Rechnung Dup", "done", None)]),
+    ])
+    monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
+
+    out = await kb.list_unfiled_documents({"query": "Dup"})
+    doc = out["data"]["documents"][0]
+    assert doc["in_paperless"] is True
+    assert "Duplikat" in out["message"]
+
+
+@pytest.mark.asyncio
+async def test_list_unfiled_query_no_match(monkeypatch):
+    cm, _ = _session([_all_result([])])
+    monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
+
+    out = await kb.list_unfiled_documents({"query": "nichts"})
+    assert out["empty_result"] is True
+    assert "kein Dokument" in out["message"]
+
+
+# --------------------------------------------------------------------------
+# refile_to_paperless — retry failed Paperless filings (#1170 follow-up)
+# --------------------------------------------------------------------------
+
+def _refile_redis(monkeypatch, lease_ok=True):
+    redis = MagicMock()
+    redis.set = AsyncMock(return_value=(True if lease_ok else None))
+    monkeypatch.setattr(
+        "services.redis_client.get_redis", MagicMock(return_value=redis))
+    q = MagicMock()
+    q.enqueue = AsyncMock()
+    monkeypatch.setattr(
+        "services.task_queue.DocumentTaskQueue", MagicMock(return_value=q))
+    return q
+
+
+@pytest.mark.asyncio
+async def test_refile_queues_failed_docs(monkeypatch):
+    # rows query (failed docs: id, owner) then the UPDATE result
+    cm, session = _session([_all_result([(60, 1), (61, 2)]), MagicMock()])
+    monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
+    monkeypatch.setattr(kb.settings, "auth_enabled", False)
+    q = _refile_redis(monkeypatch)
+
+    out = await kb.refile_to_paperless({})
+    assert out["success"] is True
+    assert out["data"]["targeted"] == 2
+    assert out["data"]["queued"] == 2
+    payloads = [c.args[0] for c in q.enqueue.await_args_list]
+    assert {p["document_id"] for p in payloads} == {60, 61}
+    assert all(p["trigger"] == "paperless_refile" for p in payloads)
+    assert session.commit.await_count == 1  # flip failed→pending committed
+
+
+@pytest.mark.asyncio
+async def test_refile_nothing_failed(monkeypatch):
+    cm, _ = _session([_all_result([])])
+    monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
+    monkeypatch.setattr(kb.settings, "auth_enabled", False)
+    _refile_redis(monkeypatch)
+
+    out = await kb.refile_to_paperless({})
+    assert out["success"] is True
+    assert out["empty_result"] is True
+    assert out["data"]["queued"] == 0
+
+
+@pytest.mark.asyncio
+async def test_refile_permission_denied(monkeypatch):
+    monkeypatch.setattr(kb.settings, "auth_enabled", True)
+    out = await kb.refile_to_paperless({}, user_permissions=[])
+    assert out["success"] is False
+    assert "Berechtigung" in out["message"]
+
+
+@pytest.mark.asyncio
+async def test_refile_lease_held_skips_enqueue(monkeypatch):
+    # the periodic reconciler already leased this doc → we skip the direct enqueue,
+    # but it's still flipped to pending (targeted=1, queued=0), reconciler backstops
+    cm, _ = _session([_all_result([(60, 1)]), MagicMock()])
+    monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
+    monkeypatch.setattr(kb.settings, "auth_enabled", False)
+    q = _refile_redis(monkeypatch, lease_ok=False)
+
+    out = await kb.refile_to_paperless({})
+    assert out["success"] is True
+    assert out["data"]["targeted"] == 1
+    assert out["data"]["queued"] == 0
+    assert q.enqueue.await_count == 0
+
+
+# --------------------------------------------------------------------------
+# list_unfiled_documents — owner scoping + wildcard escaping (#1171 review)
+# --------------------------------------------------------------------------
+
+def _compiled(session, call_index=0):
+    from sqlalchemy.dialects import postgresql
+    stmt = session.execute.await_args_list[call_index].args[0]
+    return str(stmt.compile(dialect=postgresql.dialect())).lower()
+
+
+@pytest.mark.asyncio
+async def test_list_unfiled_owner_scoped_for_non_admin(monkeypatch):
+    cm, session = _session([_all_result([])])
+    monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
+    monkeypatch.setattr(kb.settings, "auth_enabled", True)
+    monkeypatch.setattr(kb, "has_permission", lambda *_a: False)  # non-admin
+
+    await kb.list_unfiled_documents({"query": "x"}, user_id=5, user_permissions=[])
+    sql = _compiled(session)
+    assert "atoms" in sql and "owner_user_id" in sql  # scoped to the caller's docs
+
+
+@pytest.mark.asyncio
+async def test_list_unfiled_admin_sees_all(monkeypatch):
+    cm, session = _session([_all_result([])])
+    monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
+    monkeypatch.setattr(kb.settings, "auth_enabled", True)
+    monkeypatch.setattr(kb, "has_permission", lambda *_a: True)  # admin
+
+    await kb.list_unfiled_documents({"query": "x"}, user_id=5, user_permissions=["admin"])
+    sql = _compiled(session)
+    assert "atoms" not in sql  # admin: no owner scope
+
+
+@pytest.mark.asyncio
+async def test_list_unfiled_unscoped_when_auth_off(monkeypatch):
+    cm, session = _session([_all_result([])])
+    monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
+    monkeypatch.setattr(kb.settings, "auth_enabled", False)
+
+    await kb.list_unfiled_documents({"query": "x"}, user_id=5, user_permissions=[])
+    sql = _compiled(session)
+    assert "atoms" not in sql  # single-user: no scope
+
+
+def test_escape_like_neutralizes_wildcards():
+    assert kb._escape_like("50%_off") == "50\\%\\_off"
+    assert kb._escape_like("a\\b") == "a\\\\b"
