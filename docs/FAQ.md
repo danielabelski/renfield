@@ -74,12 +74,41 @@ den Inhalt.
   **REPARIERBAR** vs. **UNINDEXIERBAR**.
 - **Reparieren:** *„Indexiere die Dokumente ohne Chunks neu."* — reparierbare
   Dokumente werden neu eingelesen.
+- **Unlesbare Scans erzwungen mit OCR neu verarbeiten:** *„Verarbeite die
+  unlesbaren Scans neu mit OCR."* — auch die als **UNINDEXIERBAR** markierten
+  Dokumente (schlechte Scans, die die Qualitätsprüfung wiederholt verwirft)
+  werden dann mit voller Seiten-OCR erneut eingelesen.
+
+---
+
+## „Ein gescanntes Dokument ist unvollständig / lückenhaft erkannt"
+
+Manche Scans haben eine **schlechte Textebene** (z. B. mit Leerzeichen
+zerrissene Buchstaben, „no-space"-Mojibake). Das Dokument wird zwar eingelesen,
+aber der **Großteil des Inhalts geht dabei verloren** — nur wenige Abschnitte
+überstehen die Qualitätsprüfung.
+
+**Das erledigt Renfield selbstständig — du musst nichts tun:**
+
+- **Beim Einlesen** erkennt Renfield, wenn zu viel Inhalt verworfen wird, und
+  **transkribiert die betroffenen Seiten direkt aus dem Seitenbild per
+  Vision-Modell** neu.
+- **Ältere betroffene Dokumente** (eingelesen, bevor es diese Erkennung gab)
+  holt ein **Hintergrund-Job** nach und liest sie automatisch neu ein.
+
+Bei einem **sehr** schlechten Scan gewinnt selbst das Vision-Modell mitunter
+nichts Verwertbares. Dann behält Renfield bewusst den vorhandenen **Teil-Text**,
+statt einen **erfundenen** zu übernehmen — hier hilft nur ein besserer Scan.
+Ob ein Dokument erholt werden konnte, spiegelt sich im **Verarbeitungsstatus**
+(siehe oben) wider.
 
 ---
 
 ## „Doppelte Dokumente in Paperless aufräumen"
 
 - **Chat:** *„Finde und lösche die Duplikate in Paperless."*
+- **Nur anzeigen (ohne Löschen):** *„Zeig mir die Duplikate in Paperless, ohne
+  zu löschen."* — Renfield beziffert den Dublettenumfang, löscht aber nichts.
 
 Renfield findet Dubletten (gleiche Datei, gleiche Metadaten oder gleicher
 OCR-Text), **behält das älteste Original** und verschiebt die Kopien in den
@@ -103,23 +132,6 @@ Renfield **löscht nie automatisch** — jedes Paar landet zur Prüfung unter
 `/brain/review` (bzw. `/wissen` → „Prüfen"). Dort wählst du, welches Dokument
 erhalten bleibt und ob das doppelte **ausgeblendet** (wiederherstellbar) oder
 **gelöscht** wird.
-
----
-
-## „Ein Dokument an Simba (Steuerkanzlei) senden" *(nur xidra)*
-
-Auf einer Dokumentzeile in `/wissen/dokumente` (oder `/knowledge`) gibt es die
-Aktion **„An Simba senden"**. Ein Klick öffnet ein **Overlay**: du prüfst
-**Bezeichnung, Kategorie, Typ und Zeitraum** (vorbefüllt), bestätigst in **zwei
-Schritten** und überträgst das Dokument **direkt dort** an die Steuerkanzlei.
-
-> ⚠️ **Die Übertragung ist unwiderruflich.** Das Portal erlaubt keinen Rückzug.
-> Deshalb der bewusste Zwei-Schritt-Bestätigen-Dialog. Brichst du ab, bleibt der
-> Vorschlag in der Prüf-Queue unter `/brain/review` liegen (dort kannst du ihn
-> später übertragen oder verwerfen).
-
-Watch-Folder-PDFs landen automatisch als Vorschlag in derselben Queue — sie
-werden **nie** automatisch übertragen.
 
 ---
 
@@ -148,9 +160,10 @@ E-Mail-Anhänge aus dem überwachten Postfach laufen durch dieselbe Pipeline.
 | Fehlgeschlagene Ablagen erneut ablegen | *„Lege die fehlgeschlagenen Dokumente in Paperless ab."* |
 | Dokumente ohne Chunks auflisten | *„Welche Dokumente haben keine Chunks?"* |
 | Dokumente ohne Chunks reparieren | *„Indexiere die Dokumente ohne Chunks neu."* |
+| Unlesbare Scans erzwungen mit OCR neu verarbeiten | *„Verarbeite die unlesbaren Scans neu mit OCR."* |
 | Paperless-Duplikate aufräumen | *„Finde und lösche die Duplikate in Paperless."* |
+| Paperless-Duplikate nur anzeigen (ohne Löschen) | *„Zeig mir die Duplikate in Paperless, ohne zu löschen."* |
 | Dubletten in der Wissensbasis finden | *„Gibt es Dubletten in der Wissensbasis?"* (Prüfung unter `/brain/review`) |
-| Dokument an Simba senden *(xidra)* | Aktion **„An Simba senden"** auf der Dokumentzeile |
 
 > Funktioniert eine Chat-Frage einmal nicht wie erwartet, findest du dieselben
 > Informationen auch in der Oberfläche unter `/wissen` (Suche, Status, Prüfen).
