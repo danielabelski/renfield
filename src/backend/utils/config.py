@@ -570,6 +570,9 @@ class Settings(BaseSettings):
     low_coverage_reindex_enabled: bool = False
     low_coverage_reindex_interval: int = Field(default=3600, ge=60)   # hourly sweep (>= engine tick)
     low_coverage_reindex_cap: int = Field(default=50, ge=1, le=500)  # docs re-enqueued per tick
+    # #446: interval for the placeholder-atom reaper scheduled task (deletes
+    # orphaned __pending__ atoms left by a crash mid create_with_source).
+    placeholder_atom_reaper_interval: int = Field(default=3600, ge=60)  # hourly
     # Adds a fast LM gibberish check (is_ocr_gibberish, intent model) to the VLM
     # trigger + acceptance — catches the 'pronounceable pseudo-word' garble
     # ('ZOGEOLONIGGY') that character statistics can't tell from real words. Without
@@ -951,6 +954,14 @@ class Settings(BaseSettings):
     # REVIEW queue (owner confirms category/type before the irreversible upload),
     # never automatically. Off elsewhere. See services/simba_ingest_review.py.
     folder_ingest_simba_enabled: bool = False
+    # After the worker synthesizes documents.generated_title (issuer+type+date),
+    # rename the already-moved archive copy in the share's processed/ dir to that
+    # human-readable title via the filesystem MCP (mcp.files.rename_processed) so
+    # the share is browsable (#881). DARK by default: the post-ingest rename hook
+    # is inert until BOTH the backend and the filesystem MCP (rename_processed
+    # tool) are deployed and this flag is flipped. Best-effort — a rename failure
+    # never breaks ingest.
+    folder_ingest_rename_processed_enabled: bool = False
     # Auto-populate the Paperless taxonomy: when on (default), the filing leg
     # resolve-OR-CREATEs document types / tags (like it already does for
     # correspondents) instead of only matching against the pre-curated taxonomy —
@@ -1243,6 +1254,13 @@ class Settings(BaseSettings):
     # SearXNG
     searxng_api_url: str | None = None
     searxng_instances: str | None = None
+    # SearXNG functional health probe (#1162): a reachable instance whose upstream
+    # scraper engines are all CAPTCHA-blocked returns 0 real results yet shows green
+    # under connectivity-only MCP health. Dark by default; when on, system_health
+    # issues a fixed neutral query and marks `search` degraded (never down) when too
+    # few distinct general engines contribute, or the backbone is unresponsive.
+    search_functional_probe_enabled: bool = False
+    search_functional_min_engines: int = Field(default=2, ge=1)
 
     # n8n MCP
     n8n_base_url: str | None = None
