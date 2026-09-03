@@ -36,6 +36,7 @@ if "openai" not in sys.modules:
 from utils.llm_client import (
     LLMClient,
     OpenAICompatibleClient,
+    _CountingEmbedClient,
     clear_client_cache,
     create_llm_client,
     effective_agent_num_ctx,
@@ -261,7 +262,7 @@ class TestGetEmbedClient:
 
         args, kwargs = mock_cls.call_args
         assert kwargs.get("host") == "http://embed-host:11434"
-        assert result is sentinel
+        assert result.inner is sentinel
 
     @pytest.mark.unit
     @patch("ollama.AsyncClient")
@@ -282,7 +283,7 @@ class TestGetEmbedClient:
 
         args, kwargs = mock_cls.call_args
         assert kwargs.get("host") == "http://default:11434"
-        assert result is sentinel
+        assert result.inner is sentinel
 
     @pytest.mark.unit
     @patch("ollama.AsyncClient")
@@ -301,7 +302,7 @@ class TestGetEmbedClient:
 
         result = get_embed_client()
 
-        assert isinstance(result, _FallbackLLMClient)
+        assert isinstance(result.inner, _FallbackLLMClient)
 
     @pytest.mark.unit
     @patch("ollama.AsyncClient")
@@ -1120,10 +1121,19 @@ class TestGetDefaultClientRoutesToOpenAI:
         monkeypatch.setattr("utils.llm_client.settings.llm_openai_embed_model", "qwen3-embedding")
         monkeypatch.setattr("utils.llm_client.settings.llm_openai_api_key", None)
 
+        # The factory now returns a _CountingEmbedClient wrapper (#1201 —
+        # embedding failures are counted at this single chokepoint). Unwrap it:
+        # the invariant under test is WHICH ENDPOINT the client points at, not
+        # the wrapper type. Asserting through `.inner` keeps the #527 guard
+        # exact instead of loosening it to "some object".
         embed = get_embed_client()
-        assert isinstance(embed, OpenAICompatibleClient)
-        assert embed._base_url == "http://embed:8080/v1"
-        assert embed._default_model == "qwen3-embedding"
+        assert isinstance(embed, _CountingEmbedClient), (
+            "embed factory must route through the failure-counting wrapper"
+        )
+        inner = embed.inner
+        assert isinstance(inner, OpenAICompatibleClient)
+        assert inner._base_url == "http://embed:8080/v1"
+        assert inner._default_model == "qwen3-embedding"
 
 
 # ============================================================================
@@ -1686,3 +1696,89 @@ class TestFinishReasonSurvivesTheAdapter:
         )]
 
         assert seen[-1].done_reason == "length"
+
+
+# ============================================================================
+# _CountingEmbedClient Tests
+# ============================================================================
+
+class TestCountingEmbedClient:
+    """The embed chokepoint counts raising embeddings() calls and re-raises."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_embedding_error_is_counted_and_reraised(self):
+        from utils.llm_client import _CountingEmbedClient
+
+        inner = MagicMock()
+        inner.embeddings = AsyncMock(side_effect=RuntimeError("model requires more system memory"))
+        client = _CountingEmbedClient(inner)
+
+        with patch("utils.metrics.record_embedding_error") as rec:
+            with pytest.raises(RuntimeError):
+                await client.embeddings(model="qwen3-embedding:4b", prompt="x")
+        rec.assert_called_once_with("qwen3-embedding:4b")
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_successful_embedding_is_not_counted(self):
+        from utils.llm_client import _CountingEmbedClient
+
+        inner = MagicMock()
+        inner.embeddings = AsyncMock(return_value={"embedding": [0.1]})
+        client = _CountingEmbedClient(inner)
+
+        with patch("utils.metrics.record_embedding_error") as rec:
+            result = await client.embeddings(model="m", prompt="x")
+        assert result == {"embedding": [0.1]}
+        rec.assert_not_called()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_positional_model_is_labelled(self):
+        """``model`` is the first POSITIONAL parameter of the protocol.
+
+        Every call site today passes it as a keyword, but a positional caller
+        must not silently produce an empty label — a counter that cannot be
+        grouped by model defeats the purpose of the metric.
+        """
+        from utils.llm_client import _CountingEmbedClient
+
+        inner = MagicMock()
+        inner.embeddings = AsyncMock(side_effect=RuntimeError("down"))
+        client = _CountingEmbedClient(inner)
+
+        with patch("utils.metrics.record_embedding_error") as rec:
+            with pytest.raises(RuntimeError):
+                await client.embeddings("qwen3-embedding:4b", "some text")
+        rec.assert_called_once_with("qwen3-embedding:4b")
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_missing_model_labels_empty_string(self):
+        """No model anywhere → empty label, never a TypeError or ``None``."""
+        from utils.llm_client import _CountingEmbedClient
+
+        inner = MagicMock()
+        inner.embeddings = AsyncMock(side_effect=RuntimeError("down"))
+        client = _CountingEmbedClient(inner)
+
+        with patch("utils.metrics.record_embedding_error") as rec:
+            with pytest.raises(RuntimeError):
+                await client.embeddings(prompt="x")
+        rec.assert_called_once_with("")
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_other_methods_delegate(self):
+        from utils.llm_client import _CountingEmbedClient
+
+        inner = MagicMock()
+        inner.chat = AsyncMock(return_value="c")
+        inner.list = AsyncMock(return_value="l")
+        inner.generate = AsyncMock(return_value="g")
+        client = _CountingEmbedClient(inner)
+        assert await client.chat(model="m") == "c"
+        assert await client.list() == "l"
+        assert await client.generate(model="m") == "g"
+        assert client.inner is inner
