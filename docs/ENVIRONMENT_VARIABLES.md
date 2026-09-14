@@ -869,6 +869,72 @@ Zwei Entscheidungen, die man leicht falsch herum trifft:
 2. Die Sonde läuft **nach** der Selbstheilung, damit sie den Dienst auf frischem
    Transport beurteilt statt ein bereits geheiltes Transportproblem zu wiederholen.
 
+#### Phase 3 — Server ohne Werkzeuge, Upstream-Drosselung, k8s-Proben
+
+Ein Server, der **keine Werkzeuge** bereitstellt, zeigt sofort `degraded/no_tools`
+(Kiosk, `internal.system_health`), der **Alarm** wartet aber eine Schonfrist ab —
+Werkzeuge können sich kurz nach dem Verbinden registrieren, und die Refresh-Schleife
+liest sie neu ein. Ohne Frist gäbe es bei jedem Start einen Alarm.
+
+```bash
+MCP_HEALTH_NO_TOOLS_GRACE_SECONDS=300   # > 2x MCP_REFRESH_INTERVAL; unbekanntes Alter alarmiert
+```
+
+Außerdem behoben: Ein Alarm gilt als zugestellt, sobald die Benachrichtigung
+**gespeichert** ist (auch wenn der Live-Push danach scheitert) — sonst entstünde bei
+jedem 120-s-Tick eine neue. Wurde gar nichts gespeichert, folgt der nächste Versuch
+erst nach einem Backoff statt 6 h Schweigen oder einem Versuch je Tick. Die
+Re-Alarm-Sperre (6 h) gilt je **Server + Zustand**; wechselt nur der Grund
+(`rate_limited` ↔ `calls_failing`), gibt es keinen neuen Alarm — der nächste
+fällige nennt den aktuellen Grund. Freigegeben wird erst, wenn der Server wieder
+ganz gesund ist. `no_tools` wird nicht mehr „selbstgeheilt".
+
+```bash
+MCP_HEALTH_ALERT_RETRY_SECONDS=600   # nicht gespeicherter Alarm: nächster Versuch frühestens nach 10 min
+```
+
+**Upstream-Drosselung (HTTP 429) als eigenes Signal** — getrennt vom
+Timeout-Fenster und vom Sondenverdikt. Gelesen wird nur aus Ergebnissen, die schon
+Fehler sind; eine erfolgreiche Antwort, die von Rate-Limits *spricht*, zählt nie, und
+eine nackte „429" (Rechnungsnummer) auch nicht.
+
+```bash
+# Dunkel: eigene Batch-Jobs (Paperless-Dedupe gegen ein 60/min-MCP) drosseln sich
+# absichtlich selbst — ob das eine Kiosk-Farbe und einen Alarm wert ist, entscheidet
+# der Betreiber. Aus → es wird nichts aufgezeichnet (byte-identisch).
+MCP_HEALTH_RATE_LIMIT_SIGNAL_ENABLED=false
+MCP_HEALTH_RATE_LIMIT_WINDOW_SECONDS=900   # Ereignisse altern heraus → nie dauerhaft rot
+MCP_HEALTH_RATE_LIMIT_MIN_EVENTS=5         # so viele Drosselungen im Fenster → rate_limited
+# Retry-After je WERKZEUG respektieren: bis zum Ablauf sofort ablehnen statt
+# Anfragen zu schicken, die sicher abgewiesen werden. Bewusst KEIN automatisches
+# Wiederholen (ein 429 mitten in einem Werkzeug kann Nebenwirkungen folgen). Dunkel.
+MCP_RATE_LIMIT_BACKOFF_ENABLED=false
+MCP_RATE_LIMIT_MAX_BACKOFF_SECONDS=300     # Deckel für ein Retry-After
+```
+
+**Backend-Proben** (`k8s/backend.yaml`): Readiness auf `/health/ready`, Liveness auf
+`/health/live` (prozesslokal — eine Liveness mit DB-Abhängigkeit würde bei einem
+DB-Ausfall jedes Replikat neu starten).
+
+Readiness spiegelt die **Erreichbarkeit** der DB, nicht die Auslastung des
+App-Pools: geprüft wird über eine **eigene kurzlebige Verbindung** (eigene Engine
+mit `NullPool`, einmal erzeugt, beim Herunterfahren entsorgt; Connect- und
+Statement-Timeout begrenzt). Über den App-Pool hätte ein erschöpfter Pool (Fall
+2026-07-01) alle Replikate gleichzeitig aus dem Service genommen, obwohl die DB
+gesund war — aus „langsam" wäre „weg" geworden. Kosten: eine kurze DB-Verbindung je
+Probe je Replikat (alle 10 s). Redis und der Geräte-Hook sind optional, zeitlich
+begrenzt und melden bei Hänger oder Fehler nur „degraded"/„unknown", nie 503. Alle
+Prüfungen laufen parallel; der ungünstigste Fall ist die DB-Grenze.
+
+```bash
+HEALTH_READY_DB_TIMEOUT_SECONDS=3    # eigene DB-Verbindung: Connect + SELECT 1; < timeoutSeconds der Probe (5)
+HEALTH_READY_AUX_TIMEOUT_SECONDS=1   # Redis-Ping + Geräte-Hook; Überschreitung = degraded, kein 503
+```
+
+Folge fürs Deployment: ein Rollout bei toter DB bleibt bei `0/1 Ready` stehen,
+die alten Pods bedienen weiter. xidra: dieselbe Probe-Änderung gehört in
+`x-ren/k8s/backend.yaml`.
+
 #### Alarm bei scheiternden geplanten Aufgaben (A2)
 
 Eine geplante Aufgabe, die bei **jedem** Lauf scheitert, war bis 2026-09 sauber
