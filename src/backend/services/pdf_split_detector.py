@@ -62,6 +62,18 @@ SLOW_REASON_VLM = "vlm"
 SLOW_REASON_WINDOWS = "windows"
 
 _PLACEHOLDER_UNREADABLE = "[unlesbare Seite / Scan ohne Textebene]"
+_PLACEHOLDER_BLANK = "[leere Seite]"
+
+# Blank-page confirmation (see _page_is_blank). Ink is measured RELATIVE to the
+# page's own paper tone: a pixel counts as ink when it is more than _INK_DELTA
+# grey levels darker than the paper. A fixed cutoff (128) called pale content —
+# pencil, faded thermal print, a light stamp — blank. The delta sits above
+# duplex show-through (measured 200-224 on ~250 paper) and below pencil. A page
+# is blank when at most _BLANK_INK_FRACTION of its pixels are ink; measured
+# 2026-09-14, blank reverse sides held 0.0000, one line of text ~0.3 %.
+_PAPER_MIN_LEVEL = 128
+_INK_DELTA = 70
+_BLANK_INK_FRACTION = 0.0005
 
 
 @dataclass(frozen=True)
@@ -82,6 +94,25 @@ class PageSignal:
             "quality_ok": self.quality_ok,
             "via_vlm": self.via_vlm,
         }
+
+
+@dataclass(frozen=True)
+class VlmFillResult:
+    """What the slow-lane VLM pass achieved over the garbage pages.
+
+    ``resolved`` = pages now usable (transcribed OR confirmed blank);
+    ``transcribed`` = pages the VLM actually read text from; ``failed`` = pages
+    whose VLM call timed out or errored. Kept apart because a confirmed blank page
+    proves the vision host answered, not that it can read — so blank backs must
+    not mask failures on the pages that carry the content."""
+
+    signals: list[PageSignal]
+    resolved: int = 0
+    transcribed: int = 0
+    failed: int = 0
+
+    def __iter__(self):
+        return iter((self.signals, self.resolved, self.transcribed, self.failed))
 
 
 @dataclass(frozen=True)
@@ -522,14 +553,50 @@ def _render_page_b64(file_path: str, page_number: int) -> str | None:
         return None
 
 
+def _page_is_blank(image_b64: str) -> bool:
+    """True when a rendered page carries no ink at all.
+
+    Only ever consulted AFTER the VLM answered with empty text — it confirms
+    that answer, it never decides on its own. The VLM alone is not enough: a
+    thinking model can trap its transcription in the think buffer and return
+    empty content for a page full of text, and calling that page blank would
+    hide it from the boundary call."""
+    import base64
+    import io
+
+    try:
+        from PIL import Image
+
+        with Image.open(io.BytesIO(base64.b64decode(image_b64))) as im:
+            histogram = im.convert("L").histogram()
+    except Exception as e:  # noqa: BLE001 - undecidable ≠ blank
+        logger.warning(f"pdf-split: blank-page check failed: {e}")
+        return False
+    total = sum(histogram)
+    if total == 0:
+        return False
+    # The paper is the dominant tone in the bright half. A page that is mostly
+    # dark has no real paper peak there, so nearly everything reads as ink.
+    paper = max(range(_PAPER_MIN_LEVEL, 256), key=histogram.__getitem__)
+    ink_level = max(0, paper - _INK_DELTA)
+    return sum(histogram[:ink_level]) / total <= _BLANK_INK_FRACTION
+
+
 async def vlm_fill_signals(
     file_path: str,
     signals: list[PageSignal],
     *,
     ollama_service: Any = None,
-) -> tuple[list[PageSignal], int]:
-    """Replace garbage-page placeholders with VLM transcriptions. Returns the
-    (new signal list, number of pages successfully transcribed).
+) -> VlmFillResult:
+    """Replace garbage-page placeholders with VLM transcriptions. Returns the new
+    signal list with resolved / transcribed / failed page counts.
+
+    A page is resolved when the VLM transcribed it, or when the VLM answered
+    with nothing AND the page image carries no ink — a blank page (typically a
+    duplex reverse side) is evidence, not an outage. Counting it as unresolved
+    made a stack whose only garbage pages were blank backs look exactly like a
+    dead vision host, so the slow lane retried it until it gave up and filed
+    the whole stack as ONE document.
 
     Deliberately NO page cap (user requirement — cost is bounded by the
     per-call timeout and the dedicated worker's isolation, not by skipping
@@ -537,7 +604,7 @@ async def vlm_fill_signals(
     the boundary prompt treats unreadable pages as continuation pages. Never
     raises for per-page failures; a missing vision model returns unchanged."""
     if not settings.ollama_vision_model:
-        return signals, 0
+        return VlmFillResult(signals)
 
     if ollama_service is None:
         from services.ollama_service import OllamaService
@@ -546,7 +613,7 @@ async def vlm_fill_signals(
 
     loop = asyncio.get_running_loop()
     out = list(signals)
-    filled = 0
+    resolved = transcribed = failed = 0
     for i, sig in enumerate(out):
         if sig.quality_ok:
             continue
@@ -565,18 +632,29 @@ async def vlm_fill_signals(
                 f"pdf-split: VLM transcription of page {sig.page} timed out "
                 f"({settings.pdf_split_vlm_page_timeout_s}s) — keeping placeholder"
             )
+            failed += 1
             continue
         except Exception as e:  # noqa: BLE001 - one bad page ≠ a dead job
             logger.warning(
                 f"pdf-split: VLM transcription of page {sig.page} failed: {e}"
             )
+            failed += 1
             continue
-        if text and text.strip():
-            out[i] = PageSignal(
-                page=sig.page,
-                text=_snippet(text),
-                quality_ok=True,
-                via_vlm=True,
-            )
-            filled += 1
-    return out, filled
+        if text is None:
+            failed += 1  # the call failed — keep the placeholder
+            continue
+        if text.strip():
+            resolved_text = _snippet(text)
+            transcribed += 1
+        elif await loop.run_in_executor(None, _page_is_blank, b64):
+            resolved_text = _PLACEHOLDER_BLANK
+        else:
+            continue  # empty answer but ink on the page — still unreadable
+        out[i] = PageSignal(
+            page=sig.page,
+            text=resolved_text,
+            quality_ok=True,
+            via_vlm=True,
+        )
+        resolved += 1
+    return VlmFillResult(out, resolved, transcribed, failed)

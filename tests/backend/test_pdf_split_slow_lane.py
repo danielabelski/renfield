@@ -42,7 +42,7 @@ class TestVlmFillSignals:
     async def test_no_vision_model_returns_unchanged(self, monkeypatch):
         monkeypatch.setattr(det.settings, "ollama_vision_model", "")
         signals = [_sig(1), _sig(2, ok=False)]
-        out, filled = await det.vlm_fill_signals("/x.pdf", signals)
+        out, filled, *_ = await det.vlm_fill_signals("/x.pdf", signals)
         assert out == signals and filled == 0
 
     @pytest.mark.asyncio
@@ -58,7 +58,7 @@ class TestVlmFillSignals:
         )
         signals = [_sig(p, ok=(p % 2 == 0)) for p in range(1, 21)]  # 10 garbage
 
-        out, filled = await det.vlm_fill_signals(
+        out, filled, *_ = await det.vlm_fill_signals(
             "/x.pdf", signals, ollama_service=svc
         )
 
@@ -80,7 +80,7 @@ class TestVlmFillSignals:
         svc.extract_text_from_image = hang
         signals = [_sig(1, ok=False)]
 
-        out, filled = await det.vlm_fill_signals("/x.pdf", signals, ollama_service=svc)
+        out, filled, *_ = await det.vlm_fill_signals("/x.pdf", signals, ollama_service=svc)
 
         assert filled == 0
         assert out[0].quality_ok is False  # placeholder kept, job continues
@@ -92,12 +92,241 @@ class TestVlmFillSignals:
         svc = MagicMock()
         svc.extract_text_from_image = AsyncMock()
 
-        out, filled = await det.vlm_fill_signals(
+        out, filled, *_ = await det.vlm_fill_signals(
             "/x.pdf", [_sig(1, ok=False)], ollama_service=svc
         )
 
         assert filled == 0
         svc.extract_text_from_image.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_empty_answer_on_blank_page_resolves_it(self, monkeypatch):
+        """REGRESSION (doc 613, 2026-09-14): a 5-page scan whose only garbage
+        pages were blank duplex backs. The VLM answered correctly with nothing,
+        the lane read 0 resolved pages as a vision outage and retried until it
+        filed the stack as ONE document. A confirmed-blank page is resolved."""
+        monkeypatch.setattr(det.settings, "ollama_vision_model", "qwen-vl")
+        monkeypatch.setattr(det.settings, "pdf_split_vlm_page_timeout_s", 5)
+        monkeypatch.setattr(det, "_render_page_b64", MagicMock(return_value="b64"))
+        monkeypatch.setattr(det, "_page_is_blank", MagicMock(return_value=True))
+        svc = MagicMock()
+        svc.extract_text_from_image = AsyncMock(return_value="")
+        signals = [_sig(1, ok=False), _sig(2), _sig(3, ok=False)]
+
+        out, filled, *_ = await det.vlm_fill_signals("/x.pdf", signals, ollama_service=svc)
+
+        assert filled == 2
+        assert [s.quality_ok for s in out] == [True, True, True]
+        assert out[0].text == det._PLACEHOLDER_BLANK
+
+    @pytest.mark.asyncio
+    async def test_empty_answer_on_inked_page_stays_unreadable(self, monkeypatch):
+        """Empty content is NOT proof of a blank page — a thinking VLM can trap
+        the transcription in its think buffer. With ink on the page, the page
+        stays unreadable instead of being hidden from the boundary call."""
+        monkeypatch.setattr(det.settings, "ollama_vision_model", "qwen-vl")
+        monkeypatch.setattr(det.settings, "pdf_split_vlm_page_timeout_s", 5)
+        monkeypatch.setattr(det, "_render_page_b64", MagicMock(return_value="b64"))
+        monkeypatch.setattr(det, "_page_is_blank", MagicMock(return_value=False))
+        svc = MagicMock()
+        svc.extract_text_from_image = AsyncMock(return_value="")
+
+        out, filled, *_ = await det.vlm_fill_signals(
+            "/x.pdf", [_sig(1, ok=False)], ollama_service=svc
+        )
+
+        assert filled == 0
+        assert out[0].quality_ok is False
+
+    @pytest.mark.asyncio
+    async def test_failed_call_never_consults_blank_check(self, monkeypatch):
+        """None = the call failed. That must stay an outage signal even when the
+        page is white — otherwise a dead vision host on a stack of blank backs
+        would read as success."""
+        monkeypatch.setattr(det.settings, "ollama_vision_model", "qwen-vl")
+        monkeypatch.setattr(det.settings, "pdf_split_vlm_page_timeout_s", 5)
+        monkeypatch.setattr(det, "_render_page_b64", MagicMock(return_value="b64"))
+        blank = MagicMock(return_value=True)
+        monkeypatch.setattr(det, "_page_is_blank", blank)
+        svc = MagicMock()
+        svc.extract_text_from_image = AsyncMock(return_value=None)
+
+        out, filled, *_ = await det.vlm_fill_signals(
+            "/x.pdf", [_sig(1, ok=False)], ollama_service=svc
+        )
+
+        assert filled == 0
+        blank.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_vlm_fill_counts_failures_apart_from_answers(monkeypatch):
+    """None / error / timeout = failed; "" on a white page = resolved but NOT read."""
+    monkeypatch.setattr(det.settings, "ollama_vision_model", "qwen-vl")
+    monkeypatch.setattr(det.settings, "pdf_split_vlm_page_timeout_s", 5)
+    monkeypatch.setattr(det, "_render_page_b64", MagicMock(return_value="b64"))
+    monkeypatch.setattr(det, "_page_is_blank", MagicMock(return_value=True))
+    svc = MagicMock()
+    svc.extract_text_from_image = AsyncMock(side_effect=[None, "", "Rechnung Nr. 1"])
+    signals = [_sig(1, ok=False), _sig(2, ok=False), _sig(3, ok=False)]
+
+    result = await det.vlm_fill_signals("/x.pdf", signals, ollama_service=svc)
+
+    assert (result.resolved, result.transcribed, result.failed) == (2, 1, 1)
+
+
+class TestPageIsBlank:
+    @staticmethod
+    def _png_b64(draw=None):
+        import base64
+        import io
+
+        from PIL import Image, ImageDraw
+
+        im = Image.new("RGB", (800, 1100), "white")
+        if draw:
+            draw(ImageDraw.Draw(im))
+        buf = io.BytesIO()
+        im.save(buf, format="PNG")
+        return base64.b64encode(buf.getvalue()).decode()
+
+    def test_white_page_is_blank(self):
+        assert det._page_is_blank(self._png_b64()) is True
+
+    def test_one_line_of_text_is_not_blank(self):
+        def line(d):
+            d.rectangle([60, 80, 740, 92], fill="black")  # ~1 % ink
+
+        assert det._page_is_blank(self._png_b64(line)) is False
+
+    def test_undecodable_image_is_not_blank(self):
+        assert det._page_is_blank("not-base64-png") is False
+
+    def test_dust_specks_under_threshold_stay_blank(self):
+        """A blank back with a few dark specks (dust, a staple shadow) is still
+        blank: 20 px of 880 000 is far below the ink fraction."""
+        def specks(d):
+            for x in range(20):
+                d.point((100 + x * 30, 500), fill="black")
+
+        assert det._page_is_blank(self._png_b64(specks)) is True
+
+    def test_light_show_through_stays_blank(self):
+        """Duplex show-through sits well above the ink level (200-224 measured)."""
+        def show_through(d):
+            d.rectangle([60, 80, 740, 1000], fill=(210, 210, 210))
+
+        assert det._page_is_blank(self._png_b64(show_through)) is True
+
+    def test_faint_text_is_not_blank(self):
+        """Pale content (pencil, faded thermal print) sits above a FIXED grey
+        cutoff of 128; measured against the paper it is still ink."""
+        def faint_lines(d):
+            for y in range(100, 1000, 40):
+                d.rectangle([60, y, 740, y + 3], fill=(175, 175, 175))
+
+        assert det._page_is_blank(self._png_b64(faint_lines)) is False
+
+    def test_blank_tinted_paper_is_blank(self):
+        """Recycled or coloured paper: the tone is the paper, not ink."""
+        def tinted(d):
+            d.rectangle([0, 0, 799, 1099], fill=(205, 205, 205))
+
+        assert det._page_is_blank(self._png_b64(tinted)) is True
+
+    def test_just_above_threshold_is_not_blank(self):
+        pixels = 800 * 1100
+        ink = int(pixels * det._BLANK_INK_FRACTION) + 50
+
+        def patch_of_ink(d):
+            d.rectangle([0, 0, ink // 10 - 1, 9], fill="black")
+
+        assert det._page_is_blank(self._png_b64(patch_of_ink)) is False
+
+
+@pytest.mark.asyncio
+async def test_slow_split_blank_backs_reach_boundary_detection(monkeypatch):
+    """REGRESSION (doc 613) at lane level, with the REAL vlm_fill_signals: every
+    garbage page is a blank back the VLM answers with "" — the lane must go on to
+    boundary detection instead of raising the outage SplitTransientError."""
+    signals = [_sig(1, ok=False), _sig(2), _sig(3), _sig(4, ok=False)]
+    db, act, execute, queue = _wire_lane(
+        monkeypatch, doc=_doc(), signals=signals, outcome="split"
+    )
+    monkeypatch.setattr(lane, "vlm_fill_signals", det.vlm_fill_signals)
+    monkeypatch.setattr(det.settings, "ollama_vision_model", "qwen-vl")
+    monkeypatch.setattr(det.settings, "pdf_split_vlm_page_timeout_s", 5)
+    monkeypatch.setattr(det, "_render_page_b64", MagicMock(return_value="b64"))
+    monkeypatch.setattr(det, "_page_is_blank", MagicMock(return_value=True))
+    svc = MagicMock()
+    svc.extract_text_from_image = AsyncMock(return_value="")
+    import services.ollama_service as osvc
+
+    monkeypatch.setattr(osvc, "OllamaService", MagicMock(return_value=svc))
+
+    assert await lane.process_slow_split(7, None) == "split"
+    lane.detect_boundaries.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_slow_split_real_outage_still_raises(monkeypatch):
+    """The other side of the same seam: a dead vision host (None on every page)
+    over blank backs must still read as an outage, not as resolved."""
+    signals = [_sig(1, ok=False), _sig(2), _sig(3, ok=False)]
+    _wire_lane(monkeypatch, doc=_doc(), signals=signals)
+    monkeypatch.setattr(lane, "vlm_fill_signals", det.vlm_fill_signals)
+    monkeypatch.setattr(det.settings, "ollama_vision_model", "qwen-vl")
+    monkeypatch.setattr(det.settings, "pdf_split_vlm_page_timeout_s", 5)
+    monkeypatch.setattr(det, "_render_page_b64", MagicMock(return_value="b64"))
+    monkeypatch.setattr(det, "_page_is_blank", MagicMock(return_value=True))
+    svc = MagicMock()
+    svc.extract_text_from_image = AsyncMock(return_value=None)
+    import services.ollama_service as osvc
+
+    monkeypatch.setattr(osvc, "OllamaService", MagicMock(return_value=svc))
+
+    with pytest.raises(SplitTransientError):
+        await lane.process_slow_split(7, None)
+
+
+class TestExtractTextFromImageContract:
+    """The slow lane tells an outage from blank pages by None vs "" — pin it."""
+
+    @staticmethod
+    def _wire(monkeypatch, *, content=None, raises=None):
+        import services.ollama_service as osvc
+        import utils.llm_client as llm
+
+        monkeypatch.setattr(osvc.settings, "ollama_vision_model", "qwen-vl")
+        breaker = MagicMock()
+        breaker.allow_request = AsyncMock(return_value=True)
+        breaker.record_success = AsyncMock()
+        breaker.record_failure = AsyncMock()
+        monkeypatch.setattr(osvc, "llm_circuit_breaker", breaker)
+        client = MagicMock()
+        if raises is not None:
+            client.chat = AsyncMock(side_effect=raises)
+        else:
+            client.chat = AsyncMock(
+                return_value=SimpleNamespace(message=SimpleNamespace(content=content))
+            )
+        monkeypatch.setattr(llm, "get_vision_client", MagicMock(return_value=(client,)))
+        return object.__new__(osvc.OllamaService)
+
+    @pytest.mark.asyncio
+    async def test_answered_but_empty_is_empty_string(self, monkeypatch):
+        svc = self._wire(monkeypatch, content="<think>blank page</think>  ")
+        assert await svc.extract_text_from_image("b64") == ""
+
+    @pytest.mark.asyncio
+    async def test_transport_failure_is_none(self, monkeypatch):
+        svc = self._wire(monkeypatch, raises=RuntimeError("connection refused"))
+        assert await svc.extract_text_from_image("b64") is None
+
+    @pytest.mark.asyncio
+    async def test_text_is_returned_stripped(self, monkeypatch):
+        svc = self._wire(monkeypatch, content="  Rechnung Nr. 1\n")
+        assert await svc.extract_text_from_image("b64") == "Rechnung Nr. 1"
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +389,9 @@ def _wire_lane(
         lane, "extract_page_signals", MagicMock(return_value=signals or [])
     )
     monkeypatch.setattr(
-        lane, "vlm_fill_signals", AsyncMock(return_value=(signals or [], filled))
+        lane,
+        "vlm_fill_signals",
+        AsyncMock(return_value=det.VlmFillResult(signals or [], filled, filled, 0)),
     )
     monkeypatch.setattr(
         lane,
@@ -478,6 +709,42 @@ async def test_hand_back_single_reverts_on_enqueue_failure(monkeypatch):
         await lane._hand_back_single(db, doc, None)
 
     assert doc.status == DOC_STATUS_SPLIT_PENDING  # reverted
+
+
+def _real_fill(monkeypatch, answers, *, blank=True):
+    """Route the lane through the REAL vlm_fill_signals with scripted VLM answers."""
+    import services.ollama_service as osvc
+
+    monkeypatch.setattr(lane, "vlm_fill_signals", det.vlm_fill_signals)
+    monkeypatch.setattr(det.settings, "ollama_vision_model", "qwen-vl")
+    monkeypatch.setattr(det.settings, "pdf_split_vlm_page_timeout_s", 5)
+    monkeypatch.setattr(det, "_render_page_b64", MagicMock(return_value="b64"))
+    monkeypatch.setattr(det, "_page_is_blank", MagicMock(return_value=blank))
+    svc = MagicMock()
+    svc.extract_text_from_image = AsyncMock(side_effect=answers)
+    monkeypatch.setattr(osvc, "OllamaService", MagicMock(return_value=svc))
+
+
+@pytest.mark.asyncio
+async def test_slow_split_blank_backs_do_not_hide_a_partial_outage(monkeypatch):
+    """Review finding: the vision host answers the blank back ("", no ink) but
+    fails on the page with the content. One page counts as resolved, yet NOTHING
+    was read — that is an outage and must retry, not a verdict over a placeholder."""
+    _wire_lane(monkeypatch, doc=_doc(), signals=[_sig(1, ok=False), _sig(2, ok=False)])
+    _real_fill(monkeypatch, ["", None])
+
+    with pytest.raises(SplitTransientError):
+        await lane.process_slow_split(7, None)
+
+
+@pytest.mark.asyncio
+async def test_slow_split_proceeds_once_something_was_really_read(monkeypatch):
+    """One failed call is not an outage when another page was actually read."""
+    _wire_lane(monkeypatch, doc=_doc(), signals=[_sig(1, ok=False), _sig(2, ok=False), _sig(3)],
+               outcome="split")
+    _real_fill(monkeypatch, ["Rechnung Kopf", None])
+
+    assert await lane.process_slow_split(7, None) == "split"
 
 
 def test_pdfsplit_queue_uses_own_stream_and_group():

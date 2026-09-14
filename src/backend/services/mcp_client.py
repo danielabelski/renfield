@@ -862,6 +862,16 @@ class MCPServerConfig:
     # None => not probed (the default; the honest limit is in the YAML, not the flag).
     health_probe: dict | None = None
 
+    # Tool-call timeout override, in seconds. Either one number for every tool of
+    # the server, or a mapping `{tool_name: seconds, default: seconds}` so ONE
+    # long tool does not stretch the timeout of the quick ones (a status query
+    # must not hang for minutes because a sibling tool legitimately runs long).
+    # None => the global `settings.mcp_call_timeout`. Motivated by the scanner,
+    # whose scan once ran inside the call (2026-09-14) — it now returns at once
+    # and needs no override, but the mechanism stays for tools that are slow by
+    # nature.
+    call_timeout: float | dict[str, float] | None = None
+
     # Federation-transport only (F3c): the local PeerUser.id this virtual
     # server represents. execute_tool_streaming looks up the peer row at
     # request time (so revocation is picked up without needing a registry
@@ -897,6 +907,23 @@ class MCPServerState:
     # (which would race exit_stack teardown against re-entry).
     reconnect_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     last_successful_call: float = 0.0  # monotonic timestamp; 0 = never
+    # Deadline (monotonic start + that call's own timeout) of every tool call
+    # running on this session. While one is still WITHIN its deadline, the
+    # background refresh and the self-heal probe leave the session alone: a server
+    # busy answering a long call can be slow to answer list_tools, and treating
+    # that as death used to tear the running call down (review 2026-09-14). A call
+    # past its deadline shields nothing — otherwise steady traffic of hung calls
+    # would keep a dead server looking busy, and never healed, indefinitely.
+    inflight_deadlines: list = field(default_factory=list)
+
+    @property
+    def inflight_calls(self) -> int:
+        return len(self.inflight_deadlines)
+
+    def shielded_by_inflight_call(self, now: float | None = None) -> bool:
+        """True while at least one running call is still inside its timeout."""
+        now = time.monotonic() if now is None else now
+        return any(deadline > now for deadline in self.inflight_deadlines)
     # Functional-health signal (Phase 2): rolling window of recent tool-call
     # outcomes that are HEALTH-CORRELATED — True on a clean result, False on a
     # timeout (server/upstream didn't respond). Deliberately NOT recorded:
@@ -982,6 +1009,78 @@ def _parse_notifications(raw: dict | None) -> dict | None:
         "tool": raw.get("tool", "get_pending_notifications"),
         "lookahead_minutes": int(raw.get("lookahead_minutes", 45)),
     }
+
+
+def _server_call_timeout(state: Any, tool_name: str | None = None) -> float:
+    """The timeout for one tool call: the tool's own entry, then the server's
+    (number or `default`), then the global setting."""
+    override = getattr(getattr(state, "config", None), "call_timeout", None)
+    if isinstance(override, dict):
+        override = override[tool_name] if tool_name in override else override.get("default")
+    return override if override is not None else settings.mcp_call_timeout
+
+
+_CALL_TIMEOUT_MIN_S = 1.0
+_CALL_TIMEOUT_MAX_S = 3600.0
+
+# The MCP SDK's HTTP transports carry their OWN read timeout (streamable_http and
+# sse both default to 300s). A call_timeout above it would still die at the
+# transport, as an opaque transport error instead of our clean timeout. Keep the
+# transport strictly longer than the call, so the call timeout always fires first.
+_SDK_TRANSPORT_READ_TIMEOUT_S = 300.0
+_TRANSPORT_READ_MARGIN_S = 30.0
+
+
+def _transport_read_timeout(config: "MCPServerConfig") -> float:
+    """HTTP transport read timeout for a server — never shorter than its
+    longest call (one session carries every tool of the server)."""
+    configured = config.call_timeout
+    if isinstance(configured, dict):
+        configured = max(configured.values(), default=None)
+    if configured is None:
+        return _SDK_TRANSPORT_READ_TIMEOUT_S
+    return max(_SDK_TRANSPORT_READ_TIMEOUT_S, configured + _TRANSPORT_READ_MARGIN_S)
+
+
+def _parse_timeout_seconds(raw: Any, label: str) -> float | None:
+    """One timeout value in seconds (env-substituted), or None when unusable."""
+    value = _resolve_value(raw)
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        # _resolve_value turns "1"/"0" into booleans; float(True) would silently
+        # become a 1-second timeout.
+        logger.warning(f"{label}: ignoring boolean-like value {raw!r}")
+        return None
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        logger.warning(f"{label}: ignoring unparseable value {value!r}")
+        return None
+    if not _CALL_TIMEOUT_MIN_S <= seconds <= _CALL_TIMEOUT_MAX_S:
+        logger.warning(
+            f"{label}: {seconds}s outside [{_CALL_TIMEOUT_MIN_S:.0f}, "
+            f"{_CALL_TIMEOUT_MAX_S:.0f}] — using the global default"
+        )
+        return None
+    return seconds
+
+
+def _parse_call_timeout(raw: Any) -> float | dict[str, float] | None:
+    """Parse a server's optional ``call_timeout``: a number, or a mapping
+    ``{tool_name: seconds, default: seconds}``.
+
+    Absent, unparseable or out-of-range values => not set (the global default).
+    A typo must cost only that override, never the server — same stance as
+    ``_parse_health_probe``."""
+    if isinstance(raw, dict):
+        parsed = {}
+        for name, value in raw.items():
+            seconds = _parse_timeout_seconds(value, f"call_timeout.{name}")
+            if seconds is not None:
+                parsed[str(name)] = seconds
+        return parsed or None
+    return _parse_timeout_seconds(raw, "call_timeout")
 
 
 def _parse_health_probe(raw: dict | None) -> dict | None:
@@ -1216,6 +1315,7 @@ class MCPManager:
                     streaming=bool(_resolve_value(entry.get("streaming", False))),
                     per_user_auth=bool(_resolve_value(entry.get("per_user_auth", False))),
                     health_probe=_parse_health_probe(entry.get("health_probe")),
+                    call_timeout=_parse_call_timeout(entry.get("call_timeout")),
                 )
 
                 if not config.enabled:
@@ -1287,14 +1387,20 @@ class MCPManager:
                     raise ValueError("URL required for streamable_http transport")
                 async with asyncio.timeout(settings.mcp_connect_timeout):
                     transport = await exit_stack.enter_async_context(
-                        streamablehttp_client(url=config.url, headers=headers)
+                        streamablehttp_client(
+                        url=config.url, headers=headers,
+                        sse_read_timeout=_transport_read_timeout(config),
+                    )
                     )
             elif config.transport == MCPTransportType.SSE:
                 if not config.url:
                     raise ValueError("URL required for SSE transport")
                 async with asyncio.timeout(settings.mcp_connect_timeout):
                     transport = await exit_stack.enter_async_context(
-                        sse_client(url=config.url, headers=headers)
+                        sse_client(
+                        url=config.url, headers=headers,
+                        sse_read_timeout=_transport_read_timeout(config),
+                    )
                     )
             elif config.transport == MCPTransportType.STDIO:
                 if not config.command:
@@ -1530,6 +1636,11 @@ class MCPManager:
         state = self._servers.get(server_name)
         if state is None:
             return {"ok": False, "latency_ms": None, "detail": "unknown server"}
+        if state.shielded_by_inflight_call():
+            # A call is running inside its timeout, and a probe failure here would
+            # reconnect the session underneath it. Leave it alone — but report
+            # "skipped", not healthy: a running call is no proof the server works.
+            return {"ok": None, "latency_ms": None, "detail": "skipped: call in flight"}
 
         async def _probe_once() -> tuple[bool, float | None, str | None]:
             if state.session is None:
@@ -1810,13 +1921,19 @@ class MCPManager:
                 if not config.url:
                     raise ValueError("URL required for streamable_http transport")
                 transport = await stack.enter_async_context(
-                    streamablehttp_client(url=config.url, headers=headers)
+                    streamablehttp_client(
+                        url=config.url, headers=headers,
+                        sse_read_timeout=_transport_read_timeout(config),
+                    )
                 )
             elif config.transport == MCPTransportType.SSE:
                 if not config.url:
                     raise ValueError("URL required for SSE transport")
                 transport = await stack.enter_async_context(
-                    sse_client(url=config.url, headers=headers)
+                    sse_client(
+                        url=config.url, headers=headers,
+                        sse_read_timeout=_transport_read_timeout(config),
+                    )
                 )
             else:
                 raise ValueError(
@@ -2001,8 +2118,13 @@ class MCPManager:
         # Per-call timeout override for deliberately-blocking poll tools (e.g.
         # paperless await_consume_result, which waits out a slow Paperless consume
         # that can exceed the default 30s — the timeout that drove the 2026-07
-        # duplicate-upload loop). Defaults to the global setting.
-        effective_timeout = call_timeout if call_timeout is not None else settings.mcp_call_timeout
+        # duplicate-upload loop). Then the server's own `call_timeout`, then the
+        # global setting.
+        effective_timeout = (
+            call_timeout
+            if call_timeout is not None
+            else _server_call_timeout(state, tool_info.original_name)
+        )
 
         # Per-user auth (per-user data scoping). When the server opts in, the
         # call must run under THIS user's credential, not the shared operator
@@ -2047,17 +2169,24 @@ class MCPManager:
                 }
 
         async def _do_call() -> Any:
-            if per_user_headers:
+            # Counted in flight so refresh_tools / probe_server do not reconnect
+            # this session underneath the call; released on every exit path.
+            deadline = time.monotonic() + effective_timeout
+            state.inflight_deadlines.append(deadline)
+            try:
+                if per_user_headers:
+                    return await asyncio.wait_for(
+                        self._call_tool_per_user_session(
+                            state, tool_info.original_name, arguments, per_user_headers
+                        ),
+                        timeout=effective_timeout,
+                    )
                 return await asyncio.wait_for(
-                    self._call_tool_per_user_session(
-                        state, tool_info.original_name, arguments, per_user_headers
-                    ),
+                    state.session.call_tool(tool_info.original_name, arguments),
                     timeout=effective_timeout,
                 )
-            return await asyncio.wait_for(
-                state.session.call_tool(tool_info.original_name, arguments),
-                timeout=effective_timeout,
-            )
+            finally:
+                state.inflight_deadlines.remove(deadline)
 
         # Try once; on a session-death signal (transport exception OR the
         # streamable_http "Session terminated" McpError after a server bounce —
@@ -2532,7 +2661,9 @@ class MCPManager:
         logger.debug(f"MCP streaming call: {namespaced_name}{user_info}")
 
         call_task = asyncio.create_task(
-            asyncio.wait_for(call_coro, timeout=settings.mcp_call_timeout)
+            asyncio.wait_for(
+                call_coro, timeout=_server_call_timeout(state, tool_info.original_name)
+            )
         )
 
         # === Drain progress chunks while task runs ===
@@ -2757,6 +2888,16 @@ class MCPManager:
             # not discovered via list_tools. Skip explicitly so future
             # refactors don't accidentally include them.
             if state.config.transport == MCPTransportType.FEDERATION:
+                continue
+            if state.shielded_by_inflight_call():
+                # A call is running on this session, still inside its timeout. A server busy answering it
+                # may be slow to answer list_tools too; reading that as a dead
+                # session would disconnect it and tear the call down. The next
+                # tick checks it again.
+                logger.debug(
+                    f"MCP refresh skipped for '{state.config.name}': "
+                    f"{state.inflight_calls} call(s) in flight"
+                )
                 continue
             if state.connected and state.session:
                 try:

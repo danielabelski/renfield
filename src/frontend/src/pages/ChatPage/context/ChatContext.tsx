@@ -6,6 +6,7 @@ import { debug } from '../../../utils/debug';
 import { useWakeWord } from '../../../hooks/useWakeWord';
 import { WAKEWORD_CONFIG } from '../../../config/wakeword';
 import { useChatSessions } from '../../../hooks/useChatSessions';
+import { useReloadOnScanJobFinished } from '../../../hooks/useReloadOnScanJobFinished';
 import {
   useChatWebSocket,
   useAudioRecording,
@@ -1883,6 +1884,10 @@ export function ChatProvider({ children }: ChatProviderProps) {
   }, [sessionId, loadConversationHistory]);
   // Expose to handleStreamDone (declared earlier) via the forward-ref.
   reloadHistoryRef.current = reloadHistory;
+
+  // A background scan finished: pull its outcome message into the open thread
+  // (deferred while a turn streams).
+  useReloadOnScanJobFinished(loading, reloadHistory);
 
   // Switch the active branch to the sibling identified by `messageId` (the ◂/▸
   // switcher). The backend repoints the active leaf to that sibling's subtree
