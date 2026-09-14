@@ -180,23 +180,32 @@ class ReminderService:
         logger.info(f"⏰ Reminder #{reminder.id} erstellt: '{message}' trigger={trigger_at}")
         return reminder
 
-    async def list_pending(self) -> list[Reminder]:
-        """List all pending reminders."""
-        result = await self.db.execute(
-            select(Reminder)
-            .where(Reminder.status == REMINDER_PENDING)
-            .order_by(Reminder.trigger_at)
-        )
+    async def list_pending(
+        self, user_id: int | None = None, restrict_to_user: bool = False
+    ) -> list[Reminder]:
+        """List pending reminders.
+
+        ``restrict_to_user`` limits the list to ``user_id``'s own reminders — set
+        for authenticated non-admins; a reminder's text is personal."""
+        query = select(Reminder).where(Reminder.status == REMINDER_PENDING)
+        if restrict_to_user:
+            query = query.where(Reminder.user_id == user_id)
+        result = await self.db.execute(query.order_by(Reminder.trigger_at))
         return list(result.scalars().all())
 
-    async def cancel(self, reminder_id: int) -> bool:
-        """Cancel a pending reminder."""
-        result = await self.db.execute(
-            select(Reminder).where(
-                Reminder.id == reminder_id,
-                Reminder.status == REMINDER_PENDING,
-            )
+    async def cancel(
+        self, reminder_id: int, user_id: int | None = None, restrict_to_user: bool = False
+    ) -> bool:
+        """Cancel a pending reminder.
+
+        With ``restrict_to_user``, someone else's reminder is reported as missing."""
+        query = select(Reminder).where(
+            Reminder.id == reminder_id,
+            Reminder.status == REMINDER_PENDING,
         )
+        if restrict_to_user:
+            query = query.where(Reminder.user_id == user_id)
+        result = await self.db.execute(query)
         reminder = result.scalar_one_or_none()
         if not reminder:
             return False
@@ -246,6 +255,11 @@ async def check_due_reminders():
             for reminder in due:
                 try:
                     notification_service = NotificationService(db)
+                    # A reminder that belongs to someone fires as THEIR personal
+                    # notification. Fired as public-without-recipient, its text was
+                    # listed to every user and spoken/pushed without the presence
+                    # gate — the reminder list hid it, the notification did not.
+                    owned = reminder.user_id is not None
                     result = await notification_service.process_webhook(
                         event_type="reminder.fired",
                         title="Erinnerung",
@@ -253,6 +267,8 @@ async def check_due_reminders():
                         urgency="info",
                         room=reminder.room_name,
                         tts=True,
+                        privacy="personal" if owned else "public",
+                        target_user_id=reminder.user_id,
                     )
                     await service.mark_fired(
                         reminder.id,

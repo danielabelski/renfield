@@ -353,9 +353,16 @@ class NotificationService:
         notification_id: int,
         reason: str | None = None,
         user_id: int | None = None,
+        restrict_to_viewer: bool = False,
     ) -> NotificationSuppression | None:
-        """Create a suppression rule from an existing notification."""
-        notification = await self.get_notification(notification_id)
+        """Create a suppression rule from an existing notification.
+
+        With ``restrict_to_viewer``, only from a notification ``user_id`` may see —
+        otherwise a user could learn another person's notification text through
+        the rule it creates."""
+        notification = await self.get_notification(
+            notification_id, viewer_id=user_id, restrict_to_viewer=restrict_to_viewer
+        )
         if not notification:
             return None
 
@@ -384,19 +391,45 @@ class NotificationService:
         )
         return suppression
 
-    async def list_suppressions(self, active_only: bool = True) -> list[NotificationSuppression]:
-        """List suppression rules."""
+    async def list_suppressions(
+        self,
+        active_only: bool = True,
+        viewer_id: int | None = None,
+        restrict_to_viewer: bool = False,
+    ) -> list[NotificationSuppression]:
+        """List suppression rules.
+
+        Restricted: the viewer's own rules plus global ones (no owner). Another
+        user's rule names the notification types they mute and their free-text
+        reason — personal, so it is not listed."""
         query = select(NotificationSuppression).order_by(NotificationSuppression.created_at.desc())
         if active_only:
             query = query.where(NotificationSuppression.is_active.is_(True))
+        if restrict_to_viewer:
+            owner = NotificationSuppression.user_id.is_(None)
+            if viewer_id is not None:
+                owner = owner | (NotificationSuppression.user_id == viewer_id)
+            query = query.where(owner)
         result = await self.db.execute(query)
         return list(result.scalars().all())
 
-    async def delete_suppression(self, suppression_id: int) -> bool:
-        """Deactivate a suppression rule."""
-        result = await self.db.execute(
-            select(NotificationSuppression).where(NotificationSuppression.id == suppression_id)
-        )
+    async def delete_suppression(
+        self,
+        suppression_id: int,
+        viewer_id: int | None = None,
+        restrict_to_viewer: bool = False,
+    ) -> bool:
+        """Deactivate a suppression rule.
+
+        Restricted: only the viewer's OWN rule. A global rule switches a
+        notification type back on for everyone, so it stays with admins; another
+        user's rule is reported as missing."""
+        query = select(NotificationSuppression).where(NotificationSuppression.id == suppression_id)
+        if restrict_to_viewer:
+            if viewer_id is None:
+                return False
+            query = query.where(NotificationSuppression.user_id == viewer_id)
+        result = await self.db.execute(query)
         suppression = result.scalar_one_or_none()
         if not suppression:
             return False
@@ -607,6 +640,79 @@ class NotificationService:
     # CRUD
     # ------------------------------------------------------------------
 
+    async def resolve_ws_viewer_scope(self, auth_result: dict | None) -> tuple[bool, int | None]:
+        """(restrict_to_viewer, viewer_id) for a notification ack over a WebSocket.
+
+        The browser toast acknowledges and dismisses over the device socket, not
+        the REST routes — so this path needs the SAME rule, or scoping REST alone
+        closes nothing (pre-merge review, 2026-09-14).
+        - WS auth off (household): unrestricted, as before.
+        - A user's JWT: that user, with the REST admin rule.
+        - A device token (no user): only public notifications without a target.
+        """
+        result = auth_result or {}
+        if result.get("auth_skipped"):
+            return False, None
+        user_id = result.get("user_id")
+        if user_id is None:
+            return True, None
+        from sqlalchemy.orm import selectinload
+
+        from models.database import User
+
+        user = (
+            await self.db.execute(
+                select(User).options(selectinload(User.role)).where(User.id == user_id)
+            )
+        ).scalar_one_or_none()
+        if user is not None and self.viewer_is_unrestricted(user):
+            return False, user_id
+        return True, user_id
+
+    @staticmethod
+    def viewer_is_unrestricted(user) -> bool:
+        """Whether an authenticated principal sees every notification and reminder.
+
+        ADMIN is checked explicitly: it implies no other permission in
+        PERMISSION_HIERARCHY, so an admin-only role would otherwise be scoped like
+        an ordinary member. Shared by the REST routes and the device WebSocket, so
+        both entry points apply ONE rule."""
+        from models.permissions import Permission
+
+        has = getattr(user, "has_permission", None)
+        if not callable(has):
+            return False
+        return bool(has(Permission.ADMIN) or has(Permission.NOTIFICATIONS_MANAGE))
+
+    @staticmethod
+    def is_visible_to(notification: Notification, viewer_id: int | None) -> bool:
+        """Whether a (non-admin) viewer may see this notification.
+
+        Addressed to someone → only that person. Addressed to nobody → only when
+        it is public. A `personal`/`confidential` notification without a target
+        has no rightful recipient among ordinary users, so it stays hidden from
+        them (an admin still sees it). Before this, every authenticated user could
+        list, acknowledge and dismiss everyone's personal notifications.
+        """
+        if notification.target_user_id is not None:
+            return notification.target_user_id == viewer_id
+        # Exactly the SQL clause: NULL or "public". An empty or unknown privacy
+        # value fails closed here AND in the list — no way to act on by id what
+        # the list hides.
+        return notification.privacy is None or notification.privacy == "public"
+
+    @staticmethod
+    def _visible_to_clause(viewer_id: int | None):
+        """SQL form of :meth:`is_visible_to`."""
+        public_untargeted = (Notification.target_user_id.is_(None)) & (
+            (Notification.privacy.is_(None)) | (Notification.privacy == "public")
+        )
+        if viewer_id is None:
+            # `target_user_id == None` would compile to IS NULL and hand out every
+            # untargeted notification, personal ones included.
+            return public_untargeted
+        return public_untargeted | (Notification.target_user_id == viewer_id)
+
     async def list_notifications(
         self,
         room_id: int | None = None,
@@ -615,9 +721,17 @@ class NotificationService:
         since: datetime | None = None,
         limit: int = 50,
         offset: int = 0,
+        viewer_id: int | None = None,
+        restrict_to_viewer: bool = False,
     ) -> list[Notification]:
-        """List notifications with optional filters."""
+        """List notifications with optional filters.
+
+        ``restrict_to_viewer`` limits the list to what ``viewer_id`` may see
+        (see :meth:`is_visible_to`). Callers set it for authenticated non-admins;
+        auth-off installs and admins see everything, as before."""
         query = select(Notification).order_by(Notification.created_at.desc())
+        if restrict_to_viewer:
+            query = query.where(self._visible_to_clause(viewer_id))
 
         if room_id is not None:
             query = query.where(Notification.room_id == room_id)
@@ -637,16 +751,39 @@ class NotificationService:
         result = await self.db.execute(query)
         return list(result.scalars().all())
 
-    async def get_notification(self, notification_id: int) -> Notification | None:
-        """Get a single notification by ID."""
+    async def get_notification(
+        self,
+        notification_id: int,
+        viewer_id: int | None = None,
+        restrict_to_viewer: bool = False,
+    ) -> Notification | None:
+        """Get a single notification by ID.
+
+        With ``restrict_to_viewer``, one the viewer may not see is reported as
+        missing — indistinguishable from an id that does not exist."""
         result = await self.db.execute(
             select(Notification).where(Notification.id == notification_id)
         )
-        return result.scalar_one_or_none()
+        notification = result.scalar_one_or_none()
+        if (
+            notification is not None
+            and restrict_to_viewer
+            and not self.is_visible_to(notification, viewer_id)
+        ):
+            return None
+        return notification
 
-    async def acknowledge(self, notification_id: int, acknowledged_by: str | None = None) -> bool:
+    async def acknowledge(
+        self,
+        notification_id: int,
+        acknowledged_by: str | None = None,
+        viewer_id: int | None = None,
+        restrict_to_viewer: bool = False,
+    ) -> bool:
         """Mark a notification as acknowledged."""
-        notification = await self.get_notification(notification_id)
+        notification = await self.get_notification(
+            notification_id, viewer_id=viewer_id, restrict_to_viewer=restrict_to_viewer
+        )
         if not notification:
             return False
 
@@ -656,9 +793,16 @@ class NotificationService:
         await self.db.commit()
         return True
 
-    async def dismiss(self, notification_id: int) -> bool:
+    async def dismiss(
+        self,
+        notification_id: int,
+        viewer_id: int | None = None,
+        restrict_to_viewer: bool = False,
+    ) -> bool:
         """Soft-delete (dismiss) a notification."""
-        notification = await self.get_notification(notification_id)
+        notification = await self.get_notification(
+            notification_id, viewer_id=viewer_id, restrict_to_viewer=restrict_to_viewer
+        )
         if not notification:
             return False
 
