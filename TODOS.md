@@ -27,6 +27,69 @@ Last reviewed: 2026-05-03 (post-release sweep). Voice pipeline Phase A (v2.3.0) 
 
 ---
 
+## Priorisierte Gesamtsicht (Stand 2026-09-18)
+
+Vollständige Erfassung aus **beiden** Quellen — 41 offene GitHub-Issues und die
+Dokumentation (dieser Index, `docs/design/*`, `CLAUDE.md`, Funktionsschalter,
+`TECHNICAL_DEBT.md`). Die Einzelposten stehen unverändert in den Tier-Abschnitten
+unten; diese Sicht ordnet sie nur. **Nicht erfasst:** `tasks/*.md` (33 Planungsdateien).
+
+**Lagebild:** 28 der 41 Issues sind seit über 90 Tagen unberührt. 33 fertig gebaute
+Funktionen sind auf **keiner** Instanz je eingeschaltet worden. Kein P0.
+
+### S1 — Kaputt oder blind, jetzt
+| Sache | Warum zuerst | Quelle |
+|---|---|---|
+| ~~Browser-Mikrofon im Haushalt tot seit ~Juli~~ **behoben 2026-09-18** | Verwaister Ingress aus #1119; ersetzt durch eine IngressRoute in ns `voice`. Browser-Test bestanden | `:56` |
+| `sat-wohnzimmer` ist taub (WM8960-Probe −110) | Gerät hört nichts **und** meldet sich gesund — der Überwachungs-Blindfleck wiegt schwerer | #1211 |
+| KV-Cache auf `cuda.local` gesättigt | 2267 Fehler, gemeinsamer Pool für 4 Slots, keine Mandantentrennung | `docs/GPU_TOPOLOGY.md` §5 |
+| OTA-Rollback terminiert nicht | Satellit bleibt dauerhaft `in_progress`/`rolling_back` | #1209 |
+| Sprecheridentität ungenutzt | 38 Profile „Unbekannt", 1 von 3 Nutzern verknüpft — hungert das Self-Learning aus; reine Betriebsarbeit | `:277` |
+
+### S2 — Beschlossen, aber blockiert
+| Sache | Stand | Quelle |
+|---|---|---|
+| Dritte Instanz `club`/`ssv` | Am 2026-09-08 beschlossen, Namespace offen — trifft auf die gesättigte Modellebene aus S1 | `docs/private/scanner-targets.md` |
+| SSO-Cutover | Einziger Posten mit ausdrücklich **blockierender** Frage (§10.1), nur vom Operator zu beantworten; hängt daran: Entfernung des Session-Fixation-Sinks + `/api/ws/token`-Faucet | `:92-93` |
+| Scanner Phasen 1–3 nie gegen eine Live-Instanz geprüft | Gebaut ≠ verifiziert | `docs/design/scanner-ingest.md:3` |
+| #1218 Phase 3 (Selbstrotation) | Phasen 1/2/4 sind live | #1218 |
+| #1116 Rest-Findings (CSP, Auth-on-Flip) | laut eigenem Kommentar offen | #1116 |
+
+### S3 — Fertig gebaut, nie eingeschaltet (bester Gegenwert)
+| Sache | Aufwand | Quelle |
+|---|---|---|
+| `meeting_whisper_model=large-v3-turbo` | **Reine Konfigänderung**, gemessen −3,5 bis −5,3 WER-Punkte | `:67` |
+| Fristen→Kalender-Sync | Kein Code offen; Zugangsdaten + Pod-Verdrahtung fehlen | `docs/OBLIGATION_CALENDAR_SYNC.md` |
+| Sprecher-Phase-3-Flip | Kein Code offen: einlernen, kalibrieren, Flag | `:285-288` |
+| 33 weitere dunkle Flags | Ganze Teilsysteme: Meeting-Fingerprints, Sprecher-Qualitätsgate, proaktive Anreicherung, Paperless-Index-Heilung | `config.py` ↔ `k8s/configmap.yaml` |
+| ⚠️ `REQUIRE_EMAIL_VERIFICATION` | Flag **ohne Funktion** (Code: „not implemented yet") — bauen oder entfernen | `config.py:1453` |
+
+### S4 — Stille Brüche, die beim nächsten Neustart zuschlagen
+`ollama/ollama:latest` ungepinnt und llama.cpp-Image ohne CUDA-12-Bindung (`docs/GPU_TOPOLOGY.md` §6) ·
+OTA-Signaturen nie scharfgeschaltet (Flotte nicht re-provisioniert) ·
+#1210 OTA-Henne-Ei **nicht** behoben (der September-PR beseitigte nur das Symptom) ·
+Letzter-Admin-Schutz TOCTOU-anfällig (`:82`) · Föderations-`remote_user_id`-Kollision ab dem 2. Peer (`:100`).
+
+### S5 — Entwürfe, die nur eine Freigabe brauchen
+#875 bi-temporale Kanten und #1240 Kontaktpunkte warten beide ausdrücklich auf ein Go für Stufe 1 ·
+#876 (vom Review umgeleitet) · Föderations-Identitätslinks (Vorbedingung: persönliche Instanz auth-on) ·
+Stimm-Identität · Mobile-Belegerfassung · GUI-Contribution-Modell.
+
+### S6 — Aufräumen
+#83 schließen (geliefert, nur anders gelöst als vorgeschlagen) · #12 als Dublette zu #80 schließen ·
+#1218 und #1215 auf den Rest zuschneiden · #270/#264 prüfen ·
+drei Design-Dokumente mit veralteter Statuszeile (`user-events-ws`, `sso-token-handoff-hardening`,
+`ingest-credentials`) · `:488` widerspricht `:14` (#874 ist ausgeliefert) ·
+Testzahl in `docs/TECHNICAL_DEBT.md` widerspricht `CLAUDE.md`.
+
+### Nie gemessen — blinde Flecken, keine Aufgaben
+Deutsche Meeting-Qualität ungemessen, obwohl xidra deutsche Kunden hat (`:70`) ·
+OCR-Evaluation nie gelaufen, obwohl das Werkzeug existiert (`:296`) ·
+Web-/chat-Anteil gegenüber Sprache nie erhoben — Prämisse der ganzen Chat-UI-Roadmap (`:149`) ·
+Einbettungsdurchsatz und Whisper-INT8 auf Volta (`docs/GPU_TOPOLOGY.md` §4.2).
+
+---
+
 ## P0 — Active / blocking
 
 _(no active blockers — all prior P0 items resolved and merged)_
@@ -53,7 +116,7 @@ _(WICHTIG sweep complete. W10 closed via #487 on 2026-04-27. `tasks/audit-findin
 Runbook + rollout order: `docs/design/browser-voice-auth-on-instances.md`.
 - **Speaker recognition opt-in on xidra (D4, LATER — not now).** Today xidra pins `SPEAKER_RECOGNITION_ENABLED` / `SPEAKER_AUTO_ENROLL` / `SPEAKER_CONTINUOUS_LEARNING` / `SPEAKER_VOCAB_CAPTURE_ENABLED` to `false`; the chat-WS resolver, admin enrollment and meeting fingerprints are code-gated on the first, and meeting segments never store the ECAPA embedding at all. A controlled opt-in (voice-driven identity for business users) needs its own **GDPR assessment first**: an ECAPA voiceprint is biometric data (Art. 9) → explicit per-user consent, purpose limitation, retention/deletion path for `speakers`/`speaker_embeddings`/`speaker_candidates`, and no auto-enrol of bystanders/guests. Use the controlled-enrollment mode (`speaker_controlled_enrollment_enabled`), never auto-enrol.
 - **Voice-server hardening (D7, next voice-server release).** (a) The voice-server access log records the full `/ws/voice?token=…` query string — redact `token` before logging (the token lives ~90 s and is scope-bound, but it must not land in logs). (b) Per-client allowed Origins in the registry row, enforced by the voice-server itself (today only the Traefik `IngressRoute` Origin pin guards the xidra route).
-- **F7 — household browser voice likely broken since ~July (record only, not fixed here).** Ingress `renfield/voice-server` still points at Service `voice-server` in ns `renfield`, which no longer exists since the shared-voice-server cutover (verified 2026-09-15: `services "voice-server" not found`). Household satellites are unaffected (backend REST path); only the browser mic on the household is. Needs a route into ns `voice` analogous to the xidra `IngressRoute`, with the household's own Origin pin and registry row.
+- **~~F7 — household browser voice broken since ~July~~ ✅ FIXED 2026-09-18.** Root cause: #1119 retired the per-ns voice-server — it deleted `k8s/voice-server.yaml` from git and removed the live Deployment + Service + PVC, but **not the Ingress** in that same file, which kept routing `renfield.local/ws/voice` at a Service that no longer existed (HTTP 404). Fix: a Traefik `IngressRoute` in ns `voice` (Traefik v3.3 cannot route cross-namespace) → `voice-server-anon:8081`, pinned on `Host` + `PathPrefix` + `Origin`, priority 1000; the `:8081` NetworkPolicy was deliberately widened to ns `default` (Traefik) with the reasoning written into the manifest. Port 8080 is structurally impossible here: the household is auth-off, `/api/ws/token` returns `{"token": null}`, and `_validate_registry` rejects an anonymous row on the primary port. Verified: `101 Switching Protocols`, real browser `WebSocket → OPEN` from origin `https://renfield.local`, server log `voice session opened user=anonymous`; negative controls (no / wrong Origin) → 403. Manifest: `private_k8s/voice-server/42-household-browser-ingressroute.yaml`, sibling of the xidra route (`41-…`, committed separately on 2026-09-18 — my earlier note that it was unversioned was wrong: it lived in a branch that had not been merged when I looked).
 
 ### 🧬 KB near-duplicate detection (#1170) — post-v2.24.0 follow-ups
 Feature is shipped, enabled, and tuned on both instances (see the v2.24.0 umbrella note). Open items, none blocking:
