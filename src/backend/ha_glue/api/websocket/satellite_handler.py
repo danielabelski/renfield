@@ -186,6 +186,31 @@ def _spawn_satellite_extraction(
         return None
 
 
+async def _reject_derostered_heartbeat(websocket, satellite_id: str, manager) -> bool:
+    """Close a heartbeat connection whose satellite is no longer in the roster.
+
+    Defence in depth behind `cleanup_stale`'s own close(). Without it the receive
+    loop keeps answering `heartbeat_ack` after an eviction while
+    `update_heartbeat` silently no-ops, so the device sees a healthy link, never
+    re-registers (it only registers on connect) and is mute FOREVER.
+
+    Returns True when the connection was closed and the receive loop must stop.
+    A failing close is swallowed — the connection is being torn down either way,
+    and raising here would kill the loop's own cleanup.
+    """
+    if manager.is_connected(satellite_id):
+        return False
+    logger.warning(
+        f"🔌 Heartbeat von nicht-registriertem Satelliten {satellite_id} "
+        "— Verbindung wird geschlossen, damit er sich neu anmeldet"
+    )
+    try:
+        await websocket.close(code=1001, reason="re-register required")
+    except Exception:  # noqa: BLE001
+        pass
+    return True
+
+
 @router.websocket("/ws/satellite")
 async def satellite_websocket(
     websocket: WebSocket,
@@ -1001,6 +1026,10 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
             # Handle heartbeat with optional metrics
             elif msg_type == "heartbeat":
                 if satellite_id:
+                    if await _reject_derostered_heartbeat(
+                        websocket, satellite_id, satellite_manager
+                    ):
+                        break
                     # Extract metrics and version from heartbeat if present
                     metrics = data.get("metrics")
                     version = data.get("version")
@@ -1049,16 +1078,13 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
             # Handle OTA update progress
             elif msg_type == "update_progress":
                 if satellite_id:
-                    from ha_glue.services.satellite_manager import UpdateStatus
                     stage = data.get("stage", "unknown")
                     progress = data.get("progress", 0)
                     message = data.get("message", "")
                     logger.info(f"📥 Update progress from {satellite_id}: {stage} ({progress}%) - {message}")
-                    satellite_manager.set_update_status(
-                        satellite_id,
-                        UpdateStatus.IN_PROGRESS,
-                        stage=stage,
-                        progress=progress
+
+                    satellite_manager.apply_update_progress(
+                        satellite_id, stage=stage, progress=progress, message=message
                     )
 
             # Handle OTA update complete
@@ -1077,10 +1103,9 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                             stage="completed",
                             progress=100
                         )
-                        # Update the stored version
-                        sat = satellite_manager.get_satellite(satellite_id)
-                        if sat:
-                            sat.version = new_version
+                        # Through the manager, so the value is bounded like
+                        # every other device-supplied field.
+                        satellite_manager.set_version(satellite_id, new_version)
                     else:
                         error = data.get("error", "Unknown error")
                         logger.error(f"❌ Satellite {satellite_id} update failed: {error}")
