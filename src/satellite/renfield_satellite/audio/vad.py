@@ -207,7 +207,13 @@ class VoiceActivityDetector:
         """Silero VAD speech detection"""
         # Use ONNX backend if available
         if self._use_onnx and self._silero_onnx is not None:
-            return self._silero_onnx.is_speech(audio_bytes)
+            prob = self._silero_onnx.get_speech_probability(audio_bytes)
+            if self._silero_onnx.last_call_failed:
+                # Same fallback as the PyTorch path below. The wrapper's neutral
+                # 0.5 must never be judged: at the default threshold it reads as
+                # SPEECH and would hold every turn open to the recording limit.
+                return self._rms_detect(audio_bytes)
+            return prob >= self.silero_threshold
 
         # Use PyTorch backend
         if self._silero_model is None:
@@ -315,6 +321,21 @@ class SileroVADLite:
         self._session = None
         self._state = None
         self._use_new_format = True  # Detect based on model inputs
+        # Silero v5+ (the combined-`state` model) is a STREAMING model: every
+        # 512-sample frame must be preceded by the last 64 samples of the frame
+        # before it (32 at 8 kHz) — 576 samples per call. Fed bare 512-sample
+        # frames it answers ~0.00 for clear speech, at any level: the VAD then
+        # never reports speech and every voice turn ends at grace + silence.
+        self._context_size = 64 if sample_rate == 16000 else 32
+        self._frame_size = 512 if sample_rate == 16000 else 256
+        self._context = np.zeros((1, self._context_size), dtype=np.float32)
+        # Samples left over from the previous call. The capture chunk (1280) is
+        # not a multiple of the frame size; zero-padding the tail would inject a
+        # discontinuity into the stream on every call.
+        self._residual = np.zeros(0, dtype=np.float32)
+        self._last_prob = 0.0
+        self._error_logged = False
+        self.last_call_failed = False  # callers fall back to RMS instead of judging 0.5
 
         # Pre-allocate sample rate input arrays (avoids per-frame allocation)
         self._sr_input_scalar = np.array(sample_rate, dtype=np.int64)
@@ -343,7 +364,7 @@ class SileroVADLite:
 
             if self.model_path is None or not os.path.exists(self.model_path):
                 print("Silero VAD ONNX model not found")
-                print("Download from: https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx")
+                print("Download from: https://github.com/snakers4/silero-vad/raw/v6.2/src/silero_vad/data/silero_vad.onnx")
                 return
 
             # Create ONNX session
@@ -372,7 +393,10 @@ class SileroVADLite:
             print(f"Failed to load Silero VAD ONNX: {e}")
 
     def _reset_states(self):
-        """Reset LSTM hidden states"""
+        """Reset LSTM hidden states and the streaming context"""
+        self._context = np.zeros((1, self._context_size), dtype=np.float32)
+        self._residual = np.zeros(0, dtype=np.float32)
+        self._last_prob = 0.0
         if self._use_new_format:
             # New format: combined state tensor (2, batch, 128)
             self._state = np.zeros((2, 1, 128), dtype=np.float32)
@@ -405,36 +429,39 @@ class SileroVADLite:
             Speech probability (0-1)
         """
         if self._session is None:
+            self.last_call_failed = True
             return 0.5  # Neutral if model not loaded
 
         try:
-            # Convert to float32 array
+            self.last_call_failed = False
+            # Convert to float32 array (a stray odd byte would make frombuffer raise)
+            audio_bytes = audio_bytes[:len(audio_bytes) - (len(audio_bytes) % 2)]
             audio = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
             audio = audio / 32768.0  # Normalize to [-1, 1]
 
-            # Silero VAD requires small chunks (max ~640 samples at 16kHz).
-            # Process in 512-sample frames (32ms) and return mean probability.
-            frame_size = 512
+            # Contiguous stream: prepend what the previous call left over, run
+            # every COMPLETE frame, keep the rest for the next call.
+            audio = np.concatenate([self._residual, audio])
+            frame_size = self._frame_size
             sr_input = self._sr_input_scalar if self._use_new_format else self._sr_input_array
 
             frame_probs = []
-            for i in range(0, len(audio), frame_size):
-                chunk = audio[i:i + frame_size]
-                if len(chunk) < frame_size:
-                    # Pad last chunk with zeros if too short
-                    chunk = np.pad(chunk, (0, frame_size - len(chunk)))
-                chunk = chunk.reshape(1, -1)
+            usable = len(audio) - (len(audio) % frame_size)
+            for i in range(0, usable, frame_size):
+                frame = audio[i:i + frame_size].reshape(1, -1)
 
                 if self._use_new_format:
+                    model_input = np.concatenate([self._context, frame], axis=1)
                     ort_inputs = {
-                        'input': chunk,
+                        'input': model_input,
                         'sr': sr_input,
                         'state': self._state,
                     }
                     output, self._state = self._session.run(None, ort_inputs)
+                    self._context = model_input[:, -self._context_size:]
                 else:
                     ort_inputs = {
-                        'input': chunk,
+                        'input': frame,
                         'sr': sr_input,
                         'h': self._h,
                         'c': self._c,
@@ -443,10 +470,21 @@ class SileroVADLite:
 
                 frame_probs.append(float(output[0][0]))
 
-            return max(frame_probs) if frame_probs else 0.0
+            self._residual = audio[usable:]
+            if frame_probs:
+                self._last_prob = max(frame_probs)
+            # A call too short to complete a frame repeats the last verdict
+            # rather than inventing silence.
+            return self._last_prob
 
         except Exception as e:
-            # Return neutral on error
+            # Neutral on error, flagged so VoiceActivityDetector falls back to RMS:
+            # at the default threshold 0.5 "neutral" would read as SPEECH and hold
+            # every turn open until the max-recording limit. Logged once.
+            self.last_call_failed = True
+            if not self._error_logged:
+                print(f"Silero VAD inference failed (falling back to RMS): {e}")
+                self._error_logged = True
             return 0.5
 
     def reset(self):
