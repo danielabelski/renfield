@@ -186,6 +186,80 @@ def _spawn_satellite_extraction(
         return None
 
 
+# Limiter key for the second-look budget. '#' cannot occur in an IP, and a
+# satellite_id colliding with it would only share a budget with itself.
+_SECOND_LOOK_SUFFIX = "#second-look"
+
+
+def _live_session_frame(raw: dict, satellite_id: str, manager) -> str | None:
+    """Classify a frame the rate limiter just refused (#1284).
+
+    Returns ``"audio"`` or ``"audio_end"`` when the frame belongs to a session
+    that is live AND owned by this satellite, else ``None``.
+
+    Only ever called on the refusal path of a REGISTERED satellite, so an
+    unregistered flooder is still turned away without its frames being parsed.
+    The frame is parsed a second time on the normal path — deliberate: that
+    costs one extra parse on a rare path instead of parsing every frame before
+    the limiter has seen it.
+    """
+    raw_bytes = raw.get("bytes")
+    if raw_bytes is not None:
+        try:
+            session_id, _, _ = parse_audio_frame(raw_bytes)
+        except BinaryFrameError:
+            return None
+        kind = "audio"
+    else:
+        try:
+            data = json.loads(raw.get("text") or "")
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(data, dict) or data.get("type") not in ("audio", "audio_end"):
+            return None
+        session_id = data.get("session_id")
+        kind = data["type"]
+
+    # isinstance: a hostile frame may carry an unhashable session_id.
+    session = manager.sessions.get(session_id) if isinstance(session_id, str) else None
+    if session is None or session.satellite_id != satellite_id:
+        return None
+    return kind
+
+
+def _rate_verdict(raw: dict, rate_key: str, satellite_id: str | None, rate_limiter, manager) -> tuple[bool, str]:
+    """Rate-limit one inbound frame; a refused frame of a LIVE turn gets a second look.
+
+    A refused frame must not cost a running turn (#1284). Audio legitimately
+    arrives in bursts — a Pi whose event loop stalled flushes its queued chunks
+    at once — while its sustained rate is physically bounded (12.5 chunks/s), so
+    it answers to the minute budget only. `audio_end` always passes: it is at
+    most one per session, and dropping it strands the session in `listening`
+    until the cleanup sweep discards the recording unanswered.
+    """
+    allowed, reason = rate_limiter.check(rate_key, record_violation=False)
+    if allowed:
+        return True, ""
+
+    # The second look parses the frame, so it has a budget of its own: without
+    # one, refused frames would be parsed without limit (a registered client
+    # could buy a JSON parse of a ~1 MB frame per message). A legitimate turn
+    # never gets near it — a satellite sends ~775 frames a minute in total.
+    if satellite_id and rate_limiter.check(
+        f"{rate_key}{_SECOND_LOOK_SUFFIX}", burst_ok=True, record_violation=False
+    )[0]:
+        frame_kind = _live_session_frame(raw, satellite_id, manager)
+        if frame_kind == "audio_end":
+            return True, ""
+        if frame_kind == "audio":
+            allowed, reason = rate_limiter.check(rate_key, burst_ok=True, record_violation=False)
+            if allowed:
+                return True, ""
+
+    rate_limiter.record_violation(rate_key, reason)
+    return False, reason
+
+
 async def _reject_derostered_heartbeat(websocket, satellite_id: str, manager) -> bool:
     """Close a heartbeat connection whose satellite is no longer in the roster.
 
@@ -282,7 +356,9 @@ async def satellite_websocket(
 
             # Rate limiting (applies to text AND binary frames)
             rate_key = satellite_id if satellite_id else ip_address
-            allowed, rate_reason = rate_limiter.check(rate_key)
+            allowed, rate_reason = _rate_verdict(
+                raw, rate_key, satellite_id, rate_limiter, satellite_manager
+            )
             if not allowed:
                 await send_ws_error(websocket, WSErrorCode.RATE_LIMITED, rate_reason)
                 continue
