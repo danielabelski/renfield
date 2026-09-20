@@ -2028,8 +2028,10 @@ Details + Messungen: `docs/MESSAGE_RELAY.md` → „TTS-Audio-Auslieferung an Re
 ### Security
 
 ```bash
-# Secret Key für Sessions/JWT
+# Secret Key für Sessions/JWT UND für die Verschlüsselung ruhender Geheimnisse (BLE-IRKs)
 SECRET_KEY=changeme-in-production-use-strong-random-key
+# Frühere SECRET_KEYs, kommasepariert, neuester zuerst — nur während einer Rotation gesetzt
+SECRET_KEY_PREVIOUS=
 
 # CORS Origins (kommasepariert oder "*" für Entwicklung)
 CORS_ORIGINS=*
@@ -2038,9 +2040,41 @@ CORS_ORIGINS=https://renfield.local,https://admin.local
 
 **Defaults:**
 - `SECRET_KEY`: `changeme-in-production-use-strong-random-key`
+- `SECRET_KEY_PREVIOUS`: `""`
 - `CORS_ORIGINS`: `*`
 
 **Hinweis:** In Produktion IMMER durch starken Zufallsschlüssel und spezifische Origins ersetzen!
+
+**SECRET_KEY ist dreifach in Gebrauch:** JWT-Signatur, Fernet-Verschlüsselung ruhender
+Geheimnisse (`services/secret_encryption.py`, heute die BLE-IRKs in `user_ble_irks`) und
+damit die Handy-Präsenz. **Rotation (seit 2026-09-20, BL-0357):** Verschlüsselt wird immer
+mit dem aktuellen Schlüssel, entschlüsselt mit dem aktuellen ODER einem in
+`SECRET_KEY_PREVIOUS` gelisteten (`MultiFernet`). Ablauf:
+
+1. `SECRET_KEY=<neu>` und `SECRET_KEY_PREVIOUS=<alt>` setzen und ausrollen (Backend + alle
+   Worker). Beide sind **Secret-Schlüssel** (`renfield-secrets`: `secret-key` /
+   `secret-key-previous`, letzterer in `k8s/backend.yaml` als `optional: true` referenziert —
+   x-ren trägt dieselbe Zeile), nie ConfigMap-Werte: ein alter Signierschlüssel in der
+   ConfigMap stünde im Klartext in git. Der Eintrag muss dem früheren `SECRET_KEY` **byte-
+   genau** entsprechen (Secrets mit `--from-literal` anlegen; ein `--from-file`-Zeilenumbruch
+   wäre Teil des Schlüssels — Einträge werden deshalb gestrippt UND wörtlich geprüft). Alle
+   JWT-Sitzungen enden — das ist gewollt. Die gespeicherten IRKs bleiben lesbar.
+   Vor Schritt 2 prüfen, dass der Pod den Wert sieht:
+   `kubectl -n <ns> exec deploy/backend -c backend -- sh -c 'test -n "$SECRET_KEY_PREVIOUS" && echo ok'`
+   — fehlt er (auf xidra erst, wenn die x-ren-Zeile gelandet ist), arbeitet MultiFernet mit
+   einem Schlüssel und das Skript bricht in Schritt 2 mit Exit 2 ab (kein Datenverlust).
+2. Im Backend-Pod `python bin/rotate_secret_encryption.py --dry-run`, dann `--commit`:
+   schreibt jeden noch unter dem alten Schlüssel liegenden Wert neu (nur Zählwerte, eine
+   Zeile je Commit; eine währenddessen gelöschte Zeile zählt als `vanished`).
+3. `SECRET_KEY_PREVIOUS` leeren und erneut ausrollen.
+
+Mitbetroffen: die Service-JWTs an den Voice-Server (STT/TTS/Meetings) sind mit `SECRET_KEY`
+signiert. Der Voice-Server prüft sie per Rückruf an `/api/internal/auth/verify`, hält also
+keine Kopie des Schlüssels; nur eine Registry-Zeile mit lokaler Prüfung (`_validate_local`)
+müsste denselben neuen Schlüssel erhalten — vor der Rotation die Registry prüfen.
+
+Ohne `SECRET_KEY_PREVIOUS` ist eine Rotation für die gespeicherten Geheimnisse weiterhin
+**destruktiv** (jeder Wert muss über den Pairing-Ablauf neu erfasst werden).
 
 **Generierung:**
 ```bash
