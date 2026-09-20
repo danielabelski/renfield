@@ -233,6 +233,7 @@ async def login(
     # contract.
     from auth.login_flow import resolve_login
 
+    from services.api_rate_limiter import client_ip_is_spoof_resistant, get_client_ip
     from services.login_lockout import login_lockout
     from utils.metrics import record_login_failure
 
@@ -240,11 +241,17 @@ async def login(
     # walk (so a lockout also stops password-guessing that happens to be
     # correct). Response is the SAME opaque 401 as bad credentials — never a
     # distinct status — so it is not a username-enumeration oracle. The event is
-    # observable via the log + metric, not the response.
-    if await login_lockout.is_locked(form_data.username):
+    # observable via the log + metric, not the response. Scoped per (username,
+    # client IP) with a username-wide backstop — but ONLY when the IP is
+    # spoof-resistant (TRUSTED_PROXIES set): on the legacy XFF[0] path a client
+    # could rotate a forged header to dodge the per-IP lock and face only the
+    # higher backstop, or forge the owner's address to lock them out. Without
+    # trusted proxies the lockout stays username-only at the strict threshold.
+    client_ip = get_client_ip(request) if client_ip_is_spoof_resistant() else None
+    if await login_lockout.is_locked(form_data.username, client_ip):
         record_login_failure("locked_out")
         logger.warning(
-            f"Login rejected: account locked out (username={form_data.username!r})"
+            f"Login rejected: account locked out (username={form_data.username!r}, ip={client_ip})"
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -263,10 +270,10 @@ async def login(
         # Bad credentials OR a registered post_authenticate consumer declined
         # to resolve — both are an opaque 401 (do not leak which).
         record_login_failure("bad_credentials")
-        tripped = await login_lockout.record_failure(form_data.username)
+        tripped = await login_lockout.record_failure(form_data.username, client_ip)
         logger.warning(
-            f"Login failed: bad credentials (username={form_data.username!r})"
-            + (" — account now locked out" if tripped else "")
+            f"Login failed: bad credentials (username={form_data.username!r}, ip={client_ip})"
+            + (" — lockout tripped" if tripped else "")
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -287,9 +294,9 @@ async def login(
         # never leaks that the account exists. A failed attempt here still counts
         # toward lockout (a valid-username-but-disabled probe is still a probe).
         record_login_failure("inactive")
-        await login_lockout.record_failure(form_data.username)
+        await login_lockout.record_failure(form_data.username, client_ip)
         logger.warning(
-            f"Login failed: account missing or inactive (username={form_data.username!r})"
+            f"Login failed: account missing or inactive (username={form_data.username!r}, ip={client_ip})"
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -297,8 +304,9 @@ async def login(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Successful auth — clear any accumulated lockout state for this username.
-    await login_lockout.clear(form_data.username)
+    # Successful auth — clear the username backstop + THIS address's counters.
+    # Another address's lock stays: the owner's phone must not free the attacker.
+    await login_lockout.clear(form_data.username, client_ip)
 
     # Update last login time
     user.last_login = datetime.now(UTC).replace(tzinfo=None)
