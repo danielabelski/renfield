@@ -23,6 +23,12 @@ Long form: `docs/design/ble-presence-improvement.md`, `docs/SATELLITE_ACOUSTIC_C
   a buffer capped at 500 chunks (40.0 s) was used, so a limit above 40 s silently never fired.
 - Never commit wake-word models, device MACs/IRKs, enrollment tokens or ambient captures (`data/wakeword-ambient/`).
 
+## Permissions on a voice turn
+- Recognised speaker → that user's permissions; unrecognised → `None`, which every gate reads as "no permission model"
+  (#690 fail-open). `SATELLITE_ANONYMOUS_PERMISSIONS` (dark, empty = unchanged, never applied while auth is off)
+  replaces it with a POSITIVE list over ALL MCP servers — an unnamed server is denied, read-only ones too.
+- A denial is marked `permission_denied` and SPOKEN; swallowing it would let the model answer the refused question.
+
 ## Voice turn
 - A turn ends on VAD silence after the grace period: `vad.min_listening_seconds` 2.0 s + `silence_duration_ms` 1.2 s,
   capped by `vad.max_recording_seconds` (fleet 60 s). `_recorded_chunks` and `vad.reset()` are zeroed at EVERY

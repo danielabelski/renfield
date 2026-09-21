@@ -1586,6 +1586,25 @@ class Settings(BaseSettings):
     # satellite_id only. Dark by default; with AUTH_ENABLED=false the handshake
     # token is never read at all (byte-identical).
     satellite_psk_handshake_enabled: bool = False
+    # Permissions a satellite turn WITHOUT a recognised speaker runs with
+    # (auth-on instances; docs/design/household-auth-on-cutover.md §6.1 Nr. 2,
+    # D-4a). Today such a turn carries `user_permissions=None`, which every MCP
+    # and internal-tool gate reads as "no permission model in effect" — the
+    # deliberate #690 fail-open so spoken commands keep working. Under auth-on
+    # that leaves an unrecognised voice with EVERY tool. This list replaces the
+    # None with a concrete grant set — a POSITIVE list over every MCP server:
+    # what is named is reachable, everything else (including read-only servers
+    # like documents or calendar) is denied for an unrecognised voice.
+    # Comma list; EMPTY (the default) keeps today's `None` exactly, and the
+    # substitution only ever happens with AUTH_ENABLED=true, so an auth-off
+    # household is byte-identical either way.
+    # Recommended set (D-4a, widened by review): mcp.homeassistant (HA's MCP
+    # server exposes Assist intents only — lights, blinds, media, volume,
+    # timers; no service-call escape hatch), mcp.dlna, mcp.radio, mcp.jellyfin,
+    # mcp.weather, mcp.search, mcp.news, plus rooms.read and ha.control (the
+    # announce/broadcast gate — both inert on the intent path today, kept for
+    # the paths that will read them).
+    satellite_anonymous_permissions: str = ""
 
     # C1 binary Opus transport for satellite audio (docs/design/
     # voice-identity-wakeword-verification.md §4, decision D6). Dark by
