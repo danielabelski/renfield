@@ -239,7 +239,9 @@ class TestWebhookE2E:
         e2e_webhook_token: str,
         e2e_room: Room,
     ):
-        """enrich=true → original_message stored, enriched message from mocked LLM."""
+        """BL-0424: a webhook caller cannot buy LLM enrichment — even with the
+        flag on and its event type on the allow-list the text stays verbatim,
+        because only a server-side technical sender vouches ``llm_eligible``."""
         mock_llm_response = MagicMock()
         mock_llm_response.response = "Guten Morgen! Draußen ist es sonnig bei 18 Grad."
         mock_llm_client = AsyncMock()
@@ -266,6 +268,7 @@ class TestWebhookE2E:
             mock_svc_settings.proactive_enrichment_enabled = True
             mock_svc_settings.proactive_enrichment_model = None
             mock_svc_settings.proactive_urgency_auto_enabled = False
+            mock_svc_settings.proactive_llm_event_types = "scheduled.morning_briefing"
             mock_svc_settings.ollama_model = "test-model"
 
             response = await async_client.post(
@@ -282,9 +285,10 @@ class TestWebhookE2E:
         )
         n = result.scalar_one()
 
-        assert n.enriched is True
-        assert n.original_message == original_msg
-        assert n.message == "Guten Morgen! Draußen ist es sonnig bei 18 Grad."
+        assert n.enriched is False
+        assert n.original_message is None
+        assert n.message == original_msg
+        mock_llm_client.generate.assert_not_called()
 
     @pytest.mark.integration
     async def test_auto_urgency(
@@ -294,7 +298,10 @@ class TestWebhookE2E:
         e2e_webhook_token: str,
         e2e_room: Room,
     ):
-        """urgency=auto → LLM classifies, urgency_auto=True in DB."""
+        """BL-0424: ``urgency="auto"`` from a webhook caller is NOT classified —
+        the flag is on and the type is allow-listed, yet the model is never
+        asked; ``auto`` collapses to the ``info`` fallback, ``urgency_auto``
+        stays False."""
         mock_llm_response = MagicMock()
         mock_llm_response.response = "critical"
         mock_llm_client = AsyncMock()
@@ -324,6 +331,7 @@ class TestWebhookE2E:
             mock_svc_settings.proactive_feedback_learning_enabled = False
             mock_svc_settings.proactive_enrichment_enabled = False
             mock_svc_settings.proactive_urgency_auto_enabled = True
+            mock_svc_settings.proactive_llm_event_types = "security.motion_detected"
             mock_svc_settings.proactive_enrichment_model = None
             mock_svc_settings.ollama_model = "test-model"
 
@@ -341,5 +349,6 @@ class TestWebhookE2E:
         )
         n = result.scalar_one()
 
-        assert n.urgency == "critical"
-        assert n.urgency_auto is True
+        assert n.urgency == "info"
+        assert n.urgency_auto is False
+        mock_llm_client.generate.assert_not_called()

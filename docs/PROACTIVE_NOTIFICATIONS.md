@@ -112,10 +112,10 @@ Empfängt Benachrichtigungen von HA-Automationen.
 | `event_type` | string | Ja | Kategorie der Benachrichtigung |
 | `title` | string | Ja | Kurztitel |
 | `message` | string | Ja | Ausführliche Nachricht |
-| `urgency` | string | Nein | `critical`, `info` (default), `low` |
+| `urgency` | string | Nein | `critical`, `info` (default), `low`; `auto` wird angenommen, aber für Webhook-Meldungen zu `info` (siehe „LLM-Gate je Meldungsart") |
 | `room` | string | Nein | Ziel-Raum (null = alle Räume) |
 | `tts` | boolean | Nein | TTS-Ausgabe (default: `PROACTIVE_TTS_DEFAULT`) |
-| `enrich` | boolean | Nein | LLM-Aufbereitung der Nachricht (default: `false`, erfordert `PROACTIVE_ENRICHMENT_ENABLED`) |
+| `enrich` | boolean | Nein | Wird angenommen, ist für Webhook-Meldungen aber **wirkungslos**: die LLM-Aufbereitung läuft nur für serverseitig verbürgte technische Meldungen (siehe „LLM-Gate je Meldungsart") |
 | `data` | object | Nein | Zusätzliche Metadaten |
 
 **Response:** `201 Created`
@@ -198,6 +198,46 @@ Generiert einen neuen Webhook-Token. Der vorherige Token wird ungültig.
 ```
 
 `action`: `"acknowledged"` oder `"dismissed"`
+
+---
+
+## LLM-Gate je Meldungsart (BL-0424)
+
+Die beiden LLM-Schritte der Pipeline — Auto-Dringlichkeit (`urgency: "auto"`,
+`PROACTIVE_URGENCY_AUTO_ENABLED`) und Anreicherung (`enrich: true`,
+`PROACTIVE_ENRICHMENT_ENABLED`) — laufen **nur für technische Meldungen**.
+Zwei Bedingungen, beide serverseitig:
+
+1. **Vertrauensgrenze:** der Absender muss die Meldung als technisch verbürgen
+   (`process_webhook(llm_eligible=True)`). Das tut allein `ops_alert.notify_admin`
+   (MCP-Health, Paperless-Index, geplante Aufgaben). Der HA-Webhook und der
+   MCP-Poller setzen es nie — `event_type`, `enrich` und `urgency` sind dort vom
+   Aufrufer gewählt und könnten sonst persönlichen Text unter einem technischen
+   Etikett durch das Modell schleusen. Für Webhook-Meldungen sind `enrich: true`
+   und `urgency: "auto"` deshalb wirkungslos (`auto` → `info`, Text wörtlich).
+2. **Betreiber-Filter:** `PROACTIVE_LLM_EVENT_TYPES` (Vorgabe
+   `ops_health,mcp_health,scheduled_task_health`; Groß-/Kleinschreibung egal,
+   leer = keine) schaltet einzelne technische Meldungsarten ab.
+
+Damit erreicht kein persönlicher Inhalt (Erinnerung, Frist, HA-Ereignis über
+Personen) ein Sprachmodell zur Umformulierung oder Einstufung. (Die semantische
+Deduplizierung bettet weiterhin jede Meldung ein — das ist ein Embedding-Modell,
+kein Umformulierer; sie ist von diesem Gate unberührt.)
+
+`notify_admin` bietet jede Meldung zur Anreicherung an; ohne ausdrückliche
+Dringlichkeit überlässt es die Einstufung dem Klassifikator, sobald der
+Auto-Schalter an ist — aus bleibt es bei `critical`. Fällt der Klassifikator aus
+(typisch: weil genau der LLM-Host gestört ist, über den die Meldung geht), gilt
+der Rückfall `critical`, nie `info`. Eine ausdrücklich gesetzte Dringlichkeit
+(`normal` für „läuft wieder") bleibt. Angereicherte Meldungen behalten den
+Originaltext in `original_message`; gesprochen und gepusht wird der angereicherte.
+
+Technisch heißt nicht personenfrei: Fehlertexte (`last_error`, auf 300 Zeichen
+gekappt), Dateinamen oder Mailbetreffe können in einer technischen Meldung
+stecken. Beide Prompts zäunen diese Felder als Daten ein und weisen das Modell
+an, keine darin enthaltenen Anweisungen zu befolgen. Die Aufrufe gehen an den
+Chat-Tier von `utils.llm_client.get_default_client()` — im Haushalt der lokale
+llama-server, grundsätzlich aber dorthin, wohin `LLM_OPENAI_BASE_URL` zeigt.
 
 ---
 
