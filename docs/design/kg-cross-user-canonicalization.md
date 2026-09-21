@@ -1,8 +1,9 @@
 # Cross-user / household KG entity canonicalization — design (#876)
 
-> **Status: DESIGN DRAFT — build REDIRECTED by eng review (2026-09-02) to a co-reference
-> vs. shared-ownership spike BEFORE any Phase A code. See §14. Named-circles-v2 is NOT
-> cleared to build; it must first win against a `sameAs` co-reference linker.**
+> **Status: SUPERSEDED for #876 — the §14 spike (2026-09-21, §14.5 /
+> `spikes/kg-coreference-vs-shared-ownership.md`) chose a `sameAs` co-reference linker; Phases
+> A–D below are NOT built and named-circles-v2 stays parked. This document remains as the record
+> of the shared-ownership analysis and its risk register.**
 > Structured-Memory **Phase 5** deferred item. Today entity resolution + every merge
 > path are strictly **per-user** (`resolve_entity` filters `user_id == asker OR NULL`;
 > `merge_entities` refuses a cross-user pair). This doc designs how a **household** can
@@ -11,7 +12,7 @@
 > the single hardest correctness point (`tasks/structured-memory-plan.md` §Phase 1
 > "Circle-Invariante", `docs/CIRCLES.md` "Merge-Invariante").
 >
-> **Two operator decisions gate the build** (§10): (D-A) the shape of the shared-owner
+> *(Historical — the build was not started; see §14.5.)* **Two operator decisions gate the build** (§11): (D-A) the shape of the shared-owner
 > primitive, and (D-C) the scope of what "cross-user canonicalization" is allowed to do —
 > dedup-shared-only vs. fold-private-into-shared. This doc **recommends** an answer to each
 > and is explicit about why the aggressive reading is unsafe.
@@ -563,7 +564,8 @@ The one invariant that carries the whole design is `audience(survivor) ⊆ audie
 audience(winner)`, enforced by the **same-owner-AND-same-tier** auto-merge gate, backstopped
 by the `merge_entities` owner-equality assertion, and guarded by a mandatory `.159` leak-property
 test. Two operator decisions (the primitive's shape, the scope of "canonicalization") must be
-confirmed before Phase A starts.
+confirmed before Phase A starts. *(Historical: the §14 spike chose co-reference on 2026-09-21;
+Phase A is not being built — see §14.5.)*
 
 ---
 
@@ -663,3 +665,21 @@ building the fix if shared-ownership wins)
 Run the co-reference vs. shared-ownership spike (`/office-hours` scope) with §14.1's
 deliverable. Only if shared-ownership wins does Phase A start, and then with §14.2's four
 fixes and §14.3's risk register folded in from the first commit.
+
+### 14.5 Spike outcome (2026-09-21)
+
+**Done — co-reference wins.** See
+[`spikes/kg-coreference-vs-shared-ownership.md`](spikes/kg-coreference-vs-shared-ownership.md).
+Field data from the live auth-on instance (one person = 13 `kg_entities` rows across eight owner
+letters — the comment says seven; to be clarified — and 3 spellings; `surface_forms`/`canonical_id`
+never populated) supplied the missing input,
+and added a fifth dimension §14.1 did not weigh: a merged node turns `mention_count` into an
+org-wide per-person tally (a monitoring-capable aggregate under BetrVG § 87 (1) Nr. 6) while a
+`sameAs` edge keeps every count with its owner; the actual need is data-subject findability
+(GDPR Art. 15/17), not retrieval quality. Phases A–D of this document are **not built**;
+named-circles v2 stays parked. The one genuinely new piece a linker needs is a two-party review
+primitive (`KgMergeProposal.user_id` is a single owner); retrieval needs a per-side union and a
+hop rule — costs the shared-ownership path would have carried too. Separately, the reconciler's
+person-guard now surfaces in-token typo pairs as review proposals (`name_typo`), which was the
+most common same-owner duplicate in the same data set. The linker itself has **no go** yet;
+open decisions E-1…E-5 are listed in the spike.
