@@ -18,6 +18,7 @@ routes pass in an ``AsyncSession``.
 """
 from __future__ import annotations
 
+import asyncio
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -142,17 +143,20 @@ async def evaluate_credential(db: AsyncSession, satellite_id: str, psk: str | No
         await db.execute(select(Satellite).where(Satellite.satellite_id == satellite_id))
     ).scalar_one_or_none()
 
+    # bcrypt is ~100-300 ms of CPU: run it OFF the event loop (like
+    # ingest_credentials), or a stream of bad handshakes stalls chat, kiosk and
+    # every other satellite for the duration of each compare.
     if row is None or not row.is_enabled or row.revoked_at is not None:
         # Burn a hash comparison so a missing/revoked row isn't a timing oracle
         # for whether a given satellite_id is enrolled. Guarded — dummy_verify is
         # best-effort hardening, never load-bearing for correctness.
         try:
-            pwd_context.dummy_verify()
+            await asyncio.to_thread(pwd_context.dummy_verify)
         except Exception:  # noqa: BLE001
             pass
         return VERDICT_BAD
 
-    if not pwd_context.verify(psk, row.token_hash):
+    if not await asyncio.to_thread(pwd_context.verify, psk, row.token_hash):
         return VERDICT_BAD
 
     row.last_authenticated_at = _utcnow()
@@ -275,3 +279,89 @@ async def authorize_register(db: AsyncSession, satellite_id: str, psk: str | Non
         f"(PERMISSIVE soak). Enroll it before enabling auto-flip enforcement."
     )
     return AuthorizeResult(False, False, "unenrolled-permissive")
+
+
+# --------------------------------------------------------------------------
+# PSK as the WebSocket HANDSHAKE credential (household auth-on cutover, D-4c)
+# --------------------------------------------------------------------------
+# Under AUTH_ENABLED=true the satellite must authenticate the handshake itself,
+# and nothing durable existed for that (a user JWT expires after 24 h, the
+# /api/ws/token device token after 60 min and on every pod restart). The same
+# per-satellite PSK that the register frame already carries is accepted at the
+# handshake in a SELF-IDENTIFYING wrapper, ``sat.<satellite_id>.<secret>``
+# (precedent: ingest credentials ``rfi.<client_id>.<secret>``), so exactly one
+# row is verified — never N bcrypt comparisons per reconnect. The lockout is
+# checked BEFORE the bcrypt compare, keyed on the satellite id and the client
+# IP through the same LoginLockout the /auth/login route uses; a satellite
+# with a wrong PSK therefore locks itself out after the configured attempts
+# and stays out until the operator fixes its provisioning. This path does NOT
+# depend on the enrollment gate (`enrollment_enabled()` governs the register
+# frame's soak/enforce state machine); it always verifies.
+
+HANDSHAKE_TOKEN_PREFIX = "sat"
+_HANDSHAKE_LOCKOUT_SCOPE = "sat:"  # lockout "username" namespace, never a real user
+
+
+def format_handshake_token(satellite_id: str, secret: str) -> str:
+    """``sat.<satellite_id>.<secret>`` — what the operator puts into the
+    satellite's ``server.auth_token`` (with ``server.auth_enabled: true``)."""
+    return f"{HANDSHAKE_TOKEN_PREFIX}.{satellite_id}.{secret}"
+
+
+def parse_handshake_token(token: str | None) -> tuple[str, str] | None:
+    """Parse ``sat.<satellite_id>.<secret>``. None when the token is not one of
+    ours (a JWT, a device token) — a normal path, not an error. The satellite
+    id may itself contain dots only if the secret does not; enrollment ids are
+    slugs (``sat-wohnzimmer``), so the first two dots delimit."""
+    parts = (token or "").split(".", 2)
+    if len(parts) != 3 or parts[0] != HANDSHAKE_TOKEN_PREFIX:
+        return None
+    satellite_id, secret = parts[1], parts[2]
+    # Caps: enrollment secrets are token_urlsafe(32) (43 chars); an oversized
+    # "secret" would make passlib raise PasswordSizeError instead of comparing —
+    # an error path that bypasses the failure counter and mints log noise.
+    if not satellite_id or not secret or len(satellite_id) > 128 or len(secret) > 256:
+        return None
+    return satellite_id, secret
+
+
+async def authorize_handshake(db: AsyncSession, token: str, client_ip: str | None) -> str | None:
+    """Verify a ``sat.<id>.<secret>`` handshake token. Returns the satellite_id
+    on success, None otherwise (never raises for a bad credential).
+
+    Order matters: lockout check → bcrypt verify → failure bookkeeping. A locked
+    (satellite_id, ip) never reaches the hash compare.
+
+    The lockout runs ONLY when ``client_ip`` is a genuine per-client address
+    (the caller passes None unless ``TRUSTED_PROXIES`` makes it spoof-resistant).
+    Keying a lock on the satellite id alone would hand any LAN host a device
+    denial-of-service: five bad guesses per 15 min against a guessable slug
+    (room names) keep the real satellite out indefinitely. The secret is 256-bit
+    random behind bcrypt — online guessing needs no lockout; CPU is bounded by
+    the connection limiter in front and bcrypt running off the loop.
+    """
+    from services.login_lockout import login_lockout
+
+    parsed = parse_handshake_token(token)
+    if parsed is None:
+        return None
+    satellite_id, secret = parsed
+    scope = f"{_HANDSHAKE_LOCKOUT_SCOPE}{satellite_id}"
+    use_lockout = client_ip is not None
+
+    if use_lockout and await login_lockout.is_locked(scope, client_ip):
+        logger.warning(f"🚫 Satellite handshake locked out for '{satellite_id}'")
+        return None
+
+    verdict = await evaluate_credential(db, satellite_id, secret)
+    if verdict != VERDICT_OK:
+        tripped = use_lockout and await login_lockout.record_failure(scope, client_ip)
+        logger.warning(
+            f"🚫 Satellite handshake rejected for '{satellite_id}': invalid credential"
+            + (" — lockout tripped" if tripped else "")
+        )
+        return None
+
+    if use_lockout:
+        await login_lockout.clear(scope, client_ip)
+    return satellite_id

@@ -136,7 +136,9 @@ def _ws_origin_allowed(websocket: WebSocket) -> bool:
 
 async def authenticate_websocket(
     websocket: WebSocket,
-    token: str | None = None
+    token: str | None = None,
+    *,
+    allow_satellite_psk: bool = False,
 ) -> dict[str, Any] | None:
     """
     Authenticate a WebSocket connection.
@@ -144,6 +146,10 @@ async def authenticate_websocket(
     Args:
         websocket: WebSocket connection
         token: Optional token (from query param or first message)
+        allow_satellite_psk: ONLY the satellite endpoint passes True. A
+            ``sat.<id>.<secret>`` credential authenticates a satellite, not a
+            user or a browser device; at every other endpoint it is refused
+            outright (never falls through to JWT / device token).
 
     Returns:
         Token data if authenticated, None otherwise
@@ -167,7 +173,7 @@ async def authenticate_websocket(
     # here means "came from the URL" — the cookie and Authorization-header
     # fallbacks below only ever run when this is None. Captured BEFORE those
     # fallbacks, because afterwards the two sources are indistinguishable.
-    token_from_url = token is not None
+    token_from_url = bool(token)
 
     # Skip authentication if disabled
     if not settings.auth_enabled:
@@ -190,6 +196,56 @@ async def authenticate_websocket(
 
     if not token:
         return None
+
+    # Strategy S: the per-satellite enrollment PSK as the handshake credential
+    # (``sat.<satellite_id>.<secret>``, SATELLITE_PSK_HANDSHAKE_ENABLED —
+    # docs/design/household-auth-on-cutover.md §6.1 Nr. 1). Checked BEFORE the
+    # JWT decode because the prefix makes it unambiguous and cheap to detect.
+    # A ``sat.`` token that fails NEVER falls through to the JWT / device-token
+    # strategies: it identifies itself as a satellite credential, so a wrong
+    # one is a rejection, not "try something else". No user_id is bound — the
+    # device account is a separate step (P0 Nr. 3); the handler binds the
+    # register frame's satellite_id to this identity.
+    if token.startswith("sat."):
+        if not (settings.satellite_psk_handshake_enabled and allow_satellite_psk):
+            # Flag off, or a non-satellite endpoint: a satellite credential is
+            # never a user or device credential. Refuse — do not try JWT /
+            # device-token decoding on it (behaviour-identical to before for
+            # the flag-off case, where it failed both anyway).
+            return None
+        from ha_glue.services.satellite_enrollment_service import authorize_handshake
+        from services.database import AsyncSessionLocal
+
+        # The PSK is a long-lived device secret: it travels in the Authorization
+        # header (the satellite client already does that; a cookie would be
+        # accepted too, but no satellite sends one). In the URL it would land in
+        # proxy/access logs — refuse rather than accept.
+        if token_from_url:
+            logger.warning("Satellite handshake token presented in the URL — refused")
+            return None
+        # Lockout keying mirrors the login route: the per-address scope only when
+        # TRUSTED_PROXIES makes the address spoof-resistant. Behind Traefik the
+        # raw socket peer is the proxy pod for EVERY client — keying on it would
+        # let any LAN client lock a satellite out with five bad guesses. Until
+        # TRUSTED_PROXIES is set the lock is satellite-wide at the strict
+        # threshold (the same posture BL-0125 accepted for usernames).
+        from services.api_rate_limiter import client_ip_is_spoof_resistant, get_client_ip
+
+        client_ip = get_client_ip(websocket) if client_ip_is_spoof_resistant() else None
+        try:
+            async with AsyncSessionLocal() as db:
+                satellite_id = await authorize_handshake(db, token, client_ip)
+        except Exception as e:  # noqa: BLE001 — fail CLOSED, never admit on a DB error
+            logger.error(f"Satellite handshake auth errored (fail-closed): {e}")
+            return None
+        if satellite_id is None:
+            return None
+        logger.debug(f"WebSocket authenticated via satellite PSK: satellite_id={satellite_id}")
+        return {
+            "authenticated": True,
+            "auth_method": "satellite_psk",
+            "satellite_id": satellite_id,
+        }
 
     # Strategy 1: Try JWT validation (web chat users authenticated via
     # /api/auth/login). The React frontend reads `renfield_access_token`
