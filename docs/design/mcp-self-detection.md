@@ -331,7 +331,7 @@ state and must not leak into the other two:
 - The alert text names the count, never the upstream error text: throttle messages
   carry request URLs, and API URLs can carry keys.
 
-### 3.2 Retry-After (dark) — a deliberate deviation from "backoff"
+### 3.2 Retry-After (default dark; on in the household since 2026-09-21) — a deliberate deviation from "backoff"
 
 The roadmap said "honor Retry-After with backoff instead of surfacing a throttle as a
 hard error". Built: with `MCP_RATE_LIMIT_BACKOFF_ENABLED`, a Retry-After the upstream
@@ -440,7 +440,7 @@ project `CLAUDE.md` stated and this document did not; the invariants now live in
 | `MCP_HEALTH_ALERT_RETRY_SECONDS` | 600 |
 | `MCP_HEALTH_NO_TOOLS_GRACE_SECONDS` | 300 |
 | `MCP_HEALTH_RATE_LIMIT_SIGNAL_ENABLED` | dark (`…_MIN_EVENTS` 5 in `…_WINDOW_SECONDS` 900) |
-| `MCP_RATE_LIMIT_BACKOFF_ENABLED` | dark, capped by `MCP_RATE_LIMIT_MAX_BACKOFF_SECONDS` |
+| `MCP_RATE_LIMIT_BACKOFF_ENABLED` | default dark; **on in the household since 2026-09-21** (BL-0416, backoff only), capped by `MCP_RATE_LIMIT_MAX_BACKOFF_SECONDS` |
 | `HEALTH_READY_DB_TIMEOUT_SECONDS` / `HEALTH_READY_AUX_TIMEOUT_SECONDS` | 3 s / 1 s |
 
 **Points not stated above:**
