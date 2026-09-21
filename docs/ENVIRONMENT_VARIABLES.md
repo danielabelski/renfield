@@ -1154,6 +1154,28 @@ SATELLITE_PSK_HANDSHAKE_ENABLED=false
 #   read/write, calendar: read/manage), gibt der engere Grant nur das Lesen —
 #   also `mcp.paperless.read` bzw. `mcp.calendar.read`, nie `mcp.paperless`.
 SATELLITE_ANONYMOUS_PERMISSIONS=""
+# Nutzername des GERÄTEKONTOS, als das ein Satelliten-Zug OHNE erkannten
+# Sprecher läuft (auth-on; §6.1 Nr. 3, D-4b). Damit hat der Zug eine Identität:
+# Er liest so weit, wie die Kreis-Mitgliedschaften dieses Kontos reichen (der
+# Entwurf gibt ihm Stufe 2 nur beim Admin) und handelt im Rahmen seiner Rolle.
+# WER VON BEIDEN GILT: Ist ein Gerätekonto gesetzt, ist SEINE ROLLE der
+# Rechtesatz — SATELLITE_ANONYMOUS_PERMISSIONS oben wird dann NICHT mehr
+# gelesen. Die Liste ist der Weg OHNE Gerätekonto. Nie beides zur Hälfte.
+# Was ein Gerät nie darf, ist die Spuren einer Person sammeln: Das Kennzeichen
+# `users.is_device_account` sperrt Gedächtnis-Extraktion und Präsenzbuchung,
+# und ein erkannter Sprecher ersetzt das Gerätekonto im Zug.
+# LEER (Vorgabe) = kein Gerätekonto, heutiges Verhalten. Greift nur mit
+# AUTH_ENABLED=true. Der genannte Nutzer MUSS das Kennzeichen tragen — das Konto
+# einer Person wird nie von einem Gerät geliehen. JEDER nicht auflösbare Fall
+# (Name unbekannt, Nutzer ohne Kennzeichen, DB-Aussetzer) VERWEIGERT den Zug
+# hörbar, statt still auf die Liste oben zurückzufallen; das Backend warnt
+# dabei einmalig. Ein falsch geschriebener Kontoname legt den unerkannten
+# Sprachbetrieb also still — gewollt: eine laute Absage ist besser als eine
+# stille Verbreiterung der Rechte.
+# Das Kennzeichen setzt der Admin bei der Kontoanlage
+# (`POST /api/users` mit `is_device_account: true`) oder später
+# (`PUT /api/users/{id}`); es steht auch in der Antwort jedes Nutzer-Endpunkts.
+SATELLITE_DEVICE_ACCOUNT=""
 
 # Stop-gap aus der chirurgischen H1-Mitigation (greift nur wenn ENROLLMENT aus):
 # Komma-Liste der satellite_ids, die per-Person-IRKs empfangen dürfen. Leer =
