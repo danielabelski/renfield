@@ -12,15 +12,21 @@ Policy (the safety core):
     >= the candidate threshold by themselves, so embedding can't tell two people
     apart — persons only reconcile when names are related (equal or token-subset:
     "Alice" ⊆ "Alice B."). Mirrors resolve's person embedding-match skip. This is
-    what makes the reconciler safe to enable; see _person_pair_names_unrelated.
+    what makes the reconciler safe to enable; see _names_related. ONE exception
+    (#876 field data): a TYPO pair — same tokens except one, that one differing
+    by a single in-token edit, both spellings >= 4 chars (_names_near_typo) —
+    survives as a REVIEW proposal (reason name_typo), never an auto-merge.
   - SAME tier AND similarity >= auto-merge threshold -> auto-merge via
     KnowledgeGraphService.merge_entities (which enforces tier=MIN etc.).
   - CROSS tier (could change visibility, D3) OR gray-zone (similar but below
-    the auto bar, D10) -> a KgMergeProposal for owner review on /brain/review.
-    Never silently merged.
+    the auto bar, D10) OR name_typo -> a KgMergeProposal for owner review on
+    /brain/review. Never silently merged. cross_tier takes precedence as the
+    label (the visibility change is the invariant-bearing fact).
 
 Idempotent: candidate pairs that already have a PENDING proposal are excluded
-by the find query (and the proposals table carries a partial-unique guard).
+by the find query (and the proposals table carries a partial-unique guard), and
+so are pairs the owner REJECTED — a rejection is a verdict the reconciler does
+not re-litigate (the only way back is an explicit admin merge).
 """
 from __future__ import annotations
 
@@ -34,8 +40,10 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
 from models.database import (
     EMBEDDING_DIMENSION,
     KG_MERGE_PROPOSAL_PENDING,
+    KG_MERGE_PROPOSAL_REJECTED,
     KG_MERGE_REASON_CROSS_TIER,
     KG_MERGE_REASON_GRAY_ZONE,
+    KG_MERGE_REASON_NAME_TYPO,
     KGEntity,
     KgMergeProposal,
 )
@@ -100,30 +108,13 @@ def _is_person(etype: str | None, etypes_text: str | None) -> bool:
     return etype == "person" or (etypes_text is not None and '"person"' in etypes_text)
 
 
-def _person_pair_names_unrelated(
-    etype_a: str | None, etypes_a: str | None, name_a: str | None,
-    etype_b: str | None, etypes_b: str | None, name_b: str | None,
-) -> bool:
-    """The person-guard: True for a PERSON-involving pair whose names are unrelated.
-
-    Distinct person names embed >= the candidate threshold by themselves
-    (measured: Jutta~Anna 0.894, Jutta~Gaby 0.863), so embedding similarity alone
-    cannot tell two different people apart. A person pair is only a real dedup
-    candidate when the names are RELATED — equal, or one's whitespace tokens are a
-    subset of the other's ("Alice" ⊆ "Alice B.", "Jutta" ⊆ "Jutta van den
-    Bongard"). Unrelated-name person pairs (Jutta vs Anna) are dropped entirely —
-    no auto-merge, no proposal — which is what makes the reconciler safe to enable
-    (resolve already skips embedding-match for persons for the same reason). Pairs
-    with no person on either side are unaffected (return False).
-    """
-    if not (_is_person(etype_a, etypes_a) or _is_person(etype_b, etypes_b)):
-        return False
-    return not _names_related(name_a, name_b)
-
-
 def _names_related(name_a: str | None, name_b: str | None) -> bool:
     """Two names are related iff equal or one's whitespace tokens subset the other.
 
+    The person-guard's evidence (find_duplicate_pairs applies it to any pair with
+    a person on either side): distinct person names embed >= the candidate
+    threshold by themselves (measured: Jutta~Anna 0.894, Jutta~Gaby 0.863), so
+    embedding similarity alone cannot tell two different people apart.
     "Alice" ⊆ "Alice B.", "Jutta" ⊆ "Jutta van den Bongard" -> related (likely the
     same entity, a surface-form variant). "Jutta" vs "Anna", "Anna Schmidt" vs
     "Anna Müller" -> unrelated. Empty on either side -> not related (can't tell).
@@ -132,6 +123,61 @@ def _names_related(name_a: str | None, name_b: str | None) -> bool:
     if not ta or not tb:
         return False
     return ta == tb or ta <= tb or tb <= ta
+
+
+# Minimum token length for the typo test. A one-character difference in a short
+# token is a different word, not a slip: "01" vs "02" (test accounts numbered by
+# a trailing ordinal), "Jan" vs "Jen". Measured on the #876 field data: the six
+# false pairs all differ in a 2-character ordinal, the one true pair in a
+# 12-character surname.
+_TYPO_MIN_TOKEN_LEN = 4
+
+
+def _osa_distance_is_one(a: str, b: str) -> bool:
+    """Optimal-string-alignment distance == 1: one substitution, insertion,
+    deletion, or ADJACENT transposition. Names are short; a full DP is cheap."""
+    if a == b or abs(len(a) - len(b)) > 1:
+        return False
+    la, lb = len(a), len(b)
+    prev2: list[int] | None = None
+    prev = list(range(lb + 1))
+    for i in range(1, la + 1):
+        cur = [i] + [0] * lb
+        for j in range(1, lb + 1):
+            cost = 0 if a[i - 1] == b[j - 1] else 1
+            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost)
+            if (i > 1 and j > 1 and a[i - 1] == b[j - 2] and a[i - 2] == b[j - 1]
+                    and prev2 is not None):
+                cur[j] = min(cur[j], prev2[j - 2] + 1)
+        prev2, prev = prev, cur
+    return prev[lb] == 1
+
+
+def _names_near_typo(name_a: str | None, name_b: str | None) -> bool:
+    """Two names are a TYPO pair iff they have the same tokens in the same order
+    except for exactly one token, and that token differs by a single in-token
+    edit (OSA distance 1) with both spellings at least ``_TYPO_MIN_TOKEN_LEN``.
+
+    This is the gap the token-subset test leaves (#876 field data, 2026-09-21:
+    the real case had two characters transposed INSIDE the final token of a
+    four-token name; the anonymised stand-in "…Lastname" / "…Lastnrame" is a
+    one-character insertion — both are OSA distance 1). Such a pair is a subset
+    in neither direction, so the person-guard dropped the single most common
+    duplicate cause with no merge and no proposal. A typo pair is a REVIEW
+    candidate only ("Anna Schmidt" vs "Anna Schmitt" may be two people); the
+    caller must never auto-merge it. Names that are already related (equal /
+    subset) are not typo pairs.
+    """
+    ta, tb = _norm(name_a).split(), _norm(name_b).split()
+    if not ta or not tb or len(ta) != len(tb):
+        return False
+    diffs = [(x, y) for x, y in zip(ta, tb, strict=True) if x != y]
+    if len(diffs) != 1:
+        return False
+    x, y = diffs[0]
+    if min(len(x), len(y)) < _TYPO_MIN_TOKEN_LEN:
+        return False
+    return _osa_distance_is_one(x, y)
 
 
 @dataclass
@@ -155,6 +201,10 @@ class MergeCandidate:
     # refactor or a person-detection miss can't silently merge two distinct people.
     is_person_pair: bool = False
     names_related: bool = True
+    # Person pair whose names differ by one in-token edit (see _names_near_typo):
+    # kept as a REVIEW candidate (reason name_typo), never auto-merged — the
+    # gate above already refuses it via names_related=False; this is the label.
+    name_typo: bool = False
 
 
 @dataclass
@@ -214,9 +264,13 @@ class KgReconcilerService:
               -- never auto-merge/propose. Exclude note-typed entities from candidacy.
               AND a.entity_type <> 'note' AND b.entity_type <> 'note'
               AND (1 - (a.embedding::halfvec({dim}) <=> b.embedding::halfvec({dim}))) >= :cand
+              -- A pair with an open proposal is not re-proposed; neither is a pair
+              -- the owner already REJECTED — a rejection is a verdict, re-asking it
+              -- every run is queue noise (name_typo pairs are "maybe two people"
+              -- by definition, so their rejection rate is structurally high).
               AND NOT EXISTS (
                   SELECT 1 FROM kg_merge_proposals p
-                  WHERE p.status = :pending
+                  WHERE p.status IN (:pending, :rejected)
                     AND ((p.loser_entity_id = a.id AND p.winner_entity_id = b.id)
                       OR (p.loser_entity_id = b.id AND p.winner_entity_id = a.id)))
             ORDER BY similarity DESC
@@ -226,6 +280,7 @@ class KgReconcilerService:
             "uid": user_id,
             "cand": settings.kg_reconciler_candidate_threshold,
             "pending": KG_MERGE_PROPOSAL_PENDING,
+            "rejected": KG_MERGE_PROPOSAL_REJECTED,
             "cap": cap,
         })).fetchall()
 
@@ -236,8 +291,12 @@ class KgReconcilerService:
             related = _names_related(r.name_a, r.name_b)
             # Person-guard: drop person-involving pairs whose names are unrelated
             # (distinct people whose names merely cluster in embedding space). No
-            # auto-merge, no proposal.
-            if is_person and not related:
+            # auto-merge, no proposal. The one exception is a TYPO pair (one
+            # in-token edit, see _names_near_typo): it survives as a review
+            # proposal only — names_related stays False, so the auto-merge gate
+            # refuses it, and block_auto_merge says so explicitly.
+            typo = bool(is_person and not related and _names_near_typo(r.name_a, r.name_b))
+            if is_person and not related and not typo:
                 continue
             # Winner = the more-established row: higher mention_count, tie-break
             # on the OLDER first_seen_at (smaller timestamp).
@@ -253,29 +312,35 @@ class KgReconcilerService:
                 loser_id=loser_id, winner_id=winner_id,
                 similarity=float(r.similarity),
                 loser_tier=loser_tier, winner_tier=winner_tier,
-                block_auto_merge=_name_collision_low_signal(
+                block_auto_merge=typo or _name_collision_low_signal(
                     r.name_a, r.name_b, r.desc_a, r.desc_b,
                 ),
                 is_person_pair=is_person,
                 names_related=related,
+                name_typo=typo,
             ))
         return out
 
     async def _propose(self, user_id: int, c: MergeCandidate) -> bool:
-        """Create a PENDING proposal unless one already exists for the pair."""
+        """Create a PENDING proposal unless the pair is already open or was
+        REJECTED by the owner (a verdict the reconciler does not re-litigate)."""
         existing = (await self.db.execute(
             select(KgMergeProposal.id).where(
-                KgMergeProposal.status == KG_MERGE_PROPOSAL_PENDING,
+                KgMergeProposal.status.in_(
+                    [KG_MERGE_PROPOSAL_PENDING, KG_MERGE_PROPOSAL_REJECTED]
+                ),
                 KgMergeProposal.loser_entity_id.in_([c.loser_id, c.winner_id]),
                 KgMergeProposal.winner_entity_id.in_([c.loser_id, c.winner_id]),
             )
         )).first()
         if existing:
             return False
-        reason = (
-            KG_MERGE_REASON_CROSS_TIER if c.loser_tier != c.winner_tier
-            else KG_MERGE_REASON_GRAY_ZONE
-        )
+        if c.loser_tier != c.winner_tier:
+            reason = KG_MERGE_REASON_CROSS_TIER
+        elif c.name_typo:
+            reason = KG_MERGE_REASON_NAME_TYPO
+        else:
+            reason = KG_MERGE_REASON_GRAY_ZONE
         self.db.add(KgMergeProposal(
             user_id=user_id,
             loser_entity_id=c.loser_id,

@@ -89,6 +89,18 @@ themselves. `_names_related` = equal or whitespace-token-subset, e.g. "Alice" �
 person's full name. The auto-merge gate re-requires name-relatedness for person pairs (defense in depth behind the
 find-time drop), so a detection miss can't silently merge two distinct people.
 
+One exception since 2026-09-21 (#876 field data from a live auth-on graph: the most common person duplicate was two
+characters transposed *inside* one token of a four-token name — a subset in neither direction, so the guard left it
+with no path at all, and the conflation monitor excludes persons): a **typo pair** — same tokens in the same order
+except one, that one differing by a single in-token edit (`_names_near_typo`, OSA distance 1, both spellings ≥ 4
+characters) — survives the find-time drop as a **review proposal** with `reason=name_typo`. It is never auto-merged:
+`names_related` stays False, so the gate refuses it, and `block_auto_merge` is set. The token minimum is deliberate:
+the same data set held six pairs of numbered test accounts differing only in a trailing two-character ordinal —
+distinct identities that must stay apart. A cross-tier typo pair is labelled `cross_tier` (the visibility change is
+the invariant-bearing fact and drives the card's warning). Since the same change, a proposal the owner **rejected**
+is final for the reconciler — the self-join and `_propose` exclude `pending` and `rejected` pairs alike, so a
+"maybe two people" verdict is not re-asked every run; the only way back is an explicit admin merge.
+
 Operational details:
 
 - Each pass is serialized per-user by a non-blocking advisory lock (`_RECONCILER_LOCK_NS`); an overlapping run is a

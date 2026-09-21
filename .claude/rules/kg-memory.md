@@ -36,10 +36,17 @@ exact name → surface-form (jsonb `@>`) → embedding (**SAME-TIER only** + hig
 - Same-tier high-confidence → auto-merge. **Cross-tier / gray-zone → `kg_merge_proposals`, never a silent merge.**
 - **Person-guard:** a person-involving pair (primary OR `entity_types`) with UNRELATED names is dropped entirely — no
   merge, no proposal (`_names_related` = equal or whitespace-token-subset). The auto-merge gate RE-CHECKS it.
+  ONE exception (#876 field data): a **typo pair** — same tokens except one, that one differing by a single in-token
+  edit (`_names_near_typo`, both spellings ≥ 4 chars) — survives as a **review proposal** (`reason=name_typo`), never
+  an auto-merge. Short tokens stay excluded on purpose (numbered test accounts "…01"/"…02" are distinct people).
 - Same-name gate: same normalized name + empty/identical descriptions never auto-merges → review.
 - Per-user non-blocking advisory lock `_RECONCILER_LOCK_NS`; an overlapping run is a no-op. Each pass first re-embeds
   up to `KG_RECONCILER_EMBED_BACKFILL_PER_RUN` null-embedding entities (else invisible to the self-join).
 - Approving a proposal whose counterpart was already merged closes it as `superseded`, not `approved`.
+- **A rejection is final for the reconciler.** The self-join AND `_propose` exclude pairs with a `pending` OR
+  `rejected` proposal; a rejected pair never comes back on its own. The only way back is an explicit admin merge
+  (`POST /entities/merge`, `KG_MANAGE`). Label precedence when a pair qualifies twice: `cross_tier` > `name_typo` >
+  `gray_zone` (the card keys its warning and button de-emphasis on `cross_tier`).
 - Routes are `KG_VIEW`, own graph only, per-proposal ownership 404. Scheduler `_schedule_kg_reconciler`.
 
 ## Conflation tripwire (`KG_CONFLATION_MONITOR_ENABLED`, dark, read-only)
