@@ -1153,8 +1153,17 @@ class TestReminderCRUD:
         await db_session.commit()
         await db_session.refresh(reminder)
 
+        # A real notification: `reminders.notification_id` is a foreign key.
+        from models.database import Notification
+
+        notification = Notification(
+            event_type="reminder", title="T", message="M",
+        )
+        db_session.add(notification)
+        await db_session.flush()
+
         service = ReminderService(db_session)
-        await service.mark_fired(reminder.id, notification_id=42)
+        await service.mark_fired(reminder.id, notification_id=notification.id)
 
         from sqlalchemy import select
         result = await db_session.execute(
@@ -1163,7 +1172,7 @@ class TestReminderCRUD:
         r = result.scalar_one()
         assert r.status == REMINDER_FIRED
         assert r.fired_at is not None
-        assert r.notification_id == 42
+        assert r.notification_id == notification.id
 
     @pytest.mark.database
     async def test_create_reminder_invalid_time(self, db_session):

@@ -149,6 +149,44 @@ def _wav() -> tuple:
 
 
 @pytest.mark.asyncio
+async def _doc(db_session, name: str = "transkript.md") -> int:
+    """A real transcript Document, returning its id.
+
+    Postgres enforces `meetings.transcript_document_id → documents.id`. These
+    tests used to name ids like 4242 or 77 that existed nowhere; the sqlite
+    harness accepted them, so the link the test claimed to verify was never a
+    link at all.
+    """
+    from models.database import Document as _Doc
+
+    doc = _Doc(filename=name, file_path=f"/tmp/{name}", status="completed")
+    db_session.add(doc)
+    await db_session.commit()
+    await db_session.refresh(doc)
+    return doc.id
+
+
+async def _persist_users(db_session, *users):
+    """Write the users a route will reference into the database.
+
+    Postgres enforces `meetings.owner_user_id → users.id`; these tests used to
+    hand the auth override an in-memory `User(id=1)` that existed nowhere, and
+    the sqlite harness let the insert through. The FK is the point of the test
+    (owner gating), so the owner has to be real.
+    """
+    from sqlalchemy import select as _select
+
+    from models.database import Role
+
+    exists = (await db_session.execute(_select(Role).where(Role.id == 1))).scalar_one_or_none()
+    if exists is None:
+        db_session.add(Role(id=1, name="testrolle", permissions=["chat.own"], is_system=False))
+        await db_session.flush()
+    for u in users:
+        db_session.add(u)
+    await db_session.commit()
+
+
 class TestMeetingRoutes:
     async def test_routes_404_when_flag_off(self, async_client, monkeypatch):
         monkeypatch.setattr(settings, "meeting_transcription_enabled", False)
@@ -264,12 +302,15 @@ class TestMeetingRoutes:
         )
         assert r.status_code == 422
 
-    async def test_status_poll_and_owner_gating(self, async_client, monkeypatch, tmp_path):
+    async def test_status_poll_and_owner_gating(
+        self, async_client, monkeypatch, tmp_path, db_session
+    ):
         from models.database import User
 
         _enable(monkeypatch, tmp_path, auth=True)
         user_a = User(id=1, username="a", password_hash="x", is_active=True, role_id=1)
         user_b = User(id=2, username="b", password_hash="x", is_active=True, role_id=1)
+        await _persist_users(db_session, user_a, user_b)
 
         _override_user(user_a)
         created = await async_client.post(
@@ -294,13 +335,14 @@ class TestMeetingRoutes:
         assert (await async_client.get("/api/meetings")).status_code == 404
 
     async def test_list_owner_scoped_newest_first(
-        self, async_client, monkeypatch, tmp_path
+        self, async_client, monkeypatch, tmp_path, db_session
     ):
         from models.database import User
 
         _enable(monkeypatch, tmp_path, auth=True)
         user_a = User(id=1, username="a", password_hash="x", is_active=True, role_id=1)
         user_b = User(id=2, username="b", password_hash="x", is_active=True, role_id=1)
+        await _persist_users(db_session, user_a, user_b)
 
         # A uploads two, B uploads one
         _override_user(user_a)
@@ -337,7 +379,7 @@ class TestMeetingRoutes:
         assert len(rows) >= 1
 
     async def test_delete_owner_gated_removes_row_and_audio(
-        self, async_client, monkeypatch, tmp_path
+        self, async_client, monkeypatch, tmp_path, db_session
     ):
         import os
         from models.database import User
@@ -345,6 +387,7 @@ class TestMeetingRoutes:
         _enable(monkeypatch, tmp_path, auth=True)
         user_a = User(id=1, username="a", password_hash="x", is_active=True, role_id=1)
         user_b = User(id=2, username="b", password_hash="x", is_active=True, role_id=1)
+        await _persist_users(db_session, user_a, user_b)
 
         _override_user(user_a)
         created = await async_client.post(
@@ -760,8 +803,10 @@ class TestPipelineIngestAndReattribution:
                 {"speaker": "SPEAKER_01", "text": "hello", "start_s": 1.0, "end_s": 2.0},
             ]}
 
+        doc_id = await _doc(db_session, "sync-transkript.md")
+
         async def _fake_ingest(db, meeting, markdown):
-            return 4242  # pretend the transcript Document got this id
+            return doc_id  # the transcript Document the ingest would have created
 
         monkeypatch.setattr(mp, "transcribe_meeting", _fake_transcribe)
         monkeypatch.setattr(mp, "_ingest_transcript", _fake_ingest)
@@ -773,7 +818,7 @@ class TestPipelineIngestAndReattribution:
         await mp.process_meeting(m.id, "/x/meeting.wav")
         await db_session.refresh(m)
         assert m.status == "completed"
-        assert m.transcript_document_id == 4242
+        assert m.transcript_document_id == doc_id
         assert [s["speaker"] for s in m.segments] == ["Sprecher 1", "Sprecher 2"]
         assert m.segments[0]["speaker_key"] == "SPEAKER_00"
 
@@ -873,8 +918,9 @@ class TestMeetingRetention:
             return True
 
         monkeypatch.setattr("services.rag_service.RAGService.delete_document", _fake_delete)
+        expired_doc_id = await _doc(db_session, "abgelaufen.md")
         expired = Meeting(
-            status="completed", transcript_document_id=77,
+            status="completed", transcript_document_id=expired_doc_id,
             retention_until=datetime.utcnow() - timedelta(days=1),
         )
         db_session.add(expired)
@@ -888,7 +934,7 @@ class TestMeetingRetention:
         assert recent_audio.exists()         # recent audio kept
         assert audio_deleted >= 1
         assert meetings_purged == 1
-        assert purged == [77]                # transcript doc deleted via RAGService
+        assert purged == [expired_doc_id]    # transcript doc deleted via RAGService
         assert await db_session.get(Meeting, expired_id) is None  # row purged
 
     async def test_failed_meeting_audio_is_freed(self, db_session, monkeypatch, tmp_path):
@@ -913,43 +959,54 @@ class TestMeetingRetention:
         await mr.cleanup_meetings()
         assert not audio.exists()
 
-    async def test_one_bad_purge_does_not_abort_sweep(self, monkeypatch, tmp_path):
+    async def test_one_bad_purge_does_not_abort_sweep(
+        self, monkeypatch, tmp_path, db_session
+    ):
         """A delete_document failure on one expired meeting rolls back + continues;
-        a second expired meeting still gets purged. Uses an ISOLATED engine so
+        a second expired meeting still gets purged. Uses the shared engine so
         the per-meeting commit/rollback are real (the shared session can't model
         a rollback without breaking the outer test transaction)."""
         from datetime import datetime, timedelta
 
-        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-        from sqlalchemy.pool import StaticPool
+        from sqlalchemy.ext.asyncio import async_sessionmaker
 
-        from models.database import Base
         from services import meeting_retention as mr
 
-        engine = create_async_engine(
-            "sqlite+aiosqlite:///:memory:",
-            connect_args={"check_same_thread": False},
-            poolclass=StaticPool,
-        )
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        maker = async_sessionmaker(engine, expire_on_commit=False)
+        # The shared Postgres test database, not a private sqlite engine: the
+        # models declare Postgres-only column types, and the sweep under test
+        # runs against real constraints in production.
+        maker = async_sessionmaker(db_session.bind, expire_on_commit=False)
 
         monkeypatch.setattr(mr, "AsyncSessionLocal", maker)
         monkeypatch.setattr(mr.settings, "upload_dir", str(tmp_path))
         monkeypatch.setattr(mr.settings, "meeting_keep_audio", True)  # isolate mechanism 2
         (tmp_path / "meetings").mkdir()
 
+        # Real transcript Documents: the FK from meetings is enforced, and the
+        # sweep's "one failure must not abort the rest" only means something if
+        # both rows are real.
+        async with maker() as s:
+            bad_doc_id = await _doc(s, "schlecht.md")
+            good_doc_id = await _doc(s, "gut.md")
+
         async def _delete(self, doc_id):
-            if doc_id == 111:
+            if doc_id == bad_doc_id:
                 raise RuntimeError("boom")
             return True
 
         monkeypatch.setattr("services.rag_service.RAGService.delete_document", _delete)
         past = datetime.utcnow() - timedelta(days=1)
         async with maker() as s:
-            bad = Meeting(status="completed", transcript_document_id=111, retention_until=past)
-            good = Meeting(status="completed", transcript_document_id=222, retention_until=past)
+            bad = Meeting(
+                status="completed",
+                transcript_document_id=bad_doc_id,
+                retention_until=past,
+            )
+            good = Meeting(
+                status="completed",
+                transcript_document_id=good_doc_id,
+                retention_until=past,
+            )
             s.add_all([bad, good])
             await s.commit()
             bad_id, good_id = bad.id, good.id
@@ -960,7 +1017,6 @@ class TestMeetingRetention:
             assert await s.get(Meeting, good_id) is None     # purged
             assert await s.get(Meeting, bad_id) is not None  # rolled back, retried next sweep
         assert purged == 1
-        await engine.dispose()
 
 
 # ---------------------------------------------------------------------------
@@ -1051,7 +1107,10 @@ class TestReviewFixes:
         monkeypatch.setattr(mp, "_overwrite_transcript_and_reindex", _fake_overwrite)
         monkeypatch.setattr(mp, "_ingest_transcript", _fake_ingest)
 
-        m = Meeting(status="processing", transcript_document_id=55)  # already ingested
+        m = Meeting(
+            status="processing",
+            transcript_document_id=await _doc(db_session, "vorhanden.md"),
+        )  # already ingested
         db_session.add(m)
         await db_session.commit()
 
