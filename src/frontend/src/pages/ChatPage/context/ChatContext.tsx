@@ -47,6 +47,7 @@ import type {
   PaperlessConfirmField,
   PaperlessConfirmRequestMessage,
   RagContextMessage,
+  SessionReplacedMessage,
   UploadProcessedMessage,
 } from '../hooks/useChatWebSocket';
 import type { UploadStates, UploadedDocument } from '../hooks/useDocumentUpload';
@@ -467,6 +468,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
     deleteConversation,
     loadConversationHistory,
     addConversation,
+    refreshConversations,
   } = useChatSessions();
 
   const getAudioContext = useCallback((): AudioContext | null => {
@@ -1243,6 +1245,24 @@ export function ChatProvider({ children }: ChatProviderProps) {
   }, []);
 
   // WebSocket hook
+  // The server refused the session id this tab sent — it belongs to someone
+  // else, or to nobody (an ownerless conversation is no longer adopted by
+  // whoever opens it first). The turn was saved into a fresh conversation;
+  // adopt its id so everything after this lands there. The transcript on screen
+  // is this turn's — a refused conversation never loads its history — so there
+  // is nothing to clear. The optimistic sidebar entry under the old id is
+  // local-only and disappears with the next refresh, which we ask for here.
+  const handleSessionReplaced = useCallback((data: SessionReplacedMessage) => {
+    setSessionId(data.session_id);
+    try {
+      localStorage.setItem(SESSION_STORAGE_KEY, data.session_id);
+    } catch {
+      // private mode / blocked storage: the id still holds for this tab
+    }
+    rememberTabConversation(data.session_id);
+    void refreshConversations();
+  }, [refreshConversations]);
+
   const { wsConnected, sendMessage: wsSendMessage, isReady, whenReady } = useChatWebSocket({
     onStreamChunk: handleStreamChunk,
     onStreamDone: handleStreamDone,
@@ -1263,6 +1283,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
     onFollowups: handleFollowups,
     onPaperlessConfirmRequest: handlePaperlessConfirmRequest,
     onDeviceActionResult: handleDeviceActionResult,
+    onSessionReplaced: handleSessionReplaced,
   });
 
   // Interactive device widget: send a toggle/run action over the WS and resolve
@@ -1815,10 +1836,22 @@ export function ChatProvider({ children }: ChatProviderProps) {
       setRagSources([]);
     } else {
       try {
-        const response = await apiClient.post<{ message: string }>('/api/chat/send', {
-          message: text,
-          session_id: sessionId,
-        });
+        const response = await apiClient.post<{ message: string; session_id?: string }>(
+          '/api/chat/send',
+          {
+            message: text,
+            session_id: sessionId,
+          },
+        );
+
+        // The REST path applies the same ownership rule as the socket: a
+        // conversation that is not ours is not continued, we get a fresh one.
+        // The answer carries the id that was actually used — adopt it, or the
+        // next turn would name the refused one again.
+        const usedSessionId = response.data.session_id;
+        if (usedSessionId && usedSessionId !== sessionId) {
+          handleSessionReplaced({ type: 'session_replaced', session_id: usedSessionId });
+        }
 
         setMessages((prev) => [...prev, { role: 'assistant', content: response.data.message }]);
       } catch (error) {
@@ -1828,7 +1861,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
         setLoading(false);
       }
     }
-  }, [sessionId, messages.length, useRag, selectedKnowledgeBase, isReady, whenReady, wsSendMessage, addConversation, attachments, t, pendingRoleHint]);
+  }, [sessionId, messages.length, useRag, selectedKnowledgeBase, isReady, whenReady, wsSendMessage, addConversation, attachments, t, pendingRoleHint, handleSessionReplaced]);
 
   // Wire ref so handleTranscription (declared above) can call sendMessageInternal
   useEffect(() => {

@@ -18,6 +18,7 @@ from loguru import logger
 from pydantic import ValidationError
 
 from models.websocket_messages import WSChatMessage, WSErrorCode
+from services.conversation_service import ConversationNotOwnedError
 from services.database import AsyncSessionLocal
 from services.input_guard import detect_injection
 from services.turn_extraction import (
@@ -221,9 +222,11 @@ async def _session_registerable_by(session_id: str, auth_user_id: int | None) ->
     try:
         async with AsyncSessionLocal() as session:
             result = await session.execute(
-                select(Conversation.user_id).where(Conversation.session_id == session_id)
+                select(Conversation.id, Conversation.user_id).where(
+                    Conversation.session_id == session_id
+                )
             )
-            owner = result.scalar_one_or_none()
+            row = result.first()
     except Exception as e:
         # The call sites run inside the receive loop, whose only `except` is
         # OUTSIDE the loop — a raised DB error here would tear down the whole
@@ -234,9 +237,95 @@ async def _session_registerable_by(session_id: str, auth_user_id: int | None) ->
             f"refusing push-register (connection kept alive): {e}"
         )
         return False
-    # No row yet → new/unowned session (created for this caller). Otherwise the
-    # owner must match the authenticated caller.
-    return owner is None or owner == auth_user_id
+    # No ROW yet → brand-new session, created for this caller: allowed.
+    # A row that exists must be the caller's. An EXISTING ownerless row is not
+    # (auth-on cutover, P0 Nr. 5): with adoption gone it stays ownerless, and
+    # anyone holding the client-minted id could otherwise register for its
+    # pushes. The two used to be indistinguishable — both read as `None`.
+    if row is None:
+        return True
+    return row.user_id == auth_user_id
+
+
+async def _replacement_session_for(
+    websocket: WebSocket, session_id: str, auth_user_id: int | None
+) -> str | None:
+    """A fresh session id when the named one is not the caller's, else None.
+
+    Checked at the BOUNDARY — the `register` frame and the first message of a
+    session — not at persistence. Everything a turn starts keys on the session
+    id it began with (the scan return path remembers it in Redis, the
+    paperless-confirm lookup, the push registration, the summary), so deciding
+    late would leave those pointing at a conversation the turn no longer writes
+    to. Deciding here means the whole turn runs on an id the caller owns.
+
+    Announced to the client immediately; the late `ConversationNotOwnedError`
+    path stays as a backstop for clients that never register.
+    """
+    if await _session_registerable_by(session_id, auth_user_id):
+        return None
+    new_id = str(uuid.uuid4())
+    await websocket.send_json({"type": "session_replaced", "session_id": new_id})
+    logger.info(
+        f"🔁 Session ersetzt: die genannte gehört dem Rufer nicht (user={auth_user_id})"
+    )
+    return new_id
+
+
+async def _restart_conversation_for_caller(
+    websocket: WebSocket,
+    db_session,
+    ollama,
+    *,
+    user_id: int | None,
+    content: str,
+    response: str,
+    user_metadata: dict | None,
+    assistant_metadata: dict | None,
+) -> tuple[str | None, int | None, int | None]:
+    """The named session is not the caller's → give them a fresh one (P0 Nr. 5).
+
+    The session id is minted by the CLIENT and never validated, so it can point
+    at a conversation that belongs to someone else or to nobody. Refusing the
+    write alone would be silent data loss: the turn is answered, the history
+    quietly is not there, and nobody can tell "not saved" from "saved
+    elsewhere". So the server opens a conversation of its own, saves the turn
+    into it, and tells the client which id to use from now on.
+
+    The frame carries the new id and NOTHING else — no reason, no owner. A
+    "that one is taken" would turn this into an oracle for probing session ids.
+
+    Returns ``(session_id, user_message_id, assistant_message_id)``; the session
+    id is ``None`` when the turn carries no identity to own a conversation — a
+    replacement would then just mint another ownerless row, one per turn.
+    """
+    if user_id is None:
+        logger.warning(
+            "⚠️ Refused session, and no identity to open a replacement for — "
+            "turn not persisted"
+        )
+        return None, None, None
+    new_session_id = str(uuid.uuid4())
+    user_msg = await ollama.save_message(
+        new_session_id, "user", content, db_session,
+        metadata=user_metadata if user_metadata else None,
+        user_id=user_id,
+        enforce_ownership=settings.auth_enabled,
+    )
+    assistant_msg = await ollama.save_message(
+        new_session_id, "assistant", response, db_session,
+        metadata=assistant_metadata,
+        user_id=user_id,
+        enforce_ownership=settings.auth_enabled,
+    )
+    await websocket.send_json(
+        {"type": "session_replaced", "session_id": new_session_id}
+    )
+    logger.info(
+        f"🔁 Session ersetzt: der Zug wurde in einer neuen Unterhaltung "
+        f"gespeichert (user={user_id})"
+    )
+    return new_session_id, user_msg.id, assistant_msg.id
 
 
 def _parse_mcp_raw_data(data: list) -> any:
@@ -896,14 +985,16 @@ async def websocket_endpoint(
                 reg_sid = data.get("session_id")
                 if reg_sid:
                     _reg_uid = auth_result.get("user_id") if isinstance(auth_result, dict) else None
-                    if await _session_registerable_by(reg_sid, _reg_uid):
-                        register_ws_connection(reg_sid, websocket)
-                        session_state.db_session_id = reg_sid
-                    else:
-                        logger.warning(
-                            f"⚠️ Refused WS push-register for session {reg_sid}: "
-                            f"not owned by user {_reg_uid} (#657)"
-                        )
+                    # Not the caller's (foreign, or ownerless now that adoption
+                    # is gone)? Hand out a fresh one here, before anything keys
+                    # on the refused id.
+                    _replacement = await _replacement_session_for(
+                        websocket, reg_sid, _reg_uid
+                    )
+                    if _replacement is not None:
+                        reg_sid = _replacement
+                    register_ws_connection(reg_sid, websocket)
+                    session_state.db_session_id = reg_sid
                 continue
 
             # Structured Paperless-confirm decision from the interactive confirm
@@ -1152,15 +1243,16 @@ async def websocket_endpoint(
             if msg_session_id:
                 # Load history from DB if this is the first message with this session_id
                 if not session_state.history_loaded or session_state.db_session_id != msg_session_id:
-                    session_state.db_session_id = msg_session_id
                     _msg_auth_uid = auth_result.get("user_id") if isinstance(auth_result, dict) else None
-                    if await _session_registerable_by(msg_session_id, _msg_auth_uid):
-                        register_ws_connection(msg_session_id, websocket)
-                    else:
-                        logger.warning(
-                            f"⚠️ Refused WS push-register for session {msg_session_id}: "
-                            f"not owned by user {_msg_auth_uid} (#657)"
-                        )
+                    # Same boundary decision as on the `register` frame, for the
+                    # client that sends none: replace BEFORE the turn keys on it.
+                    _replacement = await _replacement_session_for(
+                        websocket, msg_session_id, _msg_auth_uid
+                    )
+                    if _replacement is not None:
+                        msg_session_id = _replacement
+                    session_state.db_session_id = msg_session_id
+                    register_ws_connection(msg_session_id, websocket)
                     try:
                         # Cross-user IDOR guard: scope the history load to the
                         # authenticated (JWT) caller when auth is enabled. The
@@ -2307,6 +2399,10 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
             # Persist messages to DB if session_id is provided
             saved_user_message_id: int | None = None
             saved_assistant_message_id: int | None = None
+            # Hoisted: the PermissionError handler below re-saves the turn into a
+            # fresh conversation and needs this even if the failure happened on
+            # the very first save.
+            user_metadata: dict = {}
             if msg_session_id and full_response:
                 try:
                     async with AsyncSessionLocal() as db_session:
@@ -2372,8 +2468,8 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                                 # See the recompute_memory_activation call below.
                                 regenerate_mode = _fork_msg == "user"
 
-                        # Save user message
-                        user_metadata = {}
+                        # Save user message (user_metadata is hoisted above the
+                        # try so the replacement path can reuse it)
                         if room_context:
                             user_metadata["room_context"] = room_context
                         if attachment_ids:
@@ -2446,6 +2542,42 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                                 model=settings.ollama_chat_model or settings.ollama_model,
                                 threshold=settings.conversation_summary_threshold,
                             )
+                except ConversationNotOwnedError:
+                    # Backstop. The boundary check on `register` / the first
+                    # message normally replaces a refused session BEFORE the turn
+                    # keys on it; this catches the client that sends no register
+                    # frame, and the race where ownership changed mid-turn. Only
+                    # THIS exception — a bare PermissionError is a builtin
+                    # OSError descendant that a plugin could raise for unrelated
+                    # reasons, and pushing the client onto a new session for a
+                    # file-permission error would be absurd.
+                    try:
+                        async with AsyncSessionLocal() as db_session:
+                            (
+                                _replacement_sid,
+                                saved_user_message_id,
+                                saved_assistant_message_id,
+                            ) = await _restart_conversation_for_caller(
+                                websocket, db_session, ollama,
+                                user_id=user_id,
+                                content=content,
+                                response=full_response,
+                                user_metadata=user_metadata,
+                                assistant_metadata=assistant_metadata,
+                            )
+                        if _replacement_sid is not None:
+                            # Rebind BOTH: the turn-local id and the connection
+                            # state. The latter is what the paperless-confirm
+                            # lookup and the disconnect-time unregister read —
+                            # leaving it on the refused id would aim them at a
+                            # conversation this connection no longer writes to.
+                            msg_session_id = _replacement_sid
+                            session_state.db_session_id = _replacement_sid
+                            register_ws_connection(_replacement_sid, websocket)
+                    except Exception as e:  # noqa: BLE001 — never break the turn
+                        logger.warning(
+                            f"⚠️ Failed to open a replacement conversation: {e}"
+                        )
                 except Exception as e:
                     logger.warning(f"⚠️ Failed to save messages to DB: {e}")
 
