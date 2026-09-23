@@ -39,7 +39,7 @@ async def extract_memories_background(
     user_id: int | None,
     session_id: str | None,
     lang: str,
-    captured_kg_subjects: set[str] | None = None,
+    captured_kg_subjects: set[tuple[str, int, int | None]] | None = None,
 ) -> None:
     """Background task: extract and save memories from a conversation exchange.
 
@@ -50,9 +50,12 @@ async def extract_memories_background(
 
     ``captured_kg_subjects`` (Phase 3-subsume per-fact fix): when the caller
     runs the `post_message`/KG extraction FIRST in the same ordered
-    background coroutine, the subject names the KG actually captured a relation
+    background coroutine, the subjects the KG actually captured a relation
     for this turn are threaded here so the subsume gate is per-fact, not a
-    subject-level proxy. None = uncoordinated → service falls back to the proxy.
+    subject-level proxy. Entries are ``(name, entity_id, owner_user_id)`` —
+    the ENTITY ID is what makes the gate multi-user safe (§8.2); a name alone
+    cannot say which same-named person the relation was about.
+    None = uncoordinated → service falls back to the proxy.
     """
     logger.info(
         f"📝 Memory extraction starting (session={session_id}, user_id={user_id}, "
@@ -115,14 +118,18 @@ async def extract_structured_background(
     """Ordered background coroutine for the Phase 3-subsume coordination.
 
     Runs the `post_message` hooks FIRST (KG extraction + plugins like the twin),
-    capturing the subject NAMES of the relations the KG actually saved this turn
-    into a shared set, then runs memory extraction with that set so the subsume
-    gate is per (subject, turn): a state/attribute fact about a subject for whom
-    no relation was captured this turn is kept flat. (NOT truly per-fact — the
-    set holds subject names, not (subject, object) pairs, so a same-turn same-
-    subject state fact alongside an entity-object fact is still subsumed; see
+    capturing the subjects of the relations the KG actually saved this turn into a
+    shared set as ``(lowercased name, entity_id, owner_user_id)``, then runs memory
+    extraction with that set so the subsume gate is per (subject, turn): a
+    state/attribute fact about a subject for whom no relation was captured this
+    turn is kept flat. (NOT truly per-fact — the set holds subjects, not
+    (subject, object) pairs, so a same-turn same-subject state fact alongside an
+    entity-object fact is still subsumed; see
     ConversationMemoryService._should_subsume_fact.) KG extraction runs exactly
     ONCE (in the hook); the set is the only cross-task signal — no double-extract.
+
+    The set is shared with EVERY hook, plugins included, so readers must treat
+    its contents as untrusted shape (see ``_should_subsume_fact``).
 
     Stays entirely in the background (this coroutine is spawned AFTER the turn's
     answer is delivered), so re-sequencing KG-before-memory never delays the user
@@ -132,7 +139,7 @@ async def extract_structured_background(
     """
     from utils.hooks import run_hooks
 
-    captured_kg_subjects: set[str] = set()
+    captured_kg_subjects: set[tuple[str, int, int | None]] = set()
     # 1) post_message hooks first — KG populates the set. The hook reads it under
     #    the kwarg name `captured_subjects` (see kg_post_message_hook). Plugins
     #    (twin) ignore the extra kwarg (**kwargs). run_hooks never raises.
