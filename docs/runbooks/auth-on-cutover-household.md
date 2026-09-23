@@ -44,9 +44,94 @@ Erst weitermachen, wenn die Sicherung **fertig** ist und Du weißt, wo sie liegt
 
 ## 1. Vorflug
 
-Vier Prüfungen. Alle vier müssen stimmen, bevor P1 beginnt.
+Sechs Prüfungen. Alle sechs müssen stimmen, bevor P1 beginnt.
 
-### 1.1 Die sechs Schlüssel sind vorbereitet, aber noch nicht gesetzt
+### 1.0 Die GERÄTESEITE ist ausgerollt und NACHGEWIESEN — vor allem anderen
+
+Die teuerste Lehre des Haushalt-Cutovers (2026-09-23): der Schalter fiel, und
+alle laufenden Satelliten waren binnen Sekunden stumm — der Weg zu ihnen führt
+über dieselbe WS-Verbindung, die dann fehlt (OTA), es bleibt Ansible gegen
+fragile Pi Zeros. Die Serverhälfte (`SATELLITE_PSK_HANDSHAKE_ENABLED`) nützt
+nichts, solange das Gerät keinen `Authorization`-Kopf sendet.
+
+Der Nachweis hat ZWEI Hälften, und keine genügt allein.
+
+**Hälfte A — kann das Gerät den Kopf überhaupt senden?** Auf JEDEM Satelliten,
+noch unter auth-off:
+
+```bash
+ssh <sat> 'cd /opt/renfield-satellite && venv/bin/python -c "
+import asyncio, ssl, websockets
+from renfield_satellite.config import load_config
+from renfield_satellite.network.websocket_client import _HEADERS_KWARG
+c = load_config(\"config/satellite.yaml\")
+ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT); ctx.check_hostname=False; ctx.verify_mode=ssl.CERT_NONE
+tok = c.server.auth_token or f\"sat.{c.satellite.id}.{c.server.enrollment_token}\"
+async def m():
+    kw = {_HEADERS_KWARG: {\"Authorization\": \"Bearer \"+tok}, \"ssl\": ctx}
+    async with websockets.connect(c.server.url, **kw):
+        print(\"HANDSHAKE OK\", _HEADERS_KWARG)
+asyncio.run(m())"'
+```
+
+Den Kwarg-Namen NIE hart hinschreiben — `_HEADERS_KWARG` wählt ihn aus der
+Signatur der installierten `websockets`, und genau die Annahme „der Name ist
+doch bekannt" war einer der drei Fehler vom 2026-09-23. Eine Probe mit festem
+Namen meldet auf einem Gerät mit websockets ≤ 13 einen `TypeError` und
+verurteilt ein Gerät, das mit dem ausgelieferten Code einwandfrei verbindet.
+
+**Hälfte B — ist der PSK auf dem Gerät auch der, den die Datenbank kennt?**
+Hälfte A beweist das NICHT: solange `AUTH_ENABLED=false` ist, liest der Server
+den Kopf gar nicht (`websocket_auth.py`, `auth_skipped` vor Strategie S). Ein
+Gerät mit rotiertem, widerrufenem oder gar keinem PSK sagt fröhlich
+`HANDSHAKE OK` und ist nach dem Umlegen trotzdem stumm.
+
+Der Beweis dafür liegt schon vor — wenn die Einschreibung ERZWINGEND ist,
+hat jede erfolgreiche Anmeldung genau diesen PSK gegen genau diesen
+bcrypt-Hash geprüft:
+
+```bash
+kubectl -n renfield get cm renfield-env -o jsonpath='{.data.SATELLITE_ENROLLMENT_ENABLED}'; echo   # muss "true" sein
+kubectl -n renfield exec renfield-pg-r1-1 -c postgres -- psql -U postgres -d renfield -c \
+  "SELECT satellite_id, is_enabled, revoked_at IS NULL AS aktiv, last_authenticated_at,
+          now() - last_authenticated_at AS alter FROM satellites ORDER BY last_authenticated_at DESC NULLS LAST;"
+```
+
+Erwartet je Satellit, der leben soll: `is_enabled`, `aktiv`, und ein `alter`
+von Minuten — nicht Tagen. **Ein alter Zeitstempel heißt nicht „ruhig", sondern
+„dieses Gerät ist schon jetzt offline".** Im Haushalt zeigte genau diese
+Abfrage, dass zwei der sechs Satelliten seit Tagen bzw. Wochen weg waren, lange
+vor dem Cutover — eine Ausfallliste ohne Zeitstempel ist eine Vermutung.
+
+Für einen Satelliten, der gerade NICHT im Netz ist, prüft man den PSK direkt
+gegen den Hash — und zwar **ohne** `evaluate_credential`: das stempelt bei
+Erfolg `last_authenticated_at` und zerstört genau das Signal aus Hälfte B.
+
+```bash
+python -c "import yaml,sys; sys.stdout.write(str(yaml.safe_load(
+  open('src/satellite/provisioning/host_vars/satellite-<name>.yml'))['satellite_enrollment_token']))" \
+| kubectl -n renfield exec -i deploy/backend -c backend -- python -c "
+import asyncio, sys
+psk = sys.stdin.read().strip()
+from sqlalchemy import select
+from services.database import AsyncSessionLocal
+from services.auth_service import pwd_context
+from models.database import Satellite
+async def main():
+    async with AsyncSessionLocal() as db:
+        row = (await db.execute(select(Satellite).where(
+            Satellite.satellite_id=='sat-<name>'))).scalar_one_or_none()
+        print('passt:', pwd_context.verify(psk, row.token_hash),
+              '| is_enabled:', row.is_enabled, '| revoked:', row.revoked_at)
+asyncio.run(main())"
+```
+
+Der PSK wandert dabei über stdin, nie über die Kommandozeile — sonst steht er
+in der Shell-Historie und in jedem Prozesslisting.
+
+Erst wenn A und B für JEDEN Satelliten stimmen, geht es weiter.
+
+### 1.1 Die NEUN Schlüssel sind vorbereitet, aber noch nicht gesetzt
 
 Sie werden in P3 **gemeinsam** gesetzt (§7). Jetzt nur ansehen:
 
@@ -58,6 +143,13 @@ Sie werden in P3 **gemeinsam** gesetzt (§7). Jetzt nur ansehen:
 | `CORS_ORIGINS` | `*` | `https://renfield.local` |
 | `TRUSTED_PROXIES` | `""` | Traefik-Pod-CIDR |
 | `API_RATE_LIMIT_STORAGE_URI` | `memory://` | `redis://redis:6379` |
+| `MEMORY_SUBSUME_TO_KG` | (unset) | `false` — sonst startet kein Pod (1.2) |
+| `SATELLITE_PSK_HANDSHAKE_ENABLED` | `false` | `true` — **ohne ihn sind die Satelliten tot** |
+| `SATELLITE_DEVICE_ACCOUNT` | (unset) | Name des Gerätekontos aus 1.4 |
+| `VOICE_BROWSER_CLIENT_ID` | (unset) | die Registry-Zeile der Instanz (Browser-Sprache) |
+
+Der Entwurf (§7) nennt sechs; es sind neun. Die drei letzten fehlten dort und
+wurden im Haushalt-Cutover einzeln nachgesetzt.
 
 `AUTH_COOKIE_ENABLED` bleibt **aus** und folgt als P4 nach
 `docs/runbooks/cookie-auth-flag-flip-xidra.md` (D-8).
@@ -136,6 +228,36 @@ Also VOR P2:
 Ein konfiguriertes, aber nicht auflösbares Gerätekonto **verweigert** jeden
 anonymen Satellitenzug — laut, nicht still. Das ist die gewollte Richtung; ein
 gar nicht konfiguriertes ist die stille.
+
+### 1.5 `SECRET_KEY` je DEPLOYMENT prüfen, nicht je Instanz
+
+Der Startwächter (`fail_closed_on_insecure_jwt_key`) prüft den Schlüssel bei
+`Settings()` — also in JEDEM Pod, der `config.py` importiert, nicht nur im
+Backend. Im Haushalt stoppte der `document-worker` in der Cutover-Nacht genau
+daran: das Repo-Manifest trug den Schlüssel, live fehlte er.
+
+Die Drift war STUNDEN vorher gefunden und beschrieben, und der
+Manifest-Kommentar sagte die Bedingung ausdrücklich — „DRIFT IS EXPECTED HERE
+**on the auth-off household**". Ein „erwarteter" Zustand ist bis zu einem
+DATUM erwartet: was nur gilt, solange das Flag aus ist, wird mit dem Umlegen
+fällig.
+
+Maßgeblich ist nicht „fährt das Backend-Image", sondern „importiert
+`config.py`". Der `ami-embedding-eval-job` etwa fährt dasselbe Image, startet
+aber ein eigenständiges Skript ohne `Settings()` — er braucht den Schlüssel
+nicht. Der `alembic-upgrade-job` dagegen löst ihn über `alembic/env.py` aus und
+trägt ihn zu Recht.
+
+```bash
+# Für JEDES Deployment/Job, das die Anwendung hochfährt:
+for d in backend document-worker meeting-worker pdf-split-worker; do
+  printf '%-20s ' "$d"
+  kubectl -n renfield get deploy $d -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SECRET_KEY")].valueFrom.secretKeyRef.name}'; echo
+done
+# und die Drift-Prüfung einmal in diesem Licht lesen: jedes
+# "Repo bewusst voraus" wird mit dem Umlegen fällig.
+bin/k8s-drift-check.sh
+```
 
 ---
 

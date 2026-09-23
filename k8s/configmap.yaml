@@ -8,11 +8,12 @@ metadata:
 data:
   # === Auth / deployment posture (#697) ===
   # These are set EXPLICITLY (not left to code defaults) so the running posture
-  # is auditable from the ConfigMap. Current values = the deliberate single-user,
-  # auth-off LAN posture — byte-identical to the code defaults, so setting them
-  # here changes nothing today. The consistency validator in utils/config.py
-  # (assert_auth_config_consistency) hard-fails on an incoherent combo.
-  RENFIELD_ENV: "production"        # auth-on cutover 2026-09-23 — NOT "production" — that arms the insecure-JWT-key boot guard; flip only with a strong SECRET_KEY (see cutover below)
+  # is auditable from the ConfigMap. Since the cutover of 2026-09-23 the posture
+  # is MULTI-USER, AUTH-ON — the old "single-user auth-off LAN" wording here was
+  # left standing through the flip and is gone. The consistency validator in
+  # utils/config.py (assert_auth_config_consistency) hard-fails on an incoherent
+  # combo.
+  RENFIELD_ENV: "production"        # auth-on cutover 2026-09-23; arms the insecure-JWT-key boot guard — requires a strong SECRET_KEY in EVERY pod that boots the app (see cutover below)
   AUTH_ENABLED: "true"             # auth-on cutover 2026-09-23 (war: false, single-user LAN); the whole multi-user surface — REST *and* WebSocket — is gated on this
   # WS_AUTH_ENABLED is RETIRED (was never an independent decision: the validator
   # refused to boot on AUTH_ENABLED=true + WS_AUTH_ENABLED=false, so only
@@ -33,15 +34,25 @@ data:
   TRUSTED_PROXIES: "172.16.0.0/16"  # Cluster-Pod-CIDR, Cutover 2026-09-23 — leer = legacy XFF[0] (per-client keying behind Traefik); set to the Traefik pod CIDR for the spoof-resistant walk (#693)
   API_RATE_LIMIT_STORAGE_URI: "redis://redis:6379"   # geteilt, Cutover 2026-09-23 — vorher per-pod; set to "redis://redis:6379" for shared per-cluster limiting when >1 backend pod runs
   #
-  # ── AUTH-ON CUTOVER (xidra multi-user) — do NOT flip piecemeal ──────────────
+  # ── AUTH-ON CUTOVER — do NOT flip piecemeal ─────────────────────────────────
+  # BEFORE anything here: roll out the DEVICE half and prove it per satellite
+  # (docs/runbooks/auth-on-cutover-household.md §1.0). After the flip the way to
+  # the devices is cut — OTA travels over the very WS link that then fails.
   # Provision a strong SECRET_KEY (>= 32 random chars) in the renfield-secrets
-  # Secret FIRST, then set together:
+  # Secret FIRST — and check it per DEPLOYMENT, not per instance: every pod that
+  # imports config.py arms the guard (the household's document-worker died on
+  # exactly this). Then set the NINE together (this list said six until the
+  # household cutover 2026-09-23 had to add the last three by hand):
   #   RENFIELD_ENV: "production"      (arms the SECRET_KEY boot guard — #692)
   #   AUTH_ENABLED: "true"            (covers the WebSocket surface too — there is no second flag)
   #   ALLOW_REGISTRATION: "false"
   #   CORS_ORIGINS: "https://renfield.local"   (or the real origin)
   #   TRUSTED_PROXIES: "<Traefik pod CIDR>"    (verify live: kubectl get pod -n kube-system -l app.kubernetes.io/name=traefik -o wide)
   #   API_RATE_LIMIT_STORAGE_URI: "redis://redis:6379"
+  #   MEMORY_SUBSUME_TO_KG: "false"            (else the subsume validator refuses to boot)
+  #   SATELLITE_PSK_HANDSHAKE_ENABLED: "true"  (without it the server 403s EVERY satellite)
+  #   SATELLITE_DEVICE_ACCOUNT: "<name>"       (the device account must EXIST and carry the flag)
+  #   VOICE_BROWSER_CLIENT_ID: "<registry row>" (else browser voice is refused by the shared voice-server)
   # ────────────────────────────────────────────────────────────────────────────
 
   # Infra endpoints (cluster-internal DNS)
@@ -217,6 +228,14 @@ data:
   # provisioniert) den Latch. Nach dessen Provisionierung flippt die Fleet
   # automatisch und dauerhaft (Latch löscht sich nie selbst).
   SATELLITE_ENROLLMENT_AUTOFLIP_ENABLED: "true"
+  # Der Handschlag-Nachweis des Satelliten (`sat.<id>.<secret>` im
+  # Authorization-Kopf, gegen satellites.token_hash). Unter auth-off brauchte
+  # ein Satellit keinen Nachweis; mit auth AN braucht er einen, und OHNE diesen
+  # Schalter hat er keinen gueltigen Weg — /ws/satellite antwortet 403 und die
+  # Sprachbedienung des Hauses ist tot. Am Cutover 2026-09-23 genau so passiert:
+  # P0 Nr. 1 (#1305) war gebaut und gemergt, der Schalter nie umgelegt, und §7
+  # listet ihn nicht unter den sechs Schluesseln. Er gehoert dazu.
+  SATELLITE_PSK_HANDSHAKE_ENABLED: "true"
   # H6 fail-closed (2026-08-23): das Backend weigert sich, ein UNSIGNIERTES
   # Release per OTA zu pushen (v1.4.6 ist signiert; bei jeder Satelliten-
   # Quellcode-Änderung neu signieren: bin/sign_satellite_release.py --sign).
