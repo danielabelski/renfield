@@ -10,6 +10,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { debug } from '../utils/debug';
 import { getWebSocketUrl } from '../utils/env';
+import { fetchWsToken } from '../utils/wsToken';
 import type {
   DeviceType,
   DeviceState,
@@ -37,6 +38,19 @@ export {
 // Module-level storage for WebSocket connection (survives React remounts)
 let _activeWebSocket: WebSocket | null = null;
 let _activeConnectionPromise: Promise<{ deviceId: string; roomId: number }> | null = null;
+// Bumped by every connect() and by disconnect(). An attempt that is suspended in
+// its token fetch compares this before touching anything: without it, a
+// disconnect() during that round-trip has nothing to close yet, and the
+// resuming attempt would open a socket, register the device and write the
+// config back that the caller just cleared (`resetSetup`).
+let _connectEpoch = 0;
+// The config the in-flight attempt is connecting WITH, so a connect() for a
+// DIFFERENT room/type is not silently answered by the running one.
+let _activeConfigKey: string | null = null;
+// The pre-socket phase (fetching the WS token) sits outside the hook's own 10 s
+// connection timeout, so it gets its own bound — otherwise a hung faucet leaves
+// the UI at "connecting" for as long as the HTTP client allows.
+const TOKEN_FETCH_TIMEOUT_MS = 5000;
 let _connectionResolvers: {
   resolve: (value: { deviceId: string; roomId: number }) => void;
   reject: (reason: Error) => void;
@@ -169,8 +183,23 @@ export function useDeviceConnection({
 
   // Get WebSocket URL — strip the conventional `/ws` suffix from the env
   // value (or warning-emitting fallback) and append the device endpoint.
-  const getWsUrl = useCallback((): string => {
-    return getWebSocketUrl().replace(/\/ws$/, '') + '/ws/device';
+  //
+  // Security audit M2: authenticate with a SHORT-LIVED, WS-scoped token (~90 s,
+  // REST-rejected), never the 24 h localStorage JWT that would land in
+  // proxy access logs — the same pattern as chat, user-events and kiosk. This
+  // socket was the one M2 missed: under auth-on `authenticate_websocket` found
+  // no credential and closed the handshake with 403, which the browser surfaces
+  // as a bare "WebSocket connection error".
+  //
+  // null → open WITHOUT a token: that is the auth-off household (the faucet
+  // answers `{token: null}` and the backend skips auth), and it is also the
+  // honest fallback when the faucet itself fails — the socket then closes and
+  // the normal reconnect path retries, rather than us reaching for the
+  // long-lived token this change exists to keep out of the URL.
+  const getWsUrl = useCallback(async (): Promise<string> => {
+    const base = getWebSocketUrl().replace(/\/ws$/, '') + '/ws/device';
+    const token = await fetchWsToken();
+    return token ? `${base}?token=${encodeURIComponent(token)}` : base;
   }, []);
 
   // Stop heartbeat
@@ -204,12 +233,31 @@ export function useDeviceConnection({
       customCapabilities = {},
     } = config;
 
-    // If there's already an active connection attempt, return its promise
-    if (_activeConnectionPromise && _activeWebSocket && _activeWebSocket.readyState <= WebSocket.OPEN) {
+    const configKey = JSON.stringify({ room, type, name, isStationary, customCapabilities });
+
+    // Reuse an in-flight attempt only when it is connecting with the SAME
+    // config. `_activeWebSocket` may still be null: since the handshake
+    // credential is fetched first, an attempt exists for a round-trip BEFORE
+    // its socket does, and requiring a socket here would let the second of two
+    // back-to-back calls through and open a duplicate. But coalescing a call
+    // that carries a DIFFERENT room would resolve it successfully while the
+    // device registered in the old one — so that case starts a fresh attempt,
+    // which supersedes the running one via the epoch.
+    // `_activeConnectionPromise` is cleared when the attempt settles, so a
+    // non-null value means "in flight".
+    if (_activeConnectionPromise
+        && _activeConfigKey === configKey
+        && (!_activeWebSocket || _activeWebSocket.readyState <= WebSocket.OPEN)) {
       debug.log('🔄 Reusing existing connection attempt');
       return _activeConnectionPromise;
     }
 
+    // Opening the socket now needs an await (the WS token faucet), so the body
+    // runs in a worker whose promise is published to `_activeConnectionPromise`
+    // SYNCHRONOUSLY — otherwise two concurrent connect() calls would both pass
+    // the guard above during the round-trip and open two sockets.
+    const epoch = ++_connectEpoch;
+    const attempt = (async (): Promise<{ deviceId: string; roomId: number }> => {
     // Clean up existing connection
     if (wsRef.current && wsRef.current !== _activeWebSocket) {
       wsRef.current.close();
@@ -229,8 +277,24 @@ export function useDeviceConnection({
     setConnectionState('connecting');
     setError(null);
 
-    const wsUrl = getWsUrl();
-    debug.log('🔌 Connecting to device WebSocket:', wsUrl);
+    const wsUrl = await Promise.race([
+      getWsUrl(),
+      new Promise<never>((_, rejectTimeout) => {
+        setTimeout(
+          () => rejectTimeout(new Error('Connection timeout')),
+          TOKEN_FETCH_TIMEOUT_MS,
+        );
+      }),
+    ]);
+    // The caller may have disconnected — or asked for a different room — while
+    // the faucet was answering. Nothing of this attempt exists yet for
+    // disconnect() to close, so the abort has to be checked here, before the
+    // first side effect. (Same guard as useKioskSocket's `intentionalCloseRef`.)
+    if (epoch !== _connectEpoch) {
+      debug.log('🚫 Connection attempt superseded during the token fetch');
+      throw new Error('Connection superseded');
+    }
+    debug.log('🔌 Connecting to device WebSocket:', wsUrl.replace(/token=[^&]*/, 'token=***'));
 
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
@@ -254,13 +318,6 @@ export function useDeviceConnection({
       // Store resolvers in module-level variable (survives remounts)
       // Include the WebSocket and connectionId so handlers can verify they match
       _connectionResolvers = { resolve, reject, timeout, ws, connectionId: thisConnectionId };
-    });
-
-    _activeConnectionPromise = connectionPromise;
-
-    // Clear module-level state when promise settles
-    connectionPromise.finally(() => {
-      _activeConnectionPromise = null;
     });
 
     ws.onopen = () => {
@@ -439,7 +496,9 @@ export function useDeviceConnection({
           debug.log('🔄 Attempting to reconnect...');
           const storedConfig = getStoredConfig();
           if (storedConfig) {
-            connect(storedConfig);
+            // Fire-and-forget: an aborted/superseded attempt rejects, and
+            // nobody awaits this one.
+            connect(storedConfig).catch(() => {});
           }
         }, 5000);
       }
@@ -465,10 +524,29 @@ export function useDeviceConnection({
     };
 
     return connectionPromise;
+    })();
+
+    _activeConnectionPromise = attempt;
+    _activeConfigKey = configKey;
+    // Clear module-level state when the attempt settles (only if it is still
+    // the current one — a later connect() may already have replaced it).
+    attempt.catch(() => {}).finally(() => {
+      if (_activeConnectionPromise === attempt) {
+        _activeConnectionPromise = null;
+        _activeConfigKey = null;
+      }
+    });
+
+    return attempt;
   }, [getWsUrl, onMessage, onStateChange, onTranscription, onAction, onTtsAudio, onResponseText, onStream, onSessionEnd, onError, startHeartbeat, stopHeartbeat]);
 
   // Disconnect
   const disconnect = useCallback(() => {
+    // Invalidate any attempt still waiting on its token: it has no socket yet,
+    // so the closes below would miss it and it would resume into a live device.
+    _connectEpoch += 1;
+    _activeConfigKey = null;
+
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
     }
@@ -565,7 +643,7 @@ export function useDeviceConnection({
     if (autoConnect) {
       const storedConfig = getStoredConfig();
       if (storedConfig) {
-        connect(storedConfig);
+        connect(storedConfig).catch(() => {});
       }
     }
     // NOTE: Intentionally omitting 'connect' from deps to prevent reconnection loops.
