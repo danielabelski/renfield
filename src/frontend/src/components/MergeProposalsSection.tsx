@@ -2,10 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { GitMerge } from 'lucide-react';
 import MergeProposalCard from './MergeProposalCard';
+import MergeClusterCard from './MergeClusterCard';
+import { groupProposals } from './mergeClusters';
 import {
   useApproveMergeProposal,
   useMergeProposalsQuery,
   useRejectMergeProposal,
+  useResolveCluster,
   type MergeProposal,
 } from '../api/resources/knowledgeGraph';
 
@@ -31,6 +34,7 @@ export default function MergeProposalsSection() {
   const query = useMergeProposalsQuery();
   const approve = useApproveMergeProposal();
   const reject = useRejectMergeProposal();
+  const resolveCluster = useResolveCluster();
 
   const proposals: MergeProposal[] = query.data ?? [];
   const [dismissedIds, setDismissedIds] = useState<Set<number>>(() => new Set());
@@ -90,6 +94,32 @@ export default function MergeProposalsSection() {
     return null;
   }
 
+  // The queue is dominated by clusters of the same thing under the same name;
+  // a cluster is one decision, a lone pair stays the familiar pair card.
+  const { clusters, singles } = groupProposals(visible);
+
+  const handleCluster = (
+    entityIds: number[], decision: 'merge' | 'reject', survivorId?: number,
+  ): void => {
+    // Optimistic: the whole cluster leaves the list at once. No undo window
+    // here — a cluster fold touches many rows, and "undo" would have to unpick
+    // merges the backend has already committed.
+    const touched = visible
+      .filter((p) => entityIds.includes(p.loser.id) && entityIds.includes(p.winner.id))
+      .map((p) => p.id);
+    setDismissedIds((prev) => new Set([...prev, ...touched]));
+    // On failure nothing was written — put the cluster back. Without this the
+    // owner watches the queue shrink on an error and cannot get it back short
+    // of reloading the page.
+    void resolveCluster.mutateAsync({ entityIds, decision, survivorId }).catch(() => {
+      setDismissedIds((prev) => {
+        const n = new Set(prev);
+        for (const id of touched) n.delete(id);
+        return n;
+      });
+    });
+  };
+
   return (
     <section aria-labelledby="merge-proposals-heading" className="space-y-3">
       <h2
@@ -101,7 +131,18 @@ export default function MergeProposalsSection() {
       </h2>
 
       <ul className="space-y-3 animate-stagger">
-        {visible.map((p) => (
+        {clusters.map((c) => (
+          <MergeClusterCard
+            key={`cluster-${c.key}`}
+            cluster={c}
+            busy={resolveCluster.isPending}
+            onMerge={(survivorId) => handleCluster(
+              c.entities.map((e) => e.id), 'merge', survivorId,
+            )}
+            onReject={() => handleCluster(c.entities.map((e) => e.id), 'reject')}
+          />
+        ))}
+        {singles.map((p) => (
           <MergeProposalCard
             key={p.id}
             proposal={p}

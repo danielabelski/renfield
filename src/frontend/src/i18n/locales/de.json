@@ -1928,7 +1928,18 @@
       "merge": "Zusammenführen",
       "reject": "Ablehnen",
       "merged": "Zusammengeführt",
-      "undo": "Rückgängig"
+      "undo": "Rückgängig",
+      "cluster": {
+        "summary": "{{entities}} Entitäten · {{pairs}} Paare",
+        "edges_one": "{{count}} Kante",
+        "edges_other": "{{count}} Kanten",
+        "mergeAll": "Alle {{count}} zusammenführen",
+        "rejectAll": "Alle verwerfen",
+        "crossTierLeft_one": "{{count}} Paar ändert die Sichtbarkeit und bleibt einzeln zu entscheiden",
+        "crossTierLeft_other": "{{count}} Paare ändern die Sichtbarkeit und bleiben einzeln zu entscheiden",
+        "confirmMerge": "Wirklich {{count}} Entitäten verschmelzen?",
+        "chainWarning": "Diese {{count}} Entitäten hängen über eine Kette von Ähnlichkeiten zusammen, nicht paarweise geprüft — je länger die Kette, desto wahrscheinlicher sind zwei verschiedene Dinge darin. Nochmal klicken, um zu falten."
+      }
     },
     "settingsTitle": "Kreise & Mitglieder",
     "settingsSubtitle": "Verwalte deine Kreis-Stufen und wer darin eingeladen ist.",

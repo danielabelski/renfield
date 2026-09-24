@@ -590,3 +590,255 @@ class TestLockEngineResolution:
             assert _resolve_lock_engine(conn) is pg_async_engine          # test path
         assert _resolve_lock_engine(object()) is None
         assert _resolve_lock_engine(None) is None
+
+
+class TestResolveCluster:
+    """One owner decision over a whole name cluster (review-queue cluster view).
+
+    The queue is dominated by clusters of same-named entities with no
+    description — measured on the live household 2026-09-24: 1 365 pending pairs
+    over 952 entities in 199 name clusters. Pair-by-pair is the wrong unit; the
+    owner judges the cluster once. The invariant that makes a bulk action safe is
+    that ONLY same-tier pairs take part, so `tier = MIN` inside merge_entities
+    can never shift visibility.
+    """
+
+    @staticmethod
+    async def _proposal(db, owner, loser, winner, *, sim=0.9, reason="gray_zone"):
+        p = KgMergeProposal(
+            user_id=owner.id, loser_entity_id=loser.id, winner_entity_id=winner.id,
+            similarity=sim, loser_tier=loser.circle_tier, winner_tier=winner.circle_tier,
+            reason=reason, status=KG_MERGE_PROPOSAL_PENDING,
+        )
+        db.add(p)
+        await db.flush()
+        return p
+
+    async def test_merge_folds_the_whole_cluster_into_the_survivor(
+        self, pg_db_session, monkeypatch
+    ):
+        owner = await _make_user(pg_db_session, "clu_merge")
+        a = await _entity(pg_db_session, owner, "Anna", tier=2, mention=1, emb=_unit(6))
+        b = await _entity(pg_db_session, owner, "Anna", tier=2, mention=9, emb=_unit(6))
+        c = await _entity(pg_db_session, owner, "Anna", tier=2, mention=3, emb=_unit(6))
+        p1 = await self._proposal(pg_db_session, owner, a, b)
+        p2 = await self._proposal(pg_db_session, owner, c, b)
+        rec = _recon(pg_db_session, monkeypatch)
+
+        res = await rec.resolve_cluster(
+            user_id=owner.id, entity_ids=[a.id, b.id, c.id],
+            survivor_id=b.id, decision="merge", resolved_by=owner.id,
+        )
+
+        assert res.merged == 2
+        assert res.approved == 2
+        assert res.skipped_cross_tier == 0
+        for e_id in (a.id, c.id):
+            gone = (await pg_db_session.execute(
+                select(KGEntity).where(KGEntity.id == e_id)
+            )).scalar_one()
+            assert gone.is_active is False
+        kept = (await pg_db_session.execute(
+            select(KGEntity).where(KGEntity.id == b.id)
+        )).scalar_one()
+        assert kept.is_active is True
+        for pid in (p1.id, p2.id):
+            prop = (await pg_db_session.execute(
+                select(KgMergeProposal).where(KgMergeProposal.id == pid)
+            )).scalar_one()
+            assert prop.status == KG_MERGE_PROPOSAL_APPROVED
+
+    async def test_cross_tier_pair_is_left_alone_and_reported(
+        self, pg_db_session, monkeypatch
+    ):
+        """A pair that would change an atom's reach never rides along."""
+        owner = await _make_user(pg_db_session, "clu_xtier")
+        a = await _entity(pg_db_session, owner, "Jutta", tier=2, mention=1, emb=_unit(6))
+        b = await _entity(pg_db_session, owner, "Jutta", tier=2, mention=9, emb=_unit(6))
+        c = await _entity(pg_db_session, owner, "Jutta", tier=0, mention=4, emb=_unit(6))
+        await self._proposal(pg_db_session, owner, a, b)
+        px = await self._proposal(
+            pg_db_session, owner, c, b, reason=KG_MERGE_REASON_CROSS_TIER
+        )
+        rec = _recon(pg_db_session, monkeypatch)
+
+        res = await rec.resolve_cluster(
+            user_id=owner.id, entity_ids=[a.id, b.id, c.id],
+            survivor_id=b.id, decision="merge", resolved_by=owner.id,
+        )
+
+        assert res.merged == 1               # only a folded in
+        assert res.skipped_cross_tier == 1
+        still_there = (await pg_db_session.execute(
+            select(KGEntity).where(KGEntity.id == c.id)
+        )).scalar_one()
+        assert still_there.is_active is True
+        assert still_there.circle_tier == 0  # untouched, no visibility shift
+        prop = (await pg_db_session.execute(
+            select(KgMergeProposal).where(KgMergeProposal.id == px.id)
+        )).scalar_one()
+        assert prop.status == KG_MERGE_PROPOSAL_PENDING
+
+    async def test_reject_closes_the_pairs_and_merges_nothing(
+        self, pg_db_session, monkeypatch
+    ):
+        owner = await _make_user(pg_db_session, "clu_rej")
+        a = await _entity(pg_db_session, owner, "Anna", tier=2, mention=1, emb=_unit(6))
+        b = await _entity(pg_db_session, owner, "Anna", tier=2, mention=9, emb=_unit(6))
+        await self._proposal(pg_db_session, owner, a, b)
+        rec = _recon(pg_db_session, monkeypatch)
+
+        res = await rec.resolve_cluster(
+            user_id=owner.id, entity_ids=[a.id, b.id],
+            survivor_id=None, decision="reject", resolved_by=owner.id,
+        )
+
+        assert (res.rejected, res.merged) == (1, 0)
+        assert await _count_pending(pg_db_session, owner.id) == 0
+        for e_id in (a.id, b.id):
+            e = (await pg_db_session.execute(
+                select(KGEntity).where(KGEntity.id == e_id)
+            )).scalar_one()
+            assert e.is_active is True
+
+    async def test_an_entity_without_a_proposal_is_never_merged(
+        self, pg_db_session, monkeypatch
+    ):
+        """The fold set comes from the PROPOSALS, not from the caller's list —
+        otherwise this route would merge two arbitrary entities on request."""
+        owner = await _make_user(pg_db_session, "clu_stow")
+        a = await _entity(pg_db_session, owner, "Anna", tier=2, mention=1, emb=_unit(6))
+        b = await _entity(pg_db_session, owner, "Anna", tier=2, mention=9, emb=_unit(6))
+        stowaway = await _entity(pg_db_session, owner, "Berta", tier=2, mention=5, emb=_unit(7))
+        await self._proposal(pg_db_session, owner, a, b)
+        rec = _recon(pg_db_session, monkeypatch)
+
+        res = await rec.resolve_cluster(
+            user_id=owner.id, entity_ids=[a.id, b.id, stowaway.id],
+            survivor_id=b.id, decision="merge", resolved_by=owner.id,
+        )
+
+        assert res.merged == 1
+        untouched = (await pg_db_session.execute(
+            select(KGEntity).where(KGEntity.id == stowaway.id)
+        )).scalar_one()
+        assert untouched.is_active is True
+
+    async def test_survivor_must_belong_to_the_cluster(self, pg_db_session, monkeypatch):
+        owner = await _make_user(pg_db_session, "clu_surv")
+        a = await _entity(pg_db_session, owner, "Anna", tier=2, mention=1, emb=_unit(6))
+        b = await _entity(pg_db_session, owner, "Anna", tier=2, mention=9, emb=_unit(6))
+        outsider = await _entity(pg_db_session, owner, "Carla", tier=2, mention=5, emb=_unit(8))
+        await self._proposal(pg_db_session, owner, a, b)
+        rec = _recon(pg_db_session, monkeypatch)
+
+        res = await rec.resolve_cluster(
+            user_id=owner.id, entity_ids=[a.id, b.id],
+            survivor_id=outsider.id, decision="merge", resolved_by=owner.id,
+        )
+
+        assert (res.merged, res.approved) == (0, 0)
+        assert res.notes
+        assert await _count_pending(pg_db_session, owner.id) == 1
+
+    async def test_only_the_survivors_component_is_folded(self, pg_db_session, monkeypatch):
+        """Two disjoint components can EACH be same-tier and still sit at
+        different tiers. Folding the union would apply `tier = MIN` across them
+        and quietly narrow an atom's reach — the one thing this must never do."""
+        owner = await _make_user(pg_db_session, "clu_comp")
+        a = await _entity(pg_db_session, owner, "Anna", tier=2, mention=1, emb=_unit(6))
+        b = await _entity(pg_db_session, owner, "Anna", tier=2, mention=9, emb=_unit(6))
+        # ein zweites, UNVERBUNDENES Paar auf einer anderen Stufe
+        c = await _entity(pg_db_session, owner, "Clara", tier=0, mention=2, emb=_unit(7))
+        d = await _entity(pg_db_session, owner, "Clara", tier=0, mention=5, emb=_unit(7))
+        await self._proposal(pg_db_session, owner, a, b)
+        await self._proposal(pg_db_session, owner, c, d)
+        rec = _recon(pg_db_session, monkeypatch)
+
+        res = await rec.resolve_cluster(
+            user_id=owner.id, entity_ids=[a.id, b.id, c.id, d.id],
+            survivor_id=b.id, decision="merge", resolved_by=owner.id,
+        )
+
+        assert res.merged == 1                      # nur a
+        for e_id in (c.id, d.id):
+            untouched = (await pg_db_session.execute(
+                select(KGEntity).where(KGEntity.id == e_id)
+            )).scalar_one()
+            assert untouched.is_active is True
+            assert untouched.circle_tier == 0       # keine Stufenverschiebung
+        kept = (await pg_db_session.execute(
+            select(KGEntity).where(KGEntity.id == b.id)
+        )).scalar_one()
+        assert kept.circle_tier == 2
+
+    async def test_a_cross_tier_pair_survives_the_fold_as_a_real_question(
+        self, pg_db_session, monkeypatch
+    ):
+        """The bulk action leaves cross-tier pairs pending — but a pair pointing
+        at a tombstoned entity could never be exercised again. It is re-pointed
+        at the survivor, so the owner's tier decision stays askable."""
+        owner = await _make_user(pg_db_session, "clu_repoint")
+        a = await _entity(pg_db_session, owner, "Jutta", tier=2, mention=1, emb=_unit(6))
+        b = await _entity(pg_db_session, owner, "Jutta", tier=2, mention=9, emb=_unit(6))
+        privat = await _entity(pg_db_session, owner, "Jutta", tier=0, mention=4, emb=_unit(6))
+        await self._proposal(pg_db_session, owner, a, b)
+        # haengt am SPAETER gefalteten a, nicht am Ueberlebenden
+        px = await self._proposal(
+            pg_db_session, owner, privat, a, reason=KG_MERGE_REASON_CROSS_TIER
+        )
+        rec = _recon(pg_db_session, monkeypatch)
+
+        res = await rec.resolve_cluster(
+            user_id=owner.id, entity_ids=[a.id, b.id, privat.id],
+            survivor_id=b.id, decision="merge", resolved_by=owner.id,
+        )
+
+        assert res.merged == 1
+        moved = (await pg_db_session.execute(
+            select(KgMergeProposal).where(KgMergeProposal.id == px.id)
+        )).scalar_one()
+        assert moved.status == KG_MERGE_PROPOSAL_PENDING
+        assert moved.winner_entity_id == b.id       # zeigt jetzt auf den Ueberlebenden
+        assert moved.loser_entity_id == privat.id
+
+    async def test_a_pair_between_two_folded_entities_is_closed(
+        self, pg_db_session, monkeypatch
+    ):
+        """Both sides went into the survivor: there is no question left."""
+        owner = await _make_user(pg_db_session, "clu_both")
+        a = await _entity(pg_db_session, owner, "Anna", tier=2, mention=1, emb=_unit(6))
+        b = await _entity(pg_db_session, owner, "Anna", tier=2, mention=9, emb=_unit(6))
+        c = await _entity(pg_db_session, owner, "Anna", tier=2, mention=3, emb=_unit(6))
+        await self._proposal(pg_db_session, owner, a, b)
+        await self._proposal(pg_db_session, owner, c, b)
+        # a~c auf einer anderen Stufe waere cross_tier; hier gleichstufig, also
+        # Teil des Clusters — und nach der Faltung gegenstandslos.
+        extra = await self._proposal(pg_db_session, owner, a, c)
+        rec = _recon(pg_db_session, monkeypatch)
+
+        await rec.resolve_cluster(
+            user_id=owner.id, entity_ids=[a.id, b.id, c.id],
+            survivor_id=b.id, decision="merge", resolved_by=owner.id,
+        )
+
+        closed = (await pg_db_session.execute(
+            select(KgMergeProposal).where(KgMergeProposal.id == extra.id)
+        )).scalar_one()
+        assert closed.status != KG_MERGE_PROPOSAL_PENDING
+
+    async def test_another_owners_pairs_do_not_take_part(self, pg_db_session, monkeypatch):
+        owner = await _make_user(pg_db_session, "clu_mine")
+        other = await _make_user(pg_db_session, "clu_theirs")
+        a = await _entity(pg_db_session, other, "Anna", tier=2, mention=1, emb=_unit(6))
+        b = await _entity(pg_db_session, other, "Anna", tier=2, mention=9, emb=_unit(6))
+        await self._proposal(pg_db_session, other, a, b)
+        rec = _recon(pg_db_session, monkeypatch)
+
+        res = await rec.resolve_cluster(
+            user_id=owner.id, entity_ids=[a.id, b.id],
+            survivor_id=b.id, decision="merge", resolved_by=owner.id,
+        )
+
+        assert (res.merged, res.approved, res.rejected) == (0, 0, 0)
+        assert await _count_pending(pg_db_session, other.id) == 1
