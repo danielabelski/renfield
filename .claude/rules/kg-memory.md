@@ -75,9 +75,21 @@ exact name → surface-form (jsonb `@>`) → embedding (**SAME-TIER only** + hig
   everything the reconciler refuses to auto-merge**: a `gray_zone` pair carries `block_auto_merge` from
   `_name_collision_low_signal` too, and folding those is the whole point (243 pending on the household). The bar reads
   the persisted `reason`, not `block_auto_merge` (a find-time flag that never reaches the queue).
-  🛑 Refusing the EDGE is not enough: both endpoints can still arrive in the survivor via a third entity, and
-  `_repoint_after_fold` then closes the weak pair as `superseded` — executed, while the response calls it skipped. A
-  weak pair with BOTH endpoints in the component therefore refuses the **whole fold**, with a note naming the two.
+  🛑 Refusing the EDGE is not enough, and this holds for BOTH pairwise bars — weak AND cross-type. Neither relation
+  is transitive (`thing` is a wildcard: `organization`~`thing` and `place`~`thing` pass, `organization`~`place` does
+  not), so both endpoints can still arrive in the survivor via a third entity, and `_repoint_after_fold` then closes
+  the refused pair as `superseded` — executed, while the response calls it skipped. Any pairwise-refused pair with
+  BOTH endpoints in the component therefore refuses the **whole fold**. The type bar exists FOR the route, which is
+  exactly why leaving it out of this check left the route-only bar with a route-reachable bypass (#1334).
+  **EVERY refusal of `resolve_cluster` returns a CODE**, never a sentence (`refusal_code`, eight of them) — the UI
+  cannot translate an English `notes` string, and translating only the one somebody complained about leaves its six
+  siblings in German-UI English. `cluster_has_undecidable_pair` additionally carries the pairs plus an **uncapped**
+  total, because a capped list without the total truncates in silence. `notes` rides along for the log.
+  The code also rides on the SUCCESS response (`ClusterResolveResponse.refusal_code`): the route's guard only throws
+  while nothing was written, so a future PARTIAL refusal would otherwise drop its reason on the floor — a 200 with no
+  explanation, the very failure the codes exist against. An UNKNOWN code renders a translated generic sentence and
+  logs the backend `notes` to the console: throwing the reason away left the owner one bare word while a precise
+  sentence sat in the payload. This fires whenever the backend is ahead of the bundle (cached service worker).
   Measured 2026-09-24: 11 `name_typo` pending on the household, six inside a foldable cluster.
   🛑 `_repoint_after_fold` rewrites a pair's endpoints but NOT its `reason` — since #1333 that reason is a GATE, so a
   re-pointed pair can carry a stale one in either direction. Known, not fixed: the self-join excludes pending pairs,

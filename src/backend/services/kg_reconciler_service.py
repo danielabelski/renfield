@@ -59,6 +59,11 @@ from utils.config import settings
 # pg_advisory_lock keys are int4; the objid is the user_id.
 _RECONCILER_LOCK_NS = 0x4B47  # "KG"
 
+# How many blocking pairs a refusal names. The rest is reported as a COUNT, never
+# dropped silently: "decide it first" about three of an unstated number is worse
+# than no list at all.
+_BLOCKED_PAIRS_SHOWN = 3
+
 
 def _norm(s: str | None) -> str:
     return (s or "").strip().lower()
@@ -267,6 +272,15 @@ class ClusterResolution:
     skipped_cross_type: int = 0     # left individually decidable (disjoint types)
     skipped_unreachable: int = 0    # same tier + type, but not in the survivor's component
     skipped_weak_edge: int = 0      # "maybe two different things" by reason — never bulk-folded
+    # A refused fold names what has to be decided first. Structured, not a
+    # sentence: the UI translates it, a backend string cannot be translated.
+    blocked_pairs: list[tuple[str, str]] = field(default_factory=list)
+    blocked_total: int = 0          # may exceed len(blocked_pairs) — see _BLOCKED_PAIRS_SHOWN
+    # Why the fold was refused, as a CODE. Every refusal has one: the UI cannot
+    # translate an English sentence, and translating only the refusal somebody
+    # complained about leaves its six siblings in English (found in review).
+    # `notes` stays alongside for the log and for non-UI API consumers.
+    refusal_code: str | None = None
     notes: list[str] = field(default_factory=list)
 
 
@@ -680,13 +694,22 @@ class KgReconcilerService:
         two different PEOPLE, one character apart". Only the second kind is
         refused, counted in ``skipped_weak_edge``.
 
-        Refused as an EDGE is not enough: dropping the edge shrinks reachability
-        but does not stop both endpoints arriving in the survivor by another
-        route, and ``_repoint_after_fold`` would then close the weak proposal as
-        superseded — executed, and reported as skipped. So a weak pair with both
-        endpoints inside the component refuses the WHOLE fold, with a note naming
-        the two entities. The owner decides that one pair on its own card, with
-        both names in front of them, and the cluster folds afterwards.
+        Refused as an EDGE is not enough, and this holds for BOTH pairwise bars —
+        weak and type-incompatible. Neither relation is transitive: `thing` is a
+        wildcard, so `organization`~`thing` and `place`~`thing` are both fine
+        while `organization`~`place` is not. Dropping the edge shrinks
+        reachability but does not stop the two endpoints arriving in the survivor
+        through a third entity, and ``_repoint_after_fold`` would then close the
+        refused proposal as superseded — executed, and reported as skipped. So a
+        pairwise-refused pair with BOTH endpoints inside the component refuses
+        the WHOLE fold, naming what has to be decided first. The owner settles
+        that one pair on its own card, with both names in front of them, and the
+        cluster folds afterwards.
+
+        The type bar exists FOR the route (the UI groups on type EQUALITY, which
+        IS transitive, so a cluster card can never submit such a pair) — which is
+        exactly why leaving it out of this check would have left the route-only
+        bar with a route-reachable bypass.
 
         Note WHY the bar reads `reason` and not `block_auto_merge`: the latter is
         a find-time flag on `MergeCandidate` and is never persisted; `reason` is
@@ -701,10 +724,12 @@ class KgReconcilerService:
         """
         res = ClusterResolution()
         if decision not in ("merge", "reject"):
+            res.refusal_code = "unknown_decision"
             res.notes.append(f"unknown decision: {decision}")
             return res
         ids = {int(i) for i in entity_ids}
         if len(ids) < 2:
+            res.refusal_code = "cluster_too_small"
             res.notes.append("a cluster needs at least two entities")
             return res
 
@@ -725,7 +750,10 @@ class KgReconcilerService:
         pairs = list((await self.db.execute(q)).scalars().all())
 
         foldable: list[KgMergeProposal] = []
-        weak_pairs: list[KgMergeProposal] = []
+        # Every pair refused for a PAIRWISE reason — weak or type-incompatible.
+        # Both bars are non-transitive, so dropping the edge does not keep the
+        # endpoints apart; see the `undecidable` check below.
+        undecidable: list[KgMergeProposal] = []
         for p in pairs:
             # Compare the LIVE tiers, not the ones stored when the pair was
             # proposed — a tier may have moved since, in either direction.
@@ -743,6 +771,7 @@ class KgReconcilerService:
                 p.winner.entity_type if p.winner else None,
             ):
                 res.skipped_cross_type += 1
+                undecidable.append(p)
                 continue
             # A pair that might be two different THINGS is never bulk-folded.
             # `name_typo` means "maybe two different people, one character apart"
@@ -755,11 +784,12 @@ class KgReconcilerService:
             # bulk is precisely what this method is for.
             if (p.reason or "") in KG_MERGE_WEAK_REASONS:
                 res.skipped_weak_edge += 1
-                weak_pairs.append(p)
+                undecidable.append(p)
                 continue
             foldable.append(p)
 
         if not foldable:
+            res.refusal_code = "no_foldable_pair"
             res.notes.append("no foldable pending pair in this cluster")
             return res
 
@@ -775,6 +805,7 @@ class KgReconcilerService:
             return res
 
         if survivor_id is None:
+            res.refusal_code = "survivor_required"
             res.notes.append("merge needs a survivor")
             return res
         keep = int(survivor_id)
@@ -786,17 +817,16 @@ class KgReconcilerService:
         # narrow an atom's reach, the exact thing this method promises never to
         # do. So: walk out from the survivor, and take only what is reachable.
         adjacency: dict[int, set[int]] = {}
-        by_edge: dict[tuple[int, int], list[KgMergeProposal]] = {}
         for p in foldable:
             a, b = int(p.loser_entity_id), int(p.winner_entity_id)
             adjacency.setdefault(a, set()).add(b)
             adjacency.setdefault(b, set()).add(a)
-            by_edge.setdefault((min(a, b), max(a, b)), []).append(p)
         if keep not in adjacency:
             # NOT "not one of the cluster's entities" — since the weak-edge bar,
             # an entity whose every pending pair is weak IS in the cluster and
             # still absent from `adjacency`. Saying otherwise asserts something
             # false about a legitimate state.
+            res.refusal_code = "survivor_not_foldable"
             res.notes.append("the survivor has no foldable pair in this cluster")
             return res
         component: set[int] = set()
@@ -809,31 +839,40 @@ class KgReconcilerService:
             frontier.extend(adjacency.get(node, ()))
 
         # Dropping a weak edge shrinks what is REACHABLE — it does not stop the
-        # two endpoints arriving in the survivor by another route. A—B weak,
-        # A—C and B—C strong: the component is still {A,B,C}, B folds into A,
-        # and `_repoint_after_fold` then closes the weak A—B proposal as
-        # SUPERSEDED. The weak claim would have been executed, its row closed,
-        # and the response would still say `skipped_weak_edge=1` — the owner
-        # told that the pair stayed pending, and then it is gone.
+        # two endpoints arriving in the survivor by another route. A—B refused,
+        # A—C and B—C foldable: the component is still {A,B,C}, B folds into A,
+        # and `_repoint_after_fold` then closes the A—B proposal as SUPERSEDED.
+        # The refused claim would have been executed, its row closed, and the
+        # response would still report it as skipped — the owner told the pair
+        # stayed pending, and then finding it gone.
         #
-        # So: if a weak pair has BOTH endpoints inside the component, the whole
-        # fold is refused. The alternative — fold and report it honestly — was
-        # rejected because a merge cannot be taken back and this one is exactly
-        # the "maybe two different people" case. The owner decides that ONE pair
-        # first, on its own card with both names, and the cluster folds after.
+        # This holds for BOTH pairwise bars, because neither relation is
+        # transitive: `thing` is a wildcard, so organization~thing and
+        # place~thing pass while organization~place does not. Leaving the type
+        # bar out here left the route-only bar with a route-reachable bypass.
+        #
+        # The alternative — fold and report it honestly — was rejected because a
+        # merge cannot be taken back. The owner decides that ONE pair first, on
+        # its own card with both names, and the cluster folds after.
         blocking = [
-            p for p in weak_pairs
+            p for p in undecidable
             if int(p.loser_entity_id) in component and int(p.winner_entity_id) in component
         ]
         if blocking:
-            names = []
-            for p in blocking[:3]:
+            res.refusal_code = "cluster_has_undecidable_pair"
+            res.blocked_total = len(blocking)
+            for p in blocking[:_BLOCKED_PAIRS_SHOWN]:
                 a = (p.loser.name if p.loser else "?") or "?"
                 b = (p.winner.name if p.winner else "?") or "?"
-                names.append(f"{a} / {b}")
+                res.blocked_pairs.append((a, b))
+            # `notes` stays, for the log and for API consumers that are not the
+            # review UI. The UI reads the structured fields and builds its own
+            # sentence, because a backend string cannot be translated.
+            shown = "; ".join(f"{a} / {b}" for a, b in res.blocked_pairs)
+            more = res.blocked_total - len(res.blocked_pairs)
             res.notes.append(
-                "this cluster holds a pair that may be two different things — "
-                "decide it first: " + "; ".join(names)
+                f"cluster holds {res.blocked_total} undecidable pair(s): {shown}"
+                + (f" (+{more} more)" if more else "")
             )
             return res
 
@@ -850,6 +889,7 @@ class KgReconcilerService:
             if int(p.winner_entity_id) in component
         }
         if len(tiers) > 1:
+            res.refusal_code = "cluster_spans_tiers"
             res.notes.append("cluster spans more than one tier — refusing")
             return res
 
@@ -899,6 +939,22 @@ class KgReconcilerService:
             user_id=user_id, folded=folded, survivor_id=keep, now=now,
         )
         await self.db.commit()
+        if not (res.merged or res.approved):
+            # Der neunte Ausgang, und der einzige, der bis eben STUMM war: alles
+            # geprueft, nichts getan. `merge_entities` gibt `None` auf einen
+            # bereits begrabenen Verlierer, eine fehlende Zeile und ein Paar
+            # ueber Eigentuemergrenzen zurueck, und die Zusage ueberspringt, was
+            # nicht mehr offen ist — beide zaehlen dann nicht hoch. Die Route
+            # lieferte dafuer eine 200 mit lauter Nullen, die Oberflaeche
+            # verwarf das Cluster stillschweigend optimistisch und sagte nichts.
+            # Meist ist es der Doppelklick: ein zweiter Aufruf, der dasselbe
+            # Cluster schon gefaltet vorfindet. Harmlos im Ergebnis, aber eine
+            # Aktion ohne Wirkung MUSS sichtbar sein — sonst ist genau die
+            # Klasse offen, gegen die die Codes gebaut sind. Nach dem `commit`
+            # gesetzt und trotzdem gefahrlos: `folded` ist leer, also hat
+            # `_repoint_after_fold` nichts angefasst und der Commit ist leer.
+            res.refusal_code = "nothing_folded"
+            res.notes.append("nothing left to fold in this cluster")
         logger.info(
             f"🔗 KG cluster resolved user={user_id} survivor={keep}: "
             f"merged={res.merged}, approved={res.approved}, "

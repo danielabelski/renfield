@@ -81,15 +81,15 @@ describe('MergeProposalsSection — partial cluster refusal', () => {
     });
   });
 
-  it('shows WHY when the service refused the whole fold (400)', async () => {
-    // Ein Refus kommt als 400 mit dem Vermerk als `detail`. Die Karten still
-    // zurueckzuholen waere derselbe Fehler eine Schicht tiefer.
+  it('translates the refusal instead of echoing the backend', async () => {
+    // Der Dienst liefert einen CODE plus die Paare; der Satz entsteht hier,
+    // sonst steht Englisch in einer deutschen Oberflaeche (CLAUDE.md).
     server.use(
       http.get(`${BASE}/api/knowledge-graph/merge-proposals`, () =>
         HttpResponse.json({ proposals: PROPOSALS, total: PROPOSALS.length })),
       http.post(`${BASE}/api/knowledge-graph/merge-proposals/cluster`, () =>
         HttpResponse.json(
-          { detail: 'this cluster holds a pair that may be two different things — decide it first: Anna / Ana' },
+          { detail: { code: 'cluster_has_undecidable_pair', pairs: [['Anna', 'Ana']], total: 1 } },
           { status: 400 },
         )),
     );
@@ -97,18 +97,113 @@ describe('MergeProposalsSection — partial cluster refusal', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: /zusammenführen/i }));
 
-    expect(await screen.findByText(/may be two different things/i)).toBeInTheDocument();
+    expect(await screen.findByText(/zwei verschiedene Dinge sein könnte/i)).toBeInTheDocument();
+    expect(screen.getByText(/Anna \/ Ana/)).toBeInTheDocument();
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /zusammenführen/i })).toBeInTheDocument();
     });
   });
 
-  it('surfaces a refusal note even when no pair was counted', async () => {
+  // Jeder Code, den `resolve_cluster` setzen kann, mit dem Satz, den der
+  // Eigentuemer sehen MUSS. Als Tabelle, weil die vorige Fassung genau EINEN
+  // Code prueffte — dieselbe Klasse-statt-Instanz-Luecke, gegen die dieser
+  // Zweig gebaut ist, eine Ebene hoeher. Ein Tippfehler in einem der sieben
+  // Schluessel ginge sonst mit gruener Suite als "Fehler" raus.
+  const REFUSALS: [string, RegExp][] = [
+    ['cluster_spans_tiers', /mehrere Sichtbarkeitsstufen/i],
+    ['cluster_too_small', /mindestens zwei Entit/i],
+    ['no_foldable_pair', /kein Paar faltbar/i],
+    ['survivor_required', /die bleiben soll/i],
+    ['survivor_not_foldable', /kein faltbares Paar/i],
+    ['unknown_decision', /Unbekannte Entscheidung/i],
+    ['nothing_folded', /bereits aufgel/i],
+  ];
+
+  it.each(REFUSALS)('translates the refusal code %s', async (code, expected) => {
+    server.use(
+      http.get(`${BASE}/api/knowledge-graph/merge-proposals`, () =>
+        HttpResponse.json({ proposals: PROPOSALS, total: PROPOSALS.length })),
+      http.post(`${BASE}/api/knowledge-graph/merge-proposals/cluster`, () =>
+        HttpResponse.json(
+          { detail: { code, pairs: [], total: 0, notes: ['an English sentence'] } },
+          { status: 400 },
+        )),
+    );
+    renderWithProviders(<MergeProposalsSection />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /zusammenführen/i }));
+
+    expect(await screen.findByText(expected)).toBeInTheDocument();
+    // …und NIE der rohe englische Vermerk aus der Antwort.
+    expect(screen.queryByText(/an English sentence/i)).not.toBeInTheDocument();
+  });
+
+  it('falls back to a translated sentence for an unknown refusal code', async () => {
+    // Die vorige Zusicherung war `toHaveTextContent(/\S/)` — die haelt auch das
+    // blosse Warndreieck, den rohen Schluessel oder "[object Object]" fuer
+    // bestanden. Jetzt steht da der Satz, den der Eigentuemer sehen soll, und
+    // ausdruecklich NICHT der Schluessel und nicht das englische Original.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    server.use(
+      http.get(`${BASE}/api/knowledge-graph/merge-proposals`, () =>
+        HttpResponse.json({ proposals: PROPOSALS, total: PROPOSALS.length })),
+      http.post(`${BASE}/api/knowledge-graph/merge-proposals/cluster`, () =>
+        HttpResponse.json(
+          { detail: { code: 'something_new', pairs: [], total: 0,
+                      notes: ['a brand new English reason'] } },
+          { status: 400 },
+        )),
+    );
+    renderWithProviders(<MergeProposalsSection />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /zusammenführen/i }));
+
+    expect(await screen.findByText(/wurde abgelehnt/i)).toBeInTheDocument();
+    expect(screen.queryByText(/refused_|circles\./)).not.toBeInTheDocument();
+    expect(screen.queryByText(/a brand new English reason/i)).not.toBeInTheDocument();
+    // Der genaue Grund darf nicht verloren gehen — er gehoert in die Konsole,
+    // damit er ueberhaupt auswertbar bleibt.
+    expect(warn).toHaveBeenCalledWith(
+      '[merge-cluster] untranslated refusal', 'something_new', ['a brand new English reason'],
+    );
+    warn.mockRestore();
+  });
+
+  it('says how many blocking pairs it is NOT naming', async () => {
+    server.use(
+      http.get(`${BASE}/api/knowledge-graph/merge-proposals`, () =>
+        HttpResponse.json({ proposals: PROPOSALS, total: PROPOSALS.length })),
+      http.post(`${BASE}/api/knowledge-graph/merge-proposals/cluster`, () =>
+        HttpResponse.json(
+          { detail: { code: 'cluster_has_undecidable_pair',
+                      pairs: [['A', 'B'], ['C', 'D'], ['E', 'F']], total: 7 } },
+          { status: 400 },
+        )),
+    );
+    renderWithProviders(<MergeProposalsSection />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /zusammenführen/i }));
+
+    // 7 gesamt, 3 genannt -> "und 4 weitere", nie stilles Abschneiden.
+    expect(await screen.findByText(/und 4 weitere/i)).toBeInTheDocument();
+  });
+
+  it('never echoes a backend note, even on a 200', async () => {
+    // Fruehere Fassung dieses Tests: eine 200 TRUG den Vermerk, und die
+    // Oberflaeche gab ihn woertlich aus. Seit den Refus-Codes liefert jeder
+    // notes-Pfad in `resolve_cluster` eine 400 — diese Form kann der Dienst gar
+    // nicht mehr senden. Die Absicht bleibt (ein Refus ist nie stumm), der Weg
+    // ist ein anderer: uebersetzt statt englisch. Der Test bewacht die FALLE —
+    // wer als Naechstes eine Notiz auf dem Erfolgspfad anhaengt, liefert sonst
+    // wieder Englisch in eine deutsche Oberflaeche.
     mockQueue({ ...FULL_SUCCESS, merged: 0, approved: 0, notes: ['cluster spans more than one tier — refusing'] });
     renderWithProviders(<MergeProposalsSection />);
 
     fireEvent.click(await screen.findByRole('button', { name: /zusammenführen/i }));
 
-    expect(await screen.findByText(/spans more than one tier/i)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(/\S/);
+    });
+    expect(screen.queryByText(/spans more than one tier/i)).not.toBeInTheDocument();
   });
 });

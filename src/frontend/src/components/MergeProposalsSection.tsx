@@ -105,6 +105,44 @@ export default function MergeProposalsSection() {
   // a cluster is one decision, a lone pair stays the familiar pair card.
   const { clusters, singles } = groupProposals(visible);
 
+  /**
+   * A refused fold, translated. EVERY refusal carries a code, not just the
+   * undecidable-pair one — translating that single case would have left its six
+   * siblings ("cluster spans more than one tier", "merge needs a survivor", …)
+   * as raw English in a German UI. Null when the error is not a refusal at all.
+   */
+  const refusalMessage = (err: unknown): string | null => {
+    const detail = (err as { response?: { data?: { detail?: unknown } } })
+      ?.response?.data?.detail as
+      { code?: string; pairs?: [string, string][]; total?: number;
+        notes?: string[] } | undefined;
+    const code = detail?.code;
+    if (!code) return null;
+    if (code !== 'cluster_has_undecidable_pair') {
+      const key = `circles.mergeProposals.cluster.refused_${code}`;
+      const text = t(key, { defaultValue: '' });
+      if (text) return text;
+      // Unbekannter Code. Das Backend LIEFERT den Grund mit (`notes`) — nur
+      // eben auf Englisch, und damit unbrauchbar auf dem Bildschirm. Ihn
+      // wegzuwerfen liess den Eigentuemer aber mit dem blossen Wort "Fehler"
+      // zurueck, waehrend ein diagnostizierbarer Satz in der Antwort stand.
+      // Also beides: ein wahrer allgemeiner Satz fuer die Anzeige, der genaue
+      // Grund in die Konsole fuer den, der ihn auswerten muss. Das greift, wenn
+      // das Backend dem Bundle vorauseilt (zwischengespeicherter Service
+      // Worker nach einem Rollout) oder ein neuer Code ohne Schluessel ging.
+      console.warn('[merge-cluster] untranslated refusal', code, detail?.notes);
+      return t('circles.mergeProposals.cluster.refused_generic');
+    }
+    const shown = (detail?.pairs ?? []).map(([a, b]) => `${a} / ${b}`).join('; ');
+    const total = detail?.total ?? (detail?.pairs?.length ?? 0);
+    const hidden = total - (detail?.pairs?.length ?? 0);
+    // Never truncate in silence: say how many are not listed.
+    const pairs = hidden > 0
+      ? t('circles.mergeProposals.cluster.undecidableMore', { pairs: shown, count: hidden })
+      : shown;
+    return t('circles.mergeProposals.cluster.undecidable', { count: total, pairs });
+  };
+
   const handleCluster = (
     entityIds: number[], decision: 'merge' | 'reject', survivorId?: number,
   ): void => {
@@ -136,19 +174,26 @@ export default function MergeProposalsSection() {
         // lets whatever stayed pending come back instead of disappearing until a
         // page reload. And say so — a refusal is never silent here.
         restore();
+        // NOT `res.notes[0]`: that is a backend sentence, and a backend sentence
+        // cannot be translated — the same leak the refusal codes just closed.
+        // Every `notes` line in `resolve_cluster` today hangs off a refusal that
+        // returns 400, so this branch is unreachable; it stays translated so the
+        // next note appended on a SUCCESS path does not ship English into a
+        // German UI.
         setClusterNote(
           left > 0
             ? t('circles.mergeProposals.cluster.partial', { count: left })
-            : (res.notes?.[0] ?? null),
+            : t('common.error'),
         );
       })
       .catch((err: unknown) => {
-        // A refusal must not be silent either. The service returns 400 with its
-        // note as the detail when it folded nothing — today that is a cluster
-        // holding a pair that may be two different things, and the owner needs
-        // to read WHICH pair, not just watch the cards come back.
+        // A refusal must not be silent either, and it must not be English in a
+        // German UI. The service refuses a whole fold with a STRUCTURED detail
+        // (`cluster_has_undecidable_pair` + the pairs + a total); the sentence
+        // is built here so it can be translated. Anything else falls back to the
+        // generic extractor.
         restore();
-        setClusterNote(extractApiError(err, t('common.error')));
+        setClusterNote(refusalMessage(err) ?? extractApiError(err, t('common.error')));
       });
   };
 
@@ -164,9 +209,14 @@ export default function MergeProposalsSection() {
 
       {clusterNote && (
         <p
-          className="merge-visibility-warning"
-          role="status"
-          aria-live="polite"
+          className="merge-notice"
+          // `alert`, nicht `status`: das hier ist die Fehlermeldung zu einer
+          // gerade ausgeloesten Aktion, die NICHTS bewirkt hat — ein
+          // Bildschirmleser muss sie ansagen, nicht hoeflich anhaengen.
+          // Nebenwirkung, die zaehlt: der Rueckgaengig-Hinweis weiter unten ist
+          // ebenfalls `role="status"`, und `getByRole('status')` war dadurch
+          // zweideutig; jetzt ist jede Rolle eindeutig einem Ding zugeordnet.
+          role="alert"
         >
           <span aria-hidden="true">⚠</span>
           <span>{clusterNote}</span>

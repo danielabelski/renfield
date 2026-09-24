@@ -663,8 +663,20 @@ async def resolve_merge_cluster(
         decision=body.decision,
         resolved_by=uid,
     )
-    if res.notes and not (res.merged or res.approved or res.rejected):
-        raise HTTPException(status_code=400, detail="; ".join(res.notes))
+    if res.refusal_code and not (res.merged or res.approved or res.rejected):
+        # Structured, like the user-delete guard (#1328): the review UI has to
+        # build a TRANSLATED sentence out of this, and a backend string cannot be
+        # translated. EVERY refusal carries a code, not just the one somebody
+        # complained about — `notes` rides along for the log and for API
+        # consumers that are not the UI. `pairs`/`total` are only set by the
+        # undecidable-pair refusal; `total` is uncapped so the UI can say how
+        # many it is not showing instead of truncating in silence.
+        raise HTTPException(status_code=400, detail={
+            "code": res.refusal_code,
+            "pairs": [list(pair) for pair in res.blocked_pairs],
+            "total": res.blocked_total,
+            "notes": res.notes,
+        })
     return ClusterResolveResponse(
         merged=res.merged,
         approved=res.approved,
@@ -673,6 +685,7 @@ async def resolve_merge_cluster(
         skipped_cross_type=res.skipped_cross_type,
         skipped_unreachable=res.skipped_unreachable,
         skipped_weak_edge=res.skipped_weak_edge,
+        refusal_code=res.refusal_code,
         notes=res.notes,
     )
 

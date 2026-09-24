@@ -1179,6 +1179,60 @@ class TestTypeGuard:
         assert (report.auto_merged, report.proposed) == (0, 1)
 
 
+class TestNothingFolded:
+    """Der zweite Klick auf dasselbe Cluster sagt etwas — und zwar was.
+
+    Vorgeschichte, weil sie lehrreicher ist als der Test: der adversariale
+    Durchgang meldete den Erfolgsausgang als STUMMEN Pfad (200, lauter Nullen,
+    Cluster optimistisch verworfen, kein Wort). Der erste Entwurf dieses Tests
+    sollte das belegen und behauptete nur `refusal_code is not None`. Die
+    NEGATIVKONTROLLE — Riegel raus, Test muss rot werden — blieb gruen, und das
+    war der eigentliche Befund: der zweite Aufruf erreicht jenen Ausgang gar
+    nicht. Nach der ersten Faltung steht der Vorschlag auf `approved`, also
+    findet die Abfrage KEIN offenes Paar mehr und der Aufruf steigt bei
+    `no_foldable_pair` aus — einem Ausgang, der seinen Code laengst trug. Der
+    Doppelklick war nie stumm.
+
+    Deshalb prueft dieser Test, was wirklich geschieht, und nennt den Code beim
+    Namen; eine Zusicherung auf "irgendein Code" haette die Luecke genau so
+    verdeckt, wie sie es im ersten Entwurf tat.
+
+    Der Erfolgsausgang mit lauter Nullen bleibt moeglich, aber nur im echten
+    Wettlauf zwischen Abfrage und Nachladen INNERHALB eines Aufrufs. Dagegen
+    steht ein Riegel im Dienst (`nothing_folded`); er ist durch Konstruktion
+    gedeckt, nicht durch diesen Test, und das steht hier, statt ein gruener Test
+    das Gegenteil zu suggerieren.
+    """
+
+    async def test_a_second_fold_of_the_same_cluster_is_not_silent(
+        self, pg_db_session, monkeypatch,
+    ):
+        owner = await _make_user(pg_db_session, "clu_twice")
+        a = await _entity(pg_db_session, owner, "Acme GmbH", tier=2, mention=9, emb=_unit(7))
+        b = await _entity(pg_db_session, owner, "Acme G.m.b.H.", tier=2, mention=3, emb=_unit(7))
+        await TestWeakEdgeTriangle._proposal(pg_db_session, owner, b, a)
+        rec = _recon(pg_db_session, monkeypatch)
+
+        first = await rec.resolve_cluster(
+            user_id=owner.id, entity_ids=[a.id, b.id],
+            survivor_id=a.id, decision="merge", resolved_by=owner.id,
+        )
+        assert first.merged == 1
+        assert first.refusal_code is None      # der Erfolg traegt keinen Code
+
+        # Derselbe Aufruf noch einmal — der Doppelklick.
+        second = await rec.resolve_cluster(
+            user_id=owner.id, entity_ids=[a.id, b.id],
+            survivor_id=a.id, decision="merge", resolved_by=owner.id,
+        )
+
+        assert second.merged == 0
+        assert second.approved == 0
+        # Beim Namen genannt: "irgendein Code" hat im ersten Entwurf genau die
+        # Luecke verdeckt, die die Negativkontrolle dann aufdeckte.
+        assert second.refusal_code == "no_foldable_pair"
+
+
 class TestWeakEdgeTriangle:
     """The topology the bridge test does not cover, and the one that mattered.
 
@@ -1223,7 +1277,10 @@ class TestWeakEdgeTriangle:
         # NICHTS wurde gefaltet — und der Vermerk nennt das Paar.
         assert res.merged == 0
         assert res.skipped_weak_edge == 1
-        assert res.notes and "two different things" in res.notes[0]
+        # Structured, not a sentence — the UI translates it (the note stays for
+        # the log, and asserting on ITS wording would pin an untranslatable string).
+        assert res.blocked_total == 1
+        assert res.blocked_pairs == [("Anna", "Ana")]
         for e_id in (b.id, c.id):
             row = (await pg_db_session.execute(
                 select(KGEntity).where(KGEntity.id == e_id)
@@ -1261,3 +1318,85 @@ class TestWeakEdgeTriangle:
             select(KGEntity).where(KGEntity.id == far.id)
         )).scalar_one()
         assert still.is_active is True
+
+    async def test_a_CROSS_TYPE_chord_refuses_the_fold_too(
+        self, pg_db_session, monkeypatch
+    ):
+        """The same hole, one guard over — found by verifying the weak-edge fix.
+
+        `_types_compatible` is deliberately NOT transitive: `thing` is a wildcard,
+        so `organization`~`thing` and `place`~`thing` both pass while
+        `organization`~`place` does not. Before this, such a pair landed in
+        `skipped_cross_type` and never reached the blocking check, so the fold
+        proceeded through the `thing` in the middle and `_repoint_after_fold`
+        closed the cross-type proposal as superseded: a place folded into an
+        organization while the response said it was skipped.
+
+        Route-only — the UI groups on type EQUALITY, which IS transitive — and
+        that is exactly why it mattered: #1330 built this bar FOR the route.
+        """
+        owner = await _make_user(pg_db_session, "clu_cttri")
+        firm = await _entity(pg_db_session, owner, "Beispiel GmbH", tier=2, mention=9,
+                             emb=_unit(6), etype="organization")
+        town = await _entity(pg_db_session, owner, "Beispielstadt", tier=2, mention=4,
+                             emb=_unit(6), etype="place")
+        mid = await _entity(pg_db_session, owner, "Beispiel", tier=2, mention=2,
+                            emb=_unit(6), etype="thing")     # der Freibrief
+        await self._proposal(pg_db_session, owner, mid, firm)   # organization ~ thing: ok
+        await self._proposal(pg_db_session, owner, town, mid)   # place ~ thing: ok
+        ct = await self._proposal(
+            pg_db_session, owner, town, firm, reason=KG_MERGE_REASON_CROSS_TYPE,
+        )
+        rec = _recon(pg_db_session, monkeypatch)
+
+        res = await rec.resolve_cluster(
+            user_id=owner.id, entity_ids=[firm.id, town.id, mid.id],
+            survivor_id=firm.id, decision="merge", resolved_by=owner.id,
+        )
+
+        assert res.merged == 0
+        assert res.skipped_cross_type == 1
+        assert res.blocked_total == 1
+        assert res.blocked_pairs == [("Beispielstadt", "Beispiel GmbH")]
+        for e_id in (town.id, mid.id):
+            row = (await pg_db_session.execute(
+                select(KGEntity).where(KGEntity.id == e_id)
+            )).scalar_one()
+            assert row.is_active is True
+        prop = (await pg_db_session.execute(
+            select(KgMergeProposal).where(KgMergeProposal.id == ct.id)
+        )).scalar_one()
+        assert prop.status == KG_MERGE_PROPOSAL_PENDING
+
+    async def test_the_refusal_counts_what_it_does_not_name(
+        self, pg_db_session, monkeypatch
+    ):
+        """`blocked_total` is uncapped even though `blocked_pairs` is.
+
+        "Decide it first" about three of an unstated number is worse than no list.
+        """
+        owner = await _make_user(pg_db_session, "clu_many")
+        hub = await _entity(pg_db_session, owner, "Ana", tier=2, mention=99, emb=_unit(6))
+        ring = []
+        for i in range(4):
+            e = await _entity(pg_db_session, owner, f"Anna{i}", tier=2, mention=5 + i,
+                              emb=_unit(6))
+            ring.append(e)
+            await self._proposal(pg_db_session, owner, e, hub)          # stark
+        # vier schwache Sehnen INNERHALB der Komponente
+        for i in range(4):
+            await self._proposal(
+                pg_db_session, owner, ring[i], ring[(i + 1) % 4],
+                reason=KG_MERGE_REASON_NAME_TYPO,
+            )
+        rec = _recon(pg_db_session, monkeypatch)
+
+        res = await rec.resolve_cluster(
+            user_id=owner.id, entity_ids=[hub.id] + [e.id for e in ring],
+            survivor_id=hub.id, decision="merge", resolved_by=owner.id,
+        )
+
+        assert res.merged == 0
+        assert res.blocked_total == 4
+        assert len(res.blocked_pairs) == 3          # gezeigt
+        assert "+1 more" in res.notes[0]            # und der Rest als Zahl
