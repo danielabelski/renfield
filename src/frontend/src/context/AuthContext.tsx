@@ -5,7 +5,7 @@
  * Handles JWT token storage and automatic refresh.
  */
 import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
-import apiClient from '../utils/axios';
+import apiClient, { PASSWORD_CHANGE_REQUIRED_EVENT } from '../utils/axios';
 import { ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY } from '../utils/authTokens';
 import type { User, LoginResponse } from '../types/api';
 
@@ -238,6 +238,29 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }, [getAccessToken, setTokens]);
 
   // Check auth status on mount
+  // A forced rotation flagged DURING the session shows up only as 403s. Re-read
+  // /auth/me so `must_change_password` reaches the user object and
+  // ProtectedRoute sends them to the change-password screen.
+  //
+  // Only while auth is ON. With auth off the provider installs a pseudo-admin
+  // user, and `fetchUser()` wouldshort-circuit to setUser(null) — every
+  // permission-gated affordance would vanish until a page reload, for an event
+  // that on an auth-off instance can only be a false positive anyway.
+  //
+  // De-duplicated while a read is in flight: on a reload every query 403s at
+  // once, and one /auth/me per 403 would re-render every consumer N times.
+  const rotationCheckRef = useRef(false);
+  useEffect(() => {
+    if (!authEnabled) return undefined;
+    const onRequired = (): void => {
+      if (rotationCheckRef.current || user?.must_change_password) return;
+      rotationCheckRef.current = true;
+      void fetchUser().finally(() => { rotationCheckRef.current = false; });
+    };
+    window.addEventListener(PASSWORD_CHANGE_REQUIRED_EVENT, onRequired);
+    return () => window.removeEventListener(PASSWORD_CHANGE_REQUIRED_EVENT, onRequired);
+  }, [authEnabled, fetchUser, user?.must_change_password]);
+
   useEffect(() => {
     const checkAuthStatus = async () => {
       try {

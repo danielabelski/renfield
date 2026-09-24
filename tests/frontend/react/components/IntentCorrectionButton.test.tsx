@@ -4,6 +4,27 @@ import { screen, fireEvent, waitFor } from '@testing-library/react';
 import IntentCorrectionButton from '../../../../src/frontend/src/components/IntentCorrectionButton';
 import type { CorrectionHandler } from '../../../../src/frontend/src/components/IntentCorrectionButton';
 import { renderWithRouter } from '../test-utils';
+import { adminAuthMock } from '../test-auth-mock';
+import type { AuthContextValue } from '../../../../src/frontend/src/context/AuthContext';
+
+// The MCP option list comes from the ADMIN-gated /api/intents/status, so the
+// component asks only when the viewer is an admin. Default the suite to admin
+// (its existing expectations); the non-admin case gets its own test below.
+/** Authenticated, but without `admin` — the household's Familie role. */
+const familyAuthMock: AuthContextValue = {
+  ...adminAuthMock,
+  hasPermission: () => false,
+  hasAnyPermission: () => false,
+  isAdmin: () => false,
+};
+
+let authMock: AuthContextValue = adminAuthMock;
+vi.mock('../../../../src/frontend/src/context/AuthContext', async () => {
+  const actual = await vi.importActual<typeof import('../../../../src/frontend/src/context/AuthContext')>(
+    '../../../../src/frontend/src/context/AuthContext',
+  );
+  return { ...actual, useAuth: (): AuthContextValue => authMock };
+});
 
 // Mock axios to return MCP tools
 vi.mock('../../../../src/frontend/src/utils/axios', () => ({
@@ -37,6 +58,7 @@ describe('IntentCorrectionButton', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    authMock = adminAuthMock;
   });
 
   it('renders the button', () => {
@@ -234,5 +256,29 @@ describe('IntentCorrectionButton', () => {
 
     await screen.findByText('Korrektur gespeichert! Renfield lernt daraus.');
     expect(screen.queryByText('Neu beantworten')).not.toBeInTheDocument();
+  });
+
+  // Regression: /api/intents/status is ADMIN-gated. Asking as a Familie member
+  // was a guaranteed 403 — one console error per chat load and one refused
+  // request per family member per session. Live on the auth-on household,
+  // 2026-09-24.
+  //
+  // The assertion is on what the NON-ADMIN SEES, not on the axios spy: the
+  // MCP list lives in a module-level cache that an earlier admin test in this
+  // file has already warmed, so `expect(get).not.toHaveBeenCalled()` would
+  // pass against unfixed code too. The rendered options cannot be faked that
+  // way — without the gate, the cached servers appear in the dropdown.
+  it('offers a non-admin the core options only, never the MCP servers', async () => {
+    authMock = familyAuthMock;
+
+    renderWithRouter(
+      <IntentCorrectionButton {...defaultProps} feedbackType="intent" detectedIntent="general.conversation" />
+    );
+    fireEvent.click(screen.getByText('Falsch erkannt?'));
+
+    await waitFor(() => expect(screen.getByText(/knowledge|Wissen/i)).toBeInTheDocument());
+    expect(screen.queryByText('Paperless')).not.toBeInTheDocument();
+    expect(screen.queryByText('Homeassistant')).not.toBeInTheDocument();
+    expect(screen.queryByText('Weather')).not.toBeInTheDocument();
   });
 });

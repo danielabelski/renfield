@@ -61,12 +61,40 @@ apiClient.interceptors.request.use(
   }
 );
 
+/**
+ * Fired when the backend refuses a call because the user must rotate their
+ * password first. AuthContext listens and re-reads /auth/me, whose
+ * `must_change_password` then makes ProtectedRoute redirect — SPA-internal, no
+ * page reload.
+ *
+ * SCOPE, honestly: this is a narrow safety net, not the fix. The fix is that
+ * `/auth/me` reports the flag at all. The only route that sets the flag
+ * mid-session (`POST /users/{id}/reset-password`) ALSO bumps `token_epoch`, and
+ * `get_current_user` checks the epoch BEFORE the rotation gate — so that path
+ * yields 401 "revoked", the refresh fails too, and the user lands on /login,
+ * never here. What remains for this event is a flag set without an epoch bump
+ * (a direct DB change, e.g. during an operator's test).
+ *
+ * Deliberately strict: only a parsed JSON body whose `detail` says so. Treating
+ * an unreadable body (a `responseType` of blob/arraybuffer) as a candidate was
+ * tried and reverted — a CSRF 403 on the arraybuffer TTS POST looks exactly the
+ * same from here, and a false positive costs a pointless /auth/me on every
+ * playback.
+ */
+export const PASSWORD_CHANGE_REQUIRED_EVENT = 'renfield:password-change-required';
+
 // Response Interceptor
 apiClient.interceptors.response.use(
   (response: AxiosResponse) => {
     return response;
   },
-  (error: AxiosError) => {
+  (error: AxiosError<{ detail?: unknown }>) => {
+    if (
+      error.response?.status === 403
+      && error.response.data?.detail === 'password_change_required'
+    ) {
+      window.dispatchEvent(new CustomEvent(PASSWORD_CHANGE_REQUIRED_EVENT));
+    }
     // Globale Error-Behandlung
     console.error('API Error:', error);
     return Promise.reject(error);
