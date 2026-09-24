@@ -146,6 +146,30 @@ That is an audit-trail fact, not a UI one — the card derives its label from th
 still read "different kinds of thing". Nothing re-writes a stored reason; a backfill would be a one-off `UPDATE` and
 is deliberately not part of the guard.
 
+**Weak edges never take part in a bulk fold** (#1333). `resolve_cluster` also refuses any pair whose `reason` is in
+`KG_MERGE_WEAK_REASONS` — today just `name_typo`, "maybe two different people, one character apart". Two reasons: the
+cluster card shows a count and not the two names, so a bulk fold hands exactly the judgement the reconciler refused to
+a single click; and one weak edge JOINS two components that were never compared, so the weak claim would carry
+everything on both sides of it. Measured on the live household graph 2026-09-24: 11 `name_typo` pairs pending, **six
+of them inside a foldable cluster**. The bar reads the persisted `reason`, not `block_auto_merge` — the latter is a
+find-time flag on `MergeCandidate` and never reaches the queue, which is why the "review candidate only" promise held
+in `_reconcile_pass` and nowhere else.
+
+Refusing the weak EDGE turned out not to be enough, and the adversarial review found why: dropping an edge shrinks
+reachability but does not stop both of its endpoints arriving in the survivor through a third entity. A—B weak, A—C
+and B—C strong: the component is still {A,B,C}, B folds into A, and `_repoint_after_fold` closes the weak A—B
+proposal as `superseded`. The weak claim would have been executed and its row closed while the response still
+reported `skipped_weak_edge=1` — the owner told the pair stayed pending, then finding it gone. So a weak pair with
+**both endpoints inside the component refuses the whole fold**, with a note naming the two entities; the owner
+decides that one pair on its own card and the cluster folds afterwards. Folding it and merely reporting it honestly
+was the alternative and was rejected: a merge cannot be taken back, and this is exactly the "maybe two different
+people" case.
+
+Known and not fixed: `_repoint_after_fold` rewrites a pair's endpoints but not its `reason`, and since this change
+that reason is a gate rather than a label. A re-pointed pair can therefore carry a stale reason in either direction
+— over-refusal (harmless) or under-refusal (the hole, reopened for that one pair). Nothing re-evaluates it, because
+the self-join excludes pairs with a pending proposal.
+
 `resolve_cluster` carries the same bar as a second invariant next to same-tier (`skipped_cross_type`), and the
 frontend's `mergeClusters` refuses to chain components across differing primary types — the same test on the same
 field, so view and service agree exactly. That also covers the pairs that were already pending when the guard landed.

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { GitMerge } from 'lucide-react';
+import { extractApiError } from '../utils/axios';
 import MergeProposalCard from './MergeProposalCard';
 import MergeClusterCard from './MergeClusterCard';
 import { groupProposals } from './mergeClusters';
@@ -127,7 +128,8 @@ export default function MergeProposalsSection() {
       .then((res) => {
         const left = (res.skipped_cross_tier ?? 0)
           + (res.skipped_cross_type ?? 0)
-          + (res.skipped_unreachable ?? 0);
+          + (res.skipped_unreachable ?? 0)
+          + (res.skipped_weak_edge ?? 0);
         if (left === 0 && (res.notes?.length ?? 0) === 0) return;
         // Partial refusal. The success path already invalidated the query, so a
         // refetch is on its way with the truth; undoing the optimistic dismissal
@@ -140,7 +142,14 @@ export default function MergeProposalsSection() {
             : (res.notes?.[0] ?? null),
         );
       })
-      .catch(restore);
+      .catch((err: unknown) => {
+        // A refusal must not be silent either. The service returns 400 with its
+        // note as the detail when it folded nothing — today that is a cluster
+        // holding a pair that may be two different things, and the owner needs
+        // to read WHICH pair, not just watch the cards come back.
+        restore();
+        setClusterNote(extractApiError(err, t('common.error')));
+      });
   };
 
   return (

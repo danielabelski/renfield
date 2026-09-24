@@ -16,6 +16,12 @@ import type { MergeCluster } from './MergeClusterCard';
  * that touches no component is returned in `crossTierOnly` to be rendered as an
  * ordinary single pair.
  *
+ * A pair whose REASON marks it weak (`name_typo` — "maybe two different people")
+ * is excluded too, and for the sharpest reason of all: the reconciler refuses to
+ * auto-merge it, so a bulk fold must not merge it either. Measured on the live
+ * household graph 2026-09-24: 11 such pairs pending, SIX of them sitting inside
+ * a foldable cluster.
+ *
  * A pair whose entity TYPES differ is excluded from the components for the same
  * reason and a sharper one: it is usually not a duplicate at all. Embedding
  * similarity cannot separate a town from the company seated in it — both are
@@ -47,11 +53,35 @@ function sameType(p: MergeProposal): boolean {
   return p.loser.entity_type === p.winner.entity_type;
 }
 
+/**
+ * Reasons that mean "maybe two different things" BY DEFINITION. `name_typo` is a
+ * review candidate precisely because a machine cannot decide it — two people one
+ * character apart. Such a pair must never be an EDGE: it would join two
+ * components that were never compared, and the fold button shows a count, not
+ * the two names. The service refuses the same pairs (`KG_MERGE_WEAK_REASONS`);
+ * this is the view's half, so a weak pair is visible as its own card instead of
+ * disappearing into a cluster.
+ *
+ * The set is written out twice, in two languages, and that is safe by
+ * CONSTRUCTION rather than by discipline: the SERVICE is what refuses the fold.
+ * Should this list ever fall behind, a weak pair becomes a cluster edge again,
+ * the fold is refused server-side, `skipped_weak_edge` counts it and the section
+ * shows the partial-refusal note. The divergence costs a confusing card, never a
+ * merge.
+ */
+const WEAK_REASONS = new Set(['name_typo']);
+
+function isWeak(p: MergeProposal): boolean {
+  return WEAK_REASONS.has(p.reason);
+}
+
 export function groupProposals(proposals: MergeProposal[]): GroupedProposals {
   // A cross-type pair is never an edge and never a cluster member — it goes
   // straight to the single-pair cards, ahead of the tier split.
-  const crossType = proposals.filter((p) => !sameType(p));
-  const typed = proposals.filter(sameType);
+  const weak = proposals.filter(isWeak);
+  const strong = proposals.filter((p) => !isWeak(p));
+  const crossType = strong.filter((p) => !sameType(p));
+  const typed = strong.filter(sameType);
   const sameTier = typed.filter((p) => tierOf(p).same);
   const crossTier = typed.filter((p) => !tierOf(p).same);
 
@@ -104,7 +134,7 @@ export function groupProposals(proposals: MergeProposal[]): GroupedProposals {
   }
 
   const clusters: MergeCluster[] = [];
-  const singles: MergeProposal[] = [...crossType, ...crossOrphans];
+  const singles: MergeProposal[] = [...weak, ...crossType, ...crossOrphans];
   for (const [root, bucket] of byRoot) {
     // A cross-tier pair is ALWAYS rendered as its own card, cluster or not —
     // the cluster only carries it as a count for its footer. Counting it without

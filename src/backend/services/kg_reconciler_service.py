@@ -48,6 +48,7 @@ from models.database import (
     KG_MERGE_REASON_CROSS_TYPE,
     KG_MERGE_REASON_GRAY_ZONE,
     KG_MERGE_REASON_NAME_TYPO,
+    KG_MERGE_WEAK_REASONS,
     KGEntity,
     KgMergeProposal,
 )
@@ -265,6 +266,7 @@ class ClusterResolution:
     skipped_cross_tier: int = 0     # left individually decidable (visibility)
     skipped_cross_type: int = 0     # left individually decidable (disjoint types)
     skipped_unreachable: int = 0    # same tier + type, but not in the survivor's component
+    skipped_weak_edge: int = 0      # "maybe two different things" by reason — never bulk-folded
     notes: list[str] = field(default_factory=list)
 
 
@@ -667,6 +669,31 @@ class KgReconcilerService:
         such a pair. This bar is for the ROUTE — ``entity_ids`` is caller-supplied
         and need not come from a cluster card at all.
 
+        THIRD INVARIANT: a pair that might be two different THINGS never takes
+        part. Not "a pair the reconciler refuses to auto-merge" — that is a much
+        larger set and folding it in bulk is the whole point of this method: the
+        243 `gray_zone` pairs pending on the household graph carry
+        `block_auto_merge` from ``_name_collision_low_signal`` (same name, no
+        description to tell them apart) and they are exactly what the owner
+        decides once. The line runs elsewhere: `gray_zone` says "probably the
+        same thing, a machine should not decide alone", `name_typo` says "maybe
+        two different PEOPLE, one character apart". Only the second kind is
+        refused, counted in ``skipped_weak_edge``.
+
+        Refused as an EDGE is not enough: dropping the edge shrinks reachability
+        but does not stop both endpoints arriving in the survivor by another
+        route, and ``_repoint_after_fold`` would then close the weak proposal as
+        superseded — executed, and reported as skipped. So a weak pair with both
+        endpoints inside the component refuses the WHOLE fold, with a note naming
+        the two entities. The owner decides that one pair on its own card, with
+        both names in front of them, and the cluster folds afterwards.
+
+        Note WHY the bar reads `reason` and not `block_auto_merge`: the latter is
+        a find-time flag on `MergeCandidate` and is never persisted; `reason` is
+        the only trace of the weakness that reaches the queue, which is why the
+        "review candidate only" promise held in ``_reconcile_pass`` and nowhere
+        else.
+
         The fold set is derived from the PROPOSALS, not from ``entity_ids``: an
         entity the caller names but that no pending same-tier proposal ties into
         the cluster is never merged. Otherwise this route would be a way to merge
@@ -698,6 +725,7 @@ class KgReconcilerService:
         pairs = list((await self.db.execute(q)).scalars().all())
 
         foldable: list[KgMergeProposal] = []
+        weak_pairs: list[KgMergeProposal] = []
         for p in pairs:
             # Compare the LIVE tiers, not the ones stored when the pair was
             # proposed — a tier may have moved since, in either direction.
@@ -715,6 +743,19 @@ class KgReconcilerService:
                 p.winner.entity_type if p.winner else None,
             ):
                 res.skipped_cross_type += 1
+                continue
+            # A pair that might be two different THINGS is never bulk-folded.
+            # `name_typo` means "maybe two different people, one character apart"
+            # — the owner has to judge that pair by its names, and a cluster card
+            # shows a count, not the names. One such edge also JOINS two
+            # components that were never compared: the weak claim would carry
+            # everything on both sides of it.
+            # NOT the same as "the reconciler refuses to auto-merge it":
+            # `gray_zone` pairs carry `block_auto_merge` too and folding those in
+            # bulk is precisely what this method is for.
+            if (p.reason or "") in KG_MERGE_WEAK_REASONS:
+                res.skipped_weak_edge += 1
+                weak_pairs.append(p)
                 continue
             foldable.append(p)
 
@@ -752,7 +793,11 @@ class KgReconcilerService:
             adjacency.setdefault(b, set()).add(a)
             by_edge.setdefault((min(a, b), max(a, b)), []).append(p)
         if keep not in adjacency:
-            res.notes.append("survivor must be one of the cluster's proposed entities")
+            # NOT "not one of the cluster's entities" — since the weak-edge bar,
+            # an entity whose every pending pair is weak IS in the cluster and
+            # still absent from `adjacency`. Saying otherwise asserts something
+            # false about a legitimate state.
+            res.notes.append("the survivor has no foldable pair in this cluster")
             return res
         component: set[int] = set()
         frontier = [keep]
@@ -762,6 +807,35 @@ class KgReconcilerService:
                 continue
             component.add(node)
             frontier.extend(adjacency.get(node, ()))
+
+        # Dropping a weak edge shrinks what is REACHABLE — it does not stop the
+        # two endpoints arriving in the survivor by another route. A—B weak,
+        # A—C and B—C strong: the component is still {A,B,C}, B folds into A,
+        # and `_repoint_after_fold` then closes the weak A—B proposal as
+        # SUPERSEDED. The weak claim would have been executed, its row closed,
+        # and the response would still say `skipped_weak_edge=1` — the owner
+        # told that the pair stayed pending, and then it is gone.
+        #
+        # So: if a weak pair has BOTH endpoints inside the component, the whole
+        # fold is refused. The alternative — fold and report it honestly — was
+        # rejected because a merge cannot be taken back and this one is exactly
+        # the "maybe two different people" case. The owner decides that ONE pair
+        # first, on its own card with both names, and the cluster folds after.
+        blocking = [
+            p for p in weak_pairs
+            if int(p.loser_entity_id) in component and int(p.winner_entity_id) in component
+        ]
+        if blocking:
+            names = []
+            for p in blocking[:3]:
+                a = (p.loser.name if p.loser else "?") or "?"
+                b = (p.winner.name if p.winner else "?") or "?"
+                names.append(f"{a} / {b}")
+            res.notes.append(
+                "this cluster holds a pair that may be two different things — "
+                "decide it first: " + "; ".join(names)
+            )
+            return res
 
         # Belt and braces: every member must sit at the survivor's tier. The
         # edges say so pairwise; this says so for the whole component, so a

@@ -70,6 +70,18 @@ exact name → surface-form (jsonb `@>`) → embedding (**SAME-TIER only** + hig
   but do not reach the survivor are `skipped_unreachable`, NOT `skipped_cross_tier` — they sit at the survivor's own
   tier, so calling them a visibility skip was a lie. The frontend groups by connected components over the pairs, NOT
   by name (a pair can hold two spellings), and does not chain across differing primary types either.
+- **#1333, the fourth bar: a WEAK pair never takes part** (`skipped_weak_edge`). `name_typo` = "maybe two different
+  PEOPLE, one edit apart" — a bulk fold hands that judgement to a click showing a count, not the names. **NOT
+  everything the reconciler refuses to auto-merge**: a `gray_zone` pair carries `block_auto_merge` from
+  `_name_collision_low_signal` too, and folding those is the whole point (243 pending on the household). The bar reads
+  the persisted `reason`, not `block_auto_merge` (a find-time flag that never reaches the queue).
+  🛑 Refusing the EDGE is not enough: both endpoints can still arrive in the survivor via a third entity, and
+  `_repoint_after_fold` then closes the weak pair as `superseded` — executed, while the response calls it skipped. A
+  weak pair with BOTH endpoints in the component therefore refuses the **whole fold**, with a note naming the two.
+  Measured 2026-09-24: 11 `name_typo` pending on the household, six inside a foldable cluster.
+  🛑 `_repoint_after_fold` rewrites a pair's endpoints but NOT its `reason` — since #1333 that reason is a GATE, so a
+  re-pointed pair can carry a stale one in either direction. Known, not fixed: the self-join excludes pending pairs,
+  so nothing re-evaluates it.
 - The proposal list carries what the embedding does not — description, edge count, first/last seen — because the owner
   facing two bare identical names is in exactly the position the reconciler refused to decide from.
 
