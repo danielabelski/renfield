@@ -9,6 +9,7 @@ Testet:
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
 from httpx import AsyncClient
@@ -520,3 +521,118 @@ class TestDeviceAccountFlag:
         assert exc.value.status_code == 400
         await db_session.refresh(test_user)
         assert test_user.is_device_account is False
+
+
+class TestDeleteRefusesToTakeKnowledgeWithIt:
+    """`DELETE /users/{id}` used to 500 on any account that still held data.
+
+    36 foreign keys reference `users.id` WITHOUT `ON DELETE`, so Postgres refuses
+    the parent DELETE — and the caller got a 500 that named nothing. Found on
+    2026-09-24 while removing a test account.
+
+    The answer is not a cascade: a member's atoms are household-tier knowledge
+    the others still read. Nor is it a pre-count of one table — the first fix
+    tried that and left the 500 alive for every account with a circle membership
+    and no atoms, which on this household is every family member.
+    """
+
+    @staticmethod
+    async def _plain_role(db: AsyncSession) -> Role:
+        """A role WITHOUT `admin`: the victim must not be the last admin, or the
+        last-admin guard answers first and this test proves nothing."""
+        role = Role(name=f"opfer_rolle_{uuid4().hex[:8]}", permissions=["chat.own"])
+        db.add(role)
+        await db.flush()
+        return role
+
+    async def _victim(self, db: AsyncSession, username: str) -> User:
+        u = User(username=username, password_hash="x",
+                 role_id=(await self._plain_role(db)).id, is_active=True)
+        db.add(u)
+        await db.flush()
+        return u
+
+    @staticmethod
+    def _admin(test_role: Role) -> MagicMock:
+        # id far out of the way: the victim is the first row in a fresh test DB
+        # and would otherwise trip the self-deletion guard.
+        return MagicMock(username="admin", id=999_999, role=test_role,
+                         get_permissions=lambda: test_role.permissions)
+
+    @staticmethod
+    async def _atom_for(db: AsyncSession, owner_id: int) -> None:
+        from models.database import ATOM_TYPE_KG_NODE
+        from services.atom_service import AtomService
+
+        aid = await AtomService(db).create_with_source(
+            atom_type=ATOM_TYPE_KG_NODE, owner_user_id=owner_id, tier=2,
+        )
+        await AtomService(db).finalize_source_id(aid, 1)
+
+    @pytest.mark.database
+    async def test_refuses_with_409_when_the_account_owns_atoms(
+        self, db_session: AsyncSession, test_role: Role
+    ):
+        from api.routes import users as users_routes
+        from fastapi import HTTPException
+
+        victim = await self._victim(db_session, "hat-wissen")
+        await self._atom_for(db_session, victim.id)
+
+        with pytest.raises(HTTPException) as err:
+            await users_routes.delete_user(
+                user_id=victim.id, db=db_session, current_user=self._admin(test_role),
+            )
+        assert err.value.status_code == 409
+        assert err.value.detail["code"] == "user_still_referenced"
+        assert err.value.detail["blocked_by"] == "atoms"
+
+        still_there = (await db_session.execute(
+            select(User).where(User.id == victim.id)
+        )).scalar_one_or_none()
+        assert still_there is not None
+
+    @pytest.mark.database
+    async def test_refuses_for_a_membership_too_not_just_atoms(
+        self, db_session: AsyncSession, test_role: Role
+    ):
+        """The regression the first fix missed. The household backfill writes a
+        PAIRWISE circle_memberships row for every family member, so an account
+        can hold nothing but a membership — and `circle_memberships` has three
+        blocking FKs to `users.id` of its own."""
+        from api.routes import users as users_routes
+        from fastapi import HTTPException
+        from models.database import CircleMembership
+
+        owner = await self._victim(db_session, "kreis-eigner")
+        victim = await self._victim(db_session, "nur-mitglied")
+        db_session.add(CircleMembership(
+            circle_owner_id=owner.id, member_user_id=victim.id,
+            dimension="tier", value="2", granted_by=owner.id,
+        ))
+        await db_session.flush()
+
+        with pytest.raises(HTTPException) as err:
+            await users_routes.delete_user(
+                user_id=victim.id, db=db_session, current_user=self._admin(test_role),
+            )
+        assert err.value.status_code == 409          # kein 500
+        assert err.value.detail["blocked_by"] == "circle_memberships"
+
+    @pytest.mark.database
+    async def test_deletes_an_account_that_holds_nothing(
+        self, db_session: AsyncSession, test_role: Role
+    ):
+        from api.routes import users as users_routes
+
+        victim = await self._victim(db_session, "leeres-konto")
+
+        with patch("api.routes.users.run_hooks", new=AsyncMock()):
+            out = await users_routes.delete_user(
+                user_id=victim.id, db=db_session, current_user=self._admin(test_role),
+            )
+        assert "leeres-konto" in out["message"]
+        gone = (await db_session.execute(
+            select(User).where(User.id == victim.id)
+        )).scalar_one_or_none()
+        assert gone is None
