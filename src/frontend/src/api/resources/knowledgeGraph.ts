@@ -296,7 +296,7 @@ export interface MergeProposalEntityBrief {
 export interface MergeProposal {
   id: number;
   similarity: number;
-  reason: string; // 'cross_tier' | 'gray_zone' | 'name_typo'
+  reason: string; // 'cross_tier' | 'cross_type' | 'gray_zone' | 'name_typo'
   status: string;
   created_at: string;
   loser: MergeProposalEntityBrief;
@@ -332,6 +332,10 @@ export interface ClusterResolveResult {
   approved: number;
   rejected: number;
   skipped_cross_tier: number;
+  /** Pairs left out because the two sides are different KINDS of thing. */
+  skipped_cross_type: number;
+  /** Pairs that cleared both filters but do not reach the survivor. */
+  skipped_unreachable: number;
   notes: string[];
 }
 

@@ -21,6 +21,7 @@ from models.database import (
     KG_MERGE_PROPOSAL_REJECTED,
     KG_MERGE_PROPOSAL_SUPERSEDED,
     KG_MERGE_REASON_CROSS_TIER,
+    KG_MERGE_REASON_CROSS_TYPE,
     KGEntity,
     KgMergeProposal,
     Role,
@@ -842,3 +843,271 @@ class TestResolveCluster:
 
         assert (res.merged, res.approved, res.rejected) == (0, 0, 0)
         assert await _count_pending(pg_db_session, other.id) == 1
+
+    async def test_an_unreachable_pair_is_not_reported_as_a_visibility_skip(
+        self, pg_db_session, monkeypatch
+    ):
+        """Two disjoint components at the same tier: the far one is unreachable.
+
+        It cleared the tier filter AND the type filter — calling it
+        `skipped_cross_tier` tells the owner "different visibility", which is
+        false; the pair sits at the survivor's own tier.
+        """
+        owner = await _make_user(pg_db_session, "clu_unreach")
+        a = await _entity(pg_db_session, owner, "Anna", tier=2, mention=1, emb=_unit(6))
+        b = await _entity(pg_db_session, owner, "Anna", tier=2, mention=9, emb=_unit(6))
+        far1 = await _entity(pg_db_session, owner, "Anna", tier=2, mention=4, emb=_unit(6))
+        far2 = await _entity(pg_db_session, owner, "Anna", tier=2, mention=3, emb=_unit(6))
+        await self._proposal(pg_db_session, owner, a, b)
+        await self._proposal(pg_db_session, owner, far1, far2)   # its own component
+        rec = _recon(pg_db_session, monkeypatch)
+
+        res = await rec.resolve_cluster(
+            user_id=owner.id, entity_ids=[a.id, b.id, far1.id, far2.id],
+            survivor_id=b.id, decision="merge", resolved_by=owner.id,
+        )
+
+        assert res.merged == 1                 # only a folded into b
+        assert res.skipped_unreachable == 1    # the far pair, honestly labelled
+        assert res.skipped_cross_tier == 0     # nothing here is a visibility skip
+        assert res.skipped_cross_type == 0
+
+class TestTypeGuard:
+    """A place must never be folded into the company seated in it.
+
+    Field shape, xidra graph 2026-09-24: place "Korschenbroich" ~ organization
+    "X-Idra Systems GmbH" at cosine 0.895 — both descriptions come out of the
+    same letterhead, so the embedding says "same thing" and is simply wrong.
+    Four such pairs were pending; one of them inside a cluster would have pulled
+    the whole company component into the town.
+
+    Every entity here carries the SAME embedding (cosine 1.0, above the 0.95
+    auto bar) and the same tier, and both sides carry DISTINCT descriptions so
+    the name-collision brake (_name_collision_low_signal) cannot be what stops
+    the merge. Without the type guard each of these auto-merges.
+    """
+
+    @staticmethod
+    async def _proposal(db, owner, loser, winner, *, sim=0.9, reason="gray_zone"):
+        p = KgMergeProposal(
+            user_id=owner.id, loser_entity_id=loser.id, winner_entity_id=winner.id,
+            similarity=sim, loser_tier=loser.circle_tier, winner_tier=winner.circle_tier,
+            reason=reason, status=KG_MERGE_PROPOSAL_PENDING,
+        )
+        db.add(p)
+        await db.flush()
+        return p
+
+    async def test_place_and_organization_with_unrelated_names_is_no_candidate(
+        self, pg_db_session, monkeypatch
+    ):
+        owner = await _make_user(pg_db_session, "tg_field")
+        town = await _entity(pg_db_session, owner, "Korschenbroich", tier=2, mention=4,
+                             emb=_unit(6), etype="place", desc="Stadt am Niederrhein")
+        firm = await _entity(pg_db_session, owner, "X-Idra Systems GmbH", tier=2,
+                             mention=9, emb=_unit(6), etype="organization",
+                             desc="Softwarehaus")
+        rec = _recon(pg_db_session, monkeypatch)
+
+        assert await rec.find_duplicate_pairs(owner.id) == []
+
+        report = await rec.run_for_user(owner.id)
+        assert (report.auto_merged, report.proposed) == (0, 0)
+        assert await _count_pending(pg_db_session, owner.id) == 0
+        for e_id in (town.id, firm.id):
+            row = (await pg_db_session.execute(
+                select(KGEntity).where(KGEntity.id == e_id)
+            )).scalar_one()
+            assert row.is_active is True
+            assert row.canonical_id is None
+
+    async def test_same_name_different_type_survives_as_review_only(
+        self, pg_db_session, monkeypatch
+    ):
+        """The mis-TYPED duplicate — the one shape a disjoint type may be.
+
+        Both live graphs hold such a fold (person "Pontresina" -> place
+        "Pontresina"). It must still reach the owner, and it must never be
+        auto-merged: which type is right is a human call.
+        """
+        owner = await _make_user(pg_db_session, "tg_mistyped")
+        a = await _entity(pg_db_session, owner, "Pontresina", tier=2, mention=1,
+                          emb=_unit(6), etype="person", desc="im Reisebericht erwähnt")
+        b = await _entity(pg_db_session, owner, "Pontresina", tier=2, mention=9,
+                          emb=_unit(6), etype="place", desc="Gemeinde im Engadin")
+        rec = _recon(pg_db_session, monkeypatch)
+
+        pairs = await rec.find_duplicate_pairs(owner.id)
+        assert len(pairs) == 1
+        assert pairs[0].cross_type is True
+        assert pairs[0].block_auto_merge is True
+
+        report = await rec.run_for_user(owner.id)
+        assert (report.auto_merged, report.proposed) == (0, 1)
+        prop = (await pg_db_session.execute(
+            select(KgMergeProposal).where(KgMergeProposal.user_id == owner.id)
+        )).scalar_one()
+        assert prop.reason == KG_MERGE_REASON_CROSS_TYPE
+        for e_id in (a.id, b.id):
+            row = (await pg_db_session.execute(
+                select(KGEntity).where(KGEntity.id == e_id)
+            )).scalar_one()
+            assert row.is_active is True
+
+    async def test_subset_name_across_types_is_a_review_candidate_too(
+        self, pg_db_session, monkeypatch
+    ):
+        """A subset name across two REAL type claims: review, never auto-merge.
+
+        The live field pair (organization "Publikationsplattform" ⊆ thing
+        "Publikationsplattform der …") is deliberately not the fixture here:
+        `thing` is the no-type bucket and disarms the guard entirely
+        (``_UNTYPED``), so that pair flows through as it always did. Two claimed
+        types are what the exception is actually about.
+        """
+        owner = await _make_user(pg_db_session, "tg_subset")
+        await _entity(pg_db_session, owner, "Publikationsplattform", tier=2, mention=1,
+                      emb=_unit(6), etype="organization", desc="Kurzform")
+        await _entity(pg_db_session, owner, "Publikationsplattform der Bundesanzeiger",
+                      tier=2, mention=9, emb=_unit(6), etype="concept", desc="Langform")
+        rec = _recon(pg_db_session, monkeypatch)
+
+        report = await rec.run_for_user(owner.id)
+        assert (report.auto_merged, report.proposed) == (0, 1)
+        assert report.dropped_cross_type == 0
+
+    async def test_same_type_still_auto_merges(self, pg_db_session, monkeypatch):
+        """The guard must not be a blanket brake on the queue."""
+        owner = await _make_user(pg_db_session, "tg_control")
+        await _entity(pg_db_session, owner, "X-Idra Systems GmbH", tier=2, mention=1,
+                      emb=_unit(6), etype="organization", desc="Softwarehaus")
+        await _entity(pg_db_session, owner, "X-idra Systems GmbH", tier=2, mention=9,
+                      emb=_unit(6), etype="organization", desc="Auftraggeber")
+        rec = _recon(pg_db_session, monkeypatch)
+
+        report = await rec.run_for_user(owner.id)
+        assert report.auto_merged == 1
+
+    async def test_cluster_fold_leaves_a_cross_type_pair_alone(
+        self, pg_db_session, monkeypatch
+    ):
+        """The view's half proved on the backend: a bulk fold never crosses types.
+
+        Two spellings of the company plus the town, all same-tier, all tied by
+        pending pairs — the shape the owner saw in /brain/review. Only the two
+        company rows fold; the town stays, and its pair stays pending.
+        """
+        owner = await _make_user(pg_db_session, "tg_cluster")
+        f1 = await _entity(pg_db_session, owner, "X-Idra Systems GmbH", tier=2,
+                           mention=1, emb=_unit(6), etype="organization")
+        f2 = await _entity(pg_db_session, owner, "X-idra Systems GmbH", tier=2,
+                           mention=9, emb=_unit(6), etype="organization")
+        town = await _entity(pg_db_session, owner, "Korschenbroich", tier=2,
+                             mention=4, emb=_unit(6), etype="place")
+        await self._proposal(pg_db_session, owner, f1, f2)
+        px = await self._proposal(pg_db_session, owner, town, f2)
+        rec = _recon(pg_db_session, monkeypatch)
+
+        res = await rec.resolve_cluster(
+            user_id=owner.id, entity_ids=[f1.id, f2.id, town.id],
+            survivor_id=f2.id, decision="merge", resolved_by=owner.id,
+        )
+
+        assert res.merged == 1
+        assert res.skipped_cross_type == 1
+        assert res.skipped_cross_tier == 0
+        still = (await pg_db_session.execute(
+            select(KGEntity).where(KGEntity.id == town.id)
+        )).scalar_one()
+        assert still.is_active is True
+        assert still.entity_type == "place"
+        prop = (await pg_db_session.execute(
+            select(KgMergeProposal).where(KgMergeProposal.id == px.id)
+        )).scalar_one()
+        assert prop.status == KG_MERGE_PROPOSAL_PENDING
+
+    async def test_thing_vs_organization_still_reaches_the_owner(
+        self, pg_db_session, monkeypatch
+    ):
+        """The guard must not eat the commonest LLM duplicate shape.
+
+        `thing` is the extraction's no-type fallback. Two unrelated-looking
+        names, one bucketed as `thing` and one as `organization`, are the same
+        firm more often than not — before the guard that was a `gray_zone`
+        proposal the owner could decide, and it has to stay one.
+        """
+        owner = await _make_user(pg_db_session, "tg_thing")
+        await _entity(pg_db_session, owner, "Fa. Beispiel", tier=2, mention=1,
+                      emb=_unit(6), etype="thing", desc="aus einer Rechnung")
+        await _entity(pg_db_session, owner, "Beispiel GmbH", tier=2, mention=9,
+                      emb=_unit(6), etype="organization", desc="Lieferant")
+        rec = _recon(pg_db_session, monkeypatch)
+
+        report = await rec.run_for_user(owner.id)
+        assert report.dropped_cross_type == 0
+        assert report.auto_merged + report.proposed == 1
+
+    async def test_a_typo_pair_survives_a_type_mismatch(
+        self, pg_db_session, monkeypatch
+    ):
+        """The type guard must not cancel the #876 typo exception.
+
+        A typo pair is `related=False` by construction, so a bare
+        `cross_type and not related` drop would swallow every person mis-extracted
+        under another type — the exact case that exception exists for.
+        """
+        owner = await _make_user(pg_db_session, "tg_typo")
+        await _entity(pg_db_session, owner, "Anna Schmitt", tier=2, mention=1,
+                      emb=_unit(6), etype="person", desc="aus einem Protokoll")
+        await _entity(pg_db_session, owner, "Anna Schmidt", tier=2, mention=9,
+                      emb=_unit(6), etype="concept", desc="falsch typisiert")
+        rec = _recon(pg_db_session, monkeypatch)
+
+        report = await rec.run_for_user(owner.id)
+        assert report.dropped_cross_type == 0
+        assert (report.auto_merged, report.proposed) == (0, 1)
+
+    async def test_the_guards_count_what_they_eat(self, pg_db_session, monkeypatch):
+        """`candidates` counts SURVIVORS, so a greedy guard is otherwise invisible."""
+        owner = await _make_user(pg_db_session, "tg_counters")
+        # dropped by the type guard: disjoint types, unrelated names
+        await _entity(pg_db_session, owner, "Korschenbroich", tier=2, mention=4,
+                      emb=_unit(6), etype="place", desc="Stadt")
+        await _entity(pg_db_session, owner, "Beispiel GmbH", tier=2, mention=9,
+                      emb=_unit(6), etype="organization", desc="Firma")
+        # dropped by the person guard: two different people, same embedding
+        await _entity(pg_db_session, owner, "Jutta", tier=2, mention=3,
+                      emb=_unit(7), etype="person", desc="Nachbarin")
+        await _entity(pg_db_session, owner, "Gaby", tier=2, mention=5,
+                      emb=_unit(7), etype="person", desc="Kollegin")
+        rec = _recon(pg_db_session, monkeypatch)
+
+        report = await rec.run_for_user(owner.id)
+        assert report.candidates == 0          # nothing survived — and that is the point
+        assert report.dropped_cross_type == 1
+        assert report.dropped_person_guard == 1
+
+    async def test_a_missing_primary_type_does_not_buy_an_auto_merge(
+        self, pg_db_session, monkeypatch
+    ):
+        """Leniency belongs to the DROP, never to the silent merge.
+
+        `_types_compatible` treats an absent type as "no evidence of a mismatch",
+        which is right when deciding whether to throw a pair away. It must not
+        also be what lets two rows merge with nobody looking: an entity with an
+        empty `entity_type` would otherwise be auto-merge-compatible with
+        everything at >= the auto threshold.
+        """
+        owner = await _make_user(pg_db_session, "tg_notype")
+        await _entity(pg_db_session, owner, "Beispiel GmbH", tier=2, mention=1,
+                      emb=_unit(6), etype="", desc="ohne Typ")
+        await _entity(pg_db_session, owner, "Beispiel GmbH", tier=2, mention=9,
+                      emb=_unit(6), etype="organization", desc="Lieferant")
+        rec = _recon(pg_db_session, monkeypatch)
+
+        pairs = await rec.find_duplicate_pairs(owner.id)
+        assert len(pairs) == 1
+        assert pairs[0].types_known is False
+
+        report = await rec.run_for_user(owner.id)
+        assert (report.auto_merged, report.proposed) == (0, 1)

@@ -45,6 +45,7 @@ from models.database import (
     KG_MERGE_PROPOSAL_REJECTED,
     KG_MERGE_PROPOSAL_SUPERSEDED,
     KG_MERGE_REASON_CROSS_TIER,
+    KG_MERGE_REASON_CROSS_TYPE,
     KG_MERGE_REASON_GRAY_ZONE,
     KG_MERGE_REASON_NAME_TYPO,
     KGEntity,
@@ -109,6 +110,39 @@ def _is_person(etype: str | None, etypes_text: str | None) -> bool:
     a deterministic, decoder-independent membership test.
     """
     return etype == "person" or (etypes_text is not None and '"person"' in etypes_text)
+
+
+# The extraction's fallback bucket: `_build_entities` assigns "thing" when the
+# model named no type at all. It is the ABSENCE of a type claim, so it must not
+# make a pair "disjoint" — the single most common duplicate shape in an
+# LLM-extracted graph is the same real thing extracted once as `thing` and once
+# as `organization`/`concept`, and those names are often NOT token-related
+# ("Fa. Müller" / "Müller GmbH"). Treating `thing` as a claim would drop exactly
+# those pairs with no merge, no proposal and no row the owner could ever find.
+_UNTYPED = {"thing"}
+
+
+def _types_compatible(etype_a: str | None, etype_b: str | None) -> bool:
+    """False only when the two entities' PRIMARY types disagree.
+
+    Deliberately the scalar `entity_type`, not the `entity_types` superset. The
+    superset only ever GROWS — ``merge_entities`` unions both sides into the
+    survivor and every re-mention folds newly observed types in — so an
+    overlap test disarms itself with exactly the usage this guard exists for:
+    approve one legitimate mis-typed-duplicate fold and the survivor claims both
+    types forever after, matching everything of either kind. The primary is
+    stable: nothing writes it but an explicit owner edit (`update_entity`).
+    It is also what the review UI compares, so view and service agree.
+
+    An absent primary, or the `thing` bucket (see ``_UNTYPED``), is no claim at
+    all and therefore no mismatch — the guard accuses, it never guesses.
+    """
+    pa, pb = _norm(etype_a), _norm(etype_b)
+    if not pa or not pb:
+        return True
+    if pa in _UNTYPED or pb in _UNTYPED:
+        return True
+    return pa == pb
 
 
 def _names_related(name_a: str | None, name_b: str | None) -> bool:
@@ -208,6 +242,18 @@ class MergeCandidate:
     # kept as a REVIEW candidate (reason name_typo), never auto-merged — the
     # gate above already refuses it via names_related=False; this is the label.
     name_typo: bool = False
+    # The two sides claim DISJOINT types (a place and an organization). Such a
+    # pair only reaches here with related names, which is the mis-TYPED-duplicate
+    # shape; it is a review candidate, never an auto-merge (see the type-guard in
+    # find_duplicate_pairs).
+    cross_type: bool = False
+    # Both sides actually state a primary type. `_types_compatible` is lenient by
+    # design — an absent type is no evidence of a mismatch — but that leniency
+    # belongs to the DROP decision, not to the decision to merge two rows
+    # silently. An auto-merge requires positive evidence; a review proposal does
+    # not. (`entity_type` is NOT NULL, so this is corruption-shaped, not a normal
+    # path — which is exactly why it must not be the thing that widens the gate.)
+    types_known: bool = True
 
 
 @dataclass
@@ -217,6 +263,8 @@ class ClusterResolution:
     approved: int = 0               # pending pairs closed as approved
     rejected: int = 0               # pending pairs closed as rejected
     skipped_cross_tier: int = 0     # left individually decidable (visibility)
+    skipped_cross_type: int = 0     # left individually decidable (disjoint types)
+    skipped_unreachable: int = 0    # same tier + type, but not in the survivor's component
     notes: list[str] = field(default_factory=list)
 
 
@@ -224,6 +272,12 @@ class ClusterResolution:
 class ReconcileReport:
     user_id: int
     candidates: int = 0
+    # Pairs the find-time guards ATE. `candidates` counts what survived them, so
+    # without these two a guard that is too greedy on some graph is invisible:
+    # no row, no proposal, no log line. Both guards drop silently by design —
+    # these make the silence measurable.
+    dropped_person_guard: int = 0
+    dropped_cross_type: int = 0
     auto_merged: int = 0
     proposed: int = 0
     embedded_backfilled: int = 0
@@ -241,11 +295,16 @@ class KgReconcilerService:
         ))).fetchall()
         return [int(r[0]) for r in rows]
 
-    async def find_duplicate_pairs(self, user_id: int) -> list[MergeCandidate]:
+    async def find_duplicate_pairs(
+        self, user_id: int, report: ReconcileReport | None = None,
+    ) -> list[MergeCandidate]:
         """Embedding self-join over the user's live canonical entities.
 
         sqlite has no halfvec — short-circuits to [] there so the rest of the
         pipeline can still be exercised on the shim.
+
+        ``report``, when given, collects how many pairs each find-time guard
+        dropped (they drop silently by design; the counters make that visible).
         """
         dialect = self.db.bind.dialect.name if self.db.bind is not None else ""
         if dialect != "postgresql":
@@ -310,6 +369,28 @@ class KgReconcilerService:
             # refuses it, and block_auto_merge says so explicitly.
             typo = bool(is_person and not related and _names_near_typo(r.name_a, r.name_b))
             if is_person and not related and not typo:
+                if report is not None:
+                    report.dropped_person_guard += 1
+                continue
+            # TYPE-GUARD: two different PRIMARY types is a different KIND of
+            # thing, and embedding similarity cannot say so — a town and the
+            # company seated in it are described out of the same documents, so
+            # they embed well above the candidate threshold (measured on the
+            # xidra graph 2026-09-24: place "Korschenbroich" ~ organization
+            # "X-Idra Systems GmbH" at 0.895, four such pairs pending). Drop the
+            # pair unless the NAMES are related, which is the one shape where a
+            # foreign type means a MIS-TYPED duplicate rather than two different
+            # things (field data: person "Pontresina" -> place "Pontresina").
+            # Those survive as REVIEW candidates only: which type is right is a
+            # human call, so no auto-merge.
+            cross_type = not _types_compatible(r.etype_a, r.etype_b)
+            # `not typo` matters: a typo pair is `related=False` by construction,
+            # so without it this line would quietly cancel the #876 exception the
+            # person-guard above just granted (a person mis-extracted as another
+            # type, one in-token edit apart, is exactly the case worth reviewing).
+            if cross_type and not related and not typo:
+                if report is not None:
+                    report.dropped_cross_type += 1
                 continue
             # Winner = the more-established row: higher mention_count, tie-break
             # on the OLDER first_seen_at (smaller timestamp).
@@ -325,12 +406,14 @@ class KgReconcilerService:
                 loser_id=loser_id, winner_id=winner_id,
                 similarity=float(r.similarity),
                 loser_tier=loser_tier, winner_tier=winner_tier,
-                block_auto_merge=typo or _name_collision_low_signal(
+                block_auto_merge=typo or cross_type or _name_collision_low_signal(
                     r.name_a, r.name_b, r.desc_a, r.desc_b,
                 ),
                 is_person_pair=is_person,
                 names_related=related,
                 name_typo=typo,
+                cross_type=cross_type,
+                types_known=bool(_norm(r.etype_a) and _norm(r.etype_b)),
             ))
         return out
 
@@ -350,6 +433,8 @@ class KgReconcilerService:
             return False
         if c.loser_tier != c.winner_tier:
             reason = KG_MERGE_REASON_CROSS_TIER
+        elif c.cross_type:
+            reason = KG_MERGE_REASON_CROSS_TYPE
         elif c.name_typo:
             reason = KG_MERGE_REASON_NAME_TYPO
         else:
@@ -451,7 +536,7 @@ class KgReconcilerService:
     async def _reconcile_pass(self, user_id: int, report: ReconcileReport) -> ReconcileReport:
         """The actual work of one pass: embed-backfill, find, auto-merge/propose."""
         report.embedded_backfilled = await self.backfill_missing_embeddings(user_id)
-        pairs = await self.find_duplicate_pairs(user_id)
+        pairs = await self.find_duplicate_pairs(user_id, report)
         report.candidates = len(pairs)
 
         auto_t = settings.kg_reconciler_auto_merge_threshold
@@ -465,8 +550,12 @@ class KgReconcilerService:
                 # in depth behind the find-time drop): a distinct-name person pair
                 # must never silently merge two different people.
                 person_ok = (not c.is_person_pair) or c.names_related
+                # A disjoint-type pair is review-only by construction
+                # (block_auto_merge is already set); spelt out here so a future
+                # change to that flag cannot silently fold a place into a company.
                 if (c.loser_tier == c.winner_tier and c.similarity >= auto_t
-                        and not c.block_auto_merge and person_ok):
+                        and not c.block_auto_merge and not c.cross_type
+                        and c.types_known and person_ok):
                     kg = KnowledgeGraphService(self.db)
                     res = await kg.merge_entities(c.loser_id, c.winner_id)
                     if res is not None:
@@ -486,11 +575,14 @@ class KgReconcilerService:
                 )
 
         await self.db.commit()
-        if report.auto_merged or report.proposed or report.embedded_backfilled:
+        if (report.auto_merged or report.proposed or report.embedded_backfilled
+                or report.dropped_person_guard or report.dropped_cross_type):
             logger.info(
                 f"🔗 KG reconciler user={user_id}: auto_merged={report.auto_merged}, "
                 f"proposed={report.proposed}, candidates={report.candidates}, "
-                f"embedded_backfilled={report.embedded_backfilled}"
+                f"embedded_backfilled={report.embedded_backfilled}, "
+                f"dropped_person_guard={report.dropped_person_guard}, "
+                f"dropped_cross_type={report.dropped_cross_type}"
             )
         return report
 
@@ -567,6 +659,14 @@ class KgReconcilerService:
         ``tier = MIN`` rule inside ``merge_entities`` is a no-op here: no
         visibility can shift.
 
+        SECOND INVARIANT: only TYPE-COMPATIBLE pairs take part. Folding a place
+        into an organization rewrites what the entity IS. Those are counted in
+        ``skipped_cross_type`` and likewise stay individually decidable. Note
+        where this bites: the review UI builds its components on primary-type
+        EQUALITY, which is transitive, so a cluster it submits can never contain
+        such a pair. This bar is for the ROUTE — ``entity_ids`` is caller-supplied
+        and need not come from a cluster card at all.
+
         The fold set is derived from the PROPOSALS, not from ``entity_ids``: an
         entity the caller names but that no pending same-tier proposal ties into
         the cluster is never merged. Otherwise this route would be a way to merge
@@ -597,25 +697,35 @@ class KgReconcilerService:
             q = q.where(KgMergeProposal.user_id == user_id)
         pairs = list((await self.db.execute(q)).scalars().all())
 
-        same_tier: list[KgMergeProposal] = []
+        foldable: list[KgMergeProposal] = []
         for p in pairs:
             # Compare the LIVE tiers, not the ones stored when the pair was
             # proposed — a tier may have moved since, in either direction.
             lt = (p.loser.circle_tier if p.loser else None) or 0
             wt = (p.winner.circle_tier if p.winner else None) or 0
-            if lt == wt:
-                same_tier.append(p)
-            else:
+            if lt != wt:
                 res.skipped_cross_tier += 1
+                continue
+            # A disjoint-type pair is not bulk-decidable either: folding a place
+            # into an organization rewrites what the entity IS, and one such edge
+            # inside a component would drag the whole component across the type
+            # boundary. It stays an individual decision, exactly like cross-tier.
+            if not _types_compatible(
+                p.loser.entity_type if p.loser else None,
+                p.winner.entity_type if p.winner else None,
+            ):
+                res.skipped_cross_type += 1
+                continue
+            foldable.append(p)
 
-        if not same_tier:
-            res.notes.append("no same-tier pending pair in this cluster")
+        if not foldable:
+            res.notes.append("no foldable pending pair in this cluster")
             return res
 
         now = datetime.now(UTC).replace(tzinfo=None)
 
         if decision == "reject":
-            for p in same_tier:
+            for p in foldable:
                 p.status = KG_MERGE_PROPOSAL_REJECTED
                 p.resolved_at = now
                 p.resolved_by_user_id = resolved_by
@@ -636,7 +746,7 @@ class KgReconcilerService:
         # do. So: walk out from the survivor, and take only what is reachable.
         adjacency: dict[int, set[int]] = {}
         by_edge: dict[tuple[int, int], list[KgMergeProposal]] = {}
-        for p in same_tier:
+        for p in foldable:
             a, b = int(p.loser_entity_id), int(p.winner_entity_id)
             adjacency.setdefault(a, set()).add(b)
             adjacency.setdefault(b, set()).add(a)
@@ -658,11 +768,11 @@ class KgReconcilerService:
         # future change to the pair filter cannot reopen the hole above.
         tiers = {
             (p.loser.circle_tier or 0)
-            for p in same_tier
+            for p in foldable
             if int(p.loser_entity_id) in component
         } | {
             (p.winner.circle_tier or 0)
-            for p in same_tier
+            for p in foldable
             if int(p.winner_entity_id) in component
         }
         if len(tiers) > 1:
@@ -670,14 +780,18 @@ class KgReconcilerService:
             return res
 
         in_component = [
-            p for p in same_tier
+            p for p in foldable
             if int(p.loser_entity_id) in component and int(p.winner_entity_id) in component
         ]
         # Ids BEFORE the folds: merge_entities rolls back on its bail paths, and a
         # rollback expires every persistent object in the session — touching
         # `p.id` afterwards would lazy-load on an AsyncSession and raise.
         pair_ids = [int(p.id) for p in in_component]
-        res.skipped_cross_tier += len(same_tier) - len(in_component)
+        # NOT a visibility skip: these pairs cleared both filters and were left
+        # out only because they do not reach the survivor. Reporting them as
+        # `skipped_cross_tier` told the owner "different visibility", which is
+        # simply false — they have the survivor's tier by construction.
+        res.skipped_unreachable += len(foldable) - len(in_component)
 
         kg = KnowledgeGraphService(self.db)
         folded: set[int] = set()
