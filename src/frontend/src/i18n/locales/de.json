@@ -177,7 +177,27 @@
     "newPasswordSameAsCurrent": "Das neue Passwort muss sich vom aktuellen unterscheiden.",
     "changePasswordFailed": "Passwortänderung fehlgeschlagen. Bitte erneut versuchen.",
     "accessDeniedTitle": "Zugriff verweigert",
-    "accessDeniedBody": "Du hast keine Berechtigung für diese Seite. Wende dich an eine Administratorin oder einen Administrator, wenn du sie brauchst."
+    "accessDeniedBody": "Du hast keine Berechtigung für diese Seite. Wende dich an eine Administratorin oder einen Administrator, wenn du sie brauchst.",
+    "voiceFactor": {
+      "title": "Stimme bestätigen",
+      "intro": "Das Passwort stimmt. Zum Abschluss bitte mindestens {{seconds}} Sekunden sprechen — ein beliebiger Satz genügt.",
+      "record": "Aufnahme starten",
+      "stop": "Aufnahme beenden",
+      "keepTalking": "Weitersprechen …",
+      "confirm": "Bestätigen",
+      "checking": "Wird geprüft …",
+      "again": "Neu aufnehmen",
+      "refused": "Die Stimme konnte nicht bestätigt werden.",
+      "recoveryHint": "Kommt es wiederholt nicht durch, kann der Stimmfaktor für dieses Konto administrativ abgeschaltet werden.",
+      "srRecording": "Aufnahme läuft.",
+      "srCaptured": "Aufnahme fertig. Zum Bestätigen abschicken.",
+      "deviceError": {
+        "permission": "Der Zugriff auf das Mikrofon ist nicht erlaubt. Bitte in den Browser-Einstellungen für diese Seite freigeben.",
+        "no-device": "Es wurde kein Mikrofon gefunden.",
+        "unsupported": "Dieser Browser kann nicht aufnehmen. Bitte einen aktuellen Browser verwenden.",
+        "unknown": "Die Aufnahme ist fehlgeschlagen."
+      }
+    }
   },
   "chat": {
     "title": "Chat",

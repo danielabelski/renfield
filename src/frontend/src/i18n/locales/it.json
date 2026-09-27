@@ -123,7 +123,27 @@
     "completingSignIn": "Completamento accesso …",
     "signInFailed": "Accesso non riuscito. Riprova.",
     "accessDeniedTitle": "Accesso negato",
-    "accessDeniedBody": "Non hai i permessi per questa pagina. Rivolgiti a un amministratore se pensi di doverli avere."
+    "accessDeniedBody": "Non hai i permessi per questa pagina. Rivolgiti a un amministratore se pensi di doverli avere.",
+    "voiceFactor": {
+      "title": "Conferma la voce",
+      "intro": "La password è corretta. Per concludere, parla per almeno {{seconds}} secondi — qualsiasi frase va bene.",
+      "record": "Avvia registrazione",
+      "stop": "Termina registrazione",
+      "keepTalking": "Continua a parlare …",
+      "confirm": "Conferma",
+      "checking": "Verifica in corso …",
+      "again": "Registra di nuovo",
+      "refused": "Non è stato possibile confermare la voce.",
+      "recoveryHint": "Se continua a non funzionare, un amministratore può disattivare il fattore vocale per questo account.",
+      "srRecording": "Registrazione in corso.",
+      "srCaptured": "Registrazione completata. Invia per confermare.",
+      "deviceError": {
+        "permission": "L'accesso al microfono è bloccato. Consentilo per questo sito nelle impostazioni del browser.",
+        "no-device": "Nessun microfono trovato.",
+        "unsupported": "Questo browser non può registrare audio. Usa un browser aggiornato.",
+        "unknown": "Registrazione non riuscita."
+      }
+    }
   },
   "chat": {
     "title": "Chat",

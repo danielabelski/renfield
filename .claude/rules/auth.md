@@ -75,6 +75,10 @@ no token ever in Redis or a URL. 404 when the flag is off. Redirects carry only 
   🛑 **KEIN Rückfall** auf Passwort allein — ein Rückfall, den der Angreifer selbst auslöst, hebt den Faktor auf.
   Wiederherstellung = Administrator schaltet `voice_second_factor_enabled` ab. Die Hürde greift nur bei
   `VOICE_AUTH_ENABLED=true`, sonst wäre das Konto ausgesperrt.
+  Im Browser: `LoginPage` faengt `SecondFactorRequired` ab und zeigt
+  `components/auth/VoiceSecondFactorStep` (Aufnahme ueber `hooks/useVoiceFactorRecording`, Mindestdauer 1,5 s,
+  Selbststopp 8 s, kein VAD). Die Maske reicht die Server-Meldung NICHT durch und bietet keinen Weg vorbei;
+  unterscheidbar sind nur Geraetefehler des Nutzers. Das Mikrofon wird beim Unmount freigegeben.
   🛑 **Jeder Fehlschlag antwortet identisch** (`{"success": false, "message": "Voice authentication failed"}`) und das
   Antwortmodell trägt **keine** `speaker_id`/`speaker_name`/`confidence`/`user_id`/`username`. Bis zum 2026-09-27 tat
   es das, und war damit ein unangemeldetes Namensorakel plus Gradient für eine Wiedereinspielung. Sperre auf

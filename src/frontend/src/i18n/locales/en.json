@@ -177,7 +177,27 @@
     "newPasswordSameAsCurrent": "The new password must differ from the current one.",
     "changePasswordFailed": "Password change failed. Please try again.",
     "accessDeniedTitle": "Access denied",
-    "accessDeniedBody": "You don't have permission to view this page. Ask an administrator if you think you should."
+    "accessDeniedBody": "You don't have permission to view this page. Ask an administrator if you think you should.",
+    "voiceFactor": {
+      "title": "Confirm your voice",
+      "intro": "Your password is correct. To finish, please speak for at least {{seconds}} seconds — any sentence will do.",
+      "record": "Start recording",
+      "stop": "Stop recording",
+      "keepTalking": "Keep talking …",
+      "confirm": "Confirm",
+      "checking": "Checking …",
+      "again": "Record again",
+      "refused": "Your voice could not be confirmed.",
+      "recoveryHint": "If it keeps failing, an administrator can turn the voice factor off for this account.",
+      "srRecording": "Recording.",
+      "srCaptured": "Recording captured. Submit to confirm.",
+      "deviceError": {
+        "permission": "Microphone access is blocked. Please allow it for this site in your browser settings.",
+        "no-device": "No microphone was found.",
+        "unsupported": "This browser cannot record audio. Please use a current browser.",
+        "unknown": "Recording failed."
+      }
+    }
   },
   "chat": {
     "title": "Chat",

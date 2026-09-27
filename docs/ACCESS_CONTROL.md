@@ -410,6 +410,27 @@ keine Lebendigkeitsprüfung. Als *erster* Faktor war das die ganze Tür; als
 *zweiter* braucht ein Angreifer zusätzlich das Passwort. Genau darin liegt der
 Gewinn — und darin die Grenze.
 
+### Im Browser
+
+`LoginPage` fängt `SecondFactorRequired` (aus `AuthContext.login`) ab und zeigt
+statt des Formulars `components/auth/VoiceSecondFactorStep`. Die Maske nimmt auf
+(`hooks/useVoiceFactorRecording`: Mindestdauer 1,5 s, Selbststopp bei 8 s, kein
+VAD — eine Anmeldephrase darf nicht bei einer Pause abgeschnitten werden) und
+schickt Ticket + Aufnahme an `POST /api/auth/voice`. Erst danach steht die
+Sitzung, und `fetchUser` holt den Nutzer über das frisch gesetzte Cookie.
+
+🛑 **Die Maske zeigt die Server-Meldung NICHT durch.** Sie ist absichtlich
+uninformativ; sie durchzureichen würde das Orakel in die Oberfläche tragen,
+sobald der Server je auskunftsfreudiger wird. Unterscheidbar sind nur Fehler des
+NUTZERGERÄTS — verweigertes Mikrofon, kein Gerät, Browser ohne Aufnahme —, denn
+wer nicht weiß, dass er das Mikrofon verweigert hat, kann es nicht erlauben.
+
+🛑 **Es gibt keinen Knopf vorbei.** Auch nach mehreren Fehlversuchen nicht; ab dem
+dritten nennt die Maske nur den vorgesehenen Weg (administratives Abschalten des
+Faktors für dieses Konto). Das Mikrofon wird beim Verlassen der Maske freigegeben
+— ein heimlich offenes Mikrofon auf einer Anmeldeseite wäre das Letzte, was man
+will.
+
 ### Sprecher mit User verknüpfen
 
 ```bash
