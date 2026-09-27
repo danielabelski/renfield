@@ -267,9 +267,12 @@ Zusätzlich im Kopf vermerkt, **bewusst nicht implementiert** (Tracker-Einträge
 Grenzen der Methode: Secrets/`.env`-Overrides und per `kubectl` gesetzte Werte sind nicht erfasst; xidra-Manifeste
 liegen außerhalb dieses Repos.
 
-### 4a. Dunkel im Haushalt, aber auf xidra AN (5)
-`AUTH_ENABLED`, `AUTH_COOKIE_ENABLED`, `FOLDER_INGEST_SIMBA_ENABLED`, `MEETING_MINUTES_ENABLED`, `PROJECTS_ENABLED`
-— d. h. Haushalt läuft auth-off, ohne Cookie-Session, ohne Simba, ohne Projekte (Protokoll-Panel seit 2026-09-21 an). `AUTH_ENABLED` Haushalt: Entwurf `docs/design/household-auth-on-cutover.md`, entschieden 2026-09-21, P0-Posten im Bau.
+### 4a. Dunkel im Haushalt, aber auf xidra AN (3, Stand 2026-09-27)
+`AUTH_COOKIE_ENABLED`, `FOLDER_INGEST_SIMBA_ENABLED`, `PROJECTS_ENABLED`.
+
+Gegen die LIVE-ConfigMaps beider Instanzen nachgemessen, nicht aus der Planung abgeleitet. Zwei Einträge der alten Liste sind überholt: `AUTH_ENABLED` ist im Haushalt seit dem 2026-09-23 **an** (#1324), `MEETING_MINUTES_ENABLED` ebenso.
+
+🛑 **`AUTH_COOKIE_ENABLED` ist damit vom Nebeneintrag zum offenen Befund geworden.** Solange `AUTH_ENABLED` aus war, war der Schalter belanglos. Jetzt ist die Anmeldung im Haushalt an und der Cookie-Schalter nicht gesetzt (Standard `False`, `config.py:1437`) — das Sitzungstoken liegt dort also in `localStorage` und ist für jedes Skript auf der Seite lesbar, während xidra mit `AUTH_COOKIE_ENABLED=true` eine HttpOnly-Sitzung führt. Genau das Muster „unkritisch, solange Flag F aus ist" mit abgelaufenem Verfallsdatum. Gehört in die Cutover-Restliste, nicht in eine Aufzählung dunkler Funktionen.
 
 ### 4b. Nie eingeschaltet — auf KEINER Instanz (33)
 Das ist die Liste fertiger, aber nie aktivierter Funktionen.
@@ -286,7 +289,7 @@ Das ist die Liste fertiger, aber nie aktivierter Funktionen.
 | `OAUTH_GOOGLE_ENABLED` / `OAUTH_GITHUB_ENABLED` / `OAUTH_APPLE_ENABLED` | `:1488/:1493/:1498` | Redirect-Provider, „enabling is config-only" |
 | `REQUIRE_EMAIL_VERIFICATION` | `:1453` | Kommentar im Code: „Not implemented yet" |
 | `SSO_HANDOFF_ENABLED` | `:1445` | PKCE-Empfänger, wartet auf den Reva-Emitter |
-| `VOICE_AUTH_ENABLED` | `:1506` | Voice-Authentifizierung |
+| `VOICE_AUTH_ENABLED` | `:1506` | Voice-Authentifizierung. **Einschalten war bis 2026-09-27 ein `TypeError`** (falsche Signatur, Rückgabe-Tupel als dict gelesen); reparierbar gemacht, bleibt aber aus: eine Tonaufnahme der Stimme reicht für Zugriffs- UND Erneuerungstoken, ohne Lebendigkeitsprüfung und ohne zweiten Faktor. |
 | `WS_REQUIRE_SCOPED_QUERY_TOKEN` | `:1543` | erzwingt `scope:ws`-Tokens |
 | `WAKE_WORD_ENABLED` | `:256` | Browser-Wakeword (Opt-in) |
 | `MCP_HEALTH_RATE_LIMIT_SIGNAL_ENABLED` | `:1771` | 429-Signal für die MCP-Gesundheit (Phase 3) |
@@ -296,7 +299,7 @@ Das ist die Liste fertiger, aber nie aktivierter Funktionen.
 | `MEETING_FINGERPRINT_AUTONAME` | `:739` | automatische Benennung |
 | `MEETING_KEEP_AUDIO` | `:742` | Audio nach Abschluss behalten |
 | `MEMORY_CONTRADICTION_RESOLUTION` | `:795` | LLM-basierte Widerspruchsauflösung |
-| `MEMORY_EXTRACTION_V2_AUTHORITATIVE` | `:801` | Phase-B-Flip; blockiert die Trajektorien-Diff-Ansicht |
+| `MEMORY_EXTRACTION_V2_AUTHORITATIVE` | `:801` | Phase-B-Flip; blockiert die Trajektorien-Diff-Ansicht. Der Triage-Befund „kehrt vor dem Subsume-Tor zurück" ist **überholt** — #1313 hat das Tor am 2026-09-23 in den v2-Pfad eingebaut (`conversation_memory_service.py:1596-1600`). |
 | `NOTIFICATION_POLLER_ENABLED` | `:1684` | MCP-Notification-Polling |
 | `PAPERLESS_INDEX_HEAL_ENABLED` | `:1187` | explizit `"false"` in beiden ConfigMaps (`k8s/configmap.yaml:416`) |
 | `PAPERLESS_INDEX_HEAL_ALLOW_WORKFLOWS` | `:1205` | dito, zweite Stufe |

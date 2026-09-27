@@ -2,7 +2,9 @@
 
 Dieses Dokument enthält eine umfassende Analyse der technischen Schulden im gesamten Renfield-System.
 
-**Letzte Aktualisierung:** 2026-07-23 (Infrastruktur I1 KORRIGIERT: Harbor-Slowness vom Heim-Netz = **WAN-Hairpin über die Public-IP**, upload-gedeckelt ~72 Mbit/s — KEIN PMTUD-Blackhole [sauberer Push: 0 Retrans, 0 frag-needed]. `.159` löst Harbor auf die Public-IP auf, weil der einzige TLS-Endpoint öffentlich ist. Fix: LAN-direkter `ctr import` › interner TLS-Endpoint + Split-Horizon-DNS. KEINE Firewall-Änderung. Vollanalyse: `../public_k8s/docs/harbor-slow-from-home-lan.md`)
+**Letzte Aktualisierung:** 2026-09-27 (Lint-Tor reparierbar gemacht — es lief seit seiner Einführung **nie**: `pyproject.toml` fehlt im Backend-Bild UND `ruff` ist dort nicht installiert; siehe `bin/lint-backend.sh`. Damit sichtbar geworden: eine Fail-Closed-Sicherheitsprüfung, die eine doppelte Testmethode verdeckte, drei tote Mocks, ein Test, der den Fehlerpfad für Erfolg nahm, und der latente Hook-Fehler im `TierPicker`. Beide Torhälften stehen jetzt auf 0 Fehlern. Dazu drei Flags, die das Einschalten nicht überlebten.)
+
+**Vorher, 2026-07-23** (Infrastruktur I1 KORRIGIERT: Harbor-Slowness vom Heim-Netz = **WAN-Hairpin über die Public-IP**, upload-gedeckelt ~72 Mbit/s — KEIN PMTUD-Blackhole [sauberer Push: 0 Retrans, 0 frag-needed]. `.159` löst Harbor auf die Public-IP auf, weil der einzige TLS-Endpoint öffentlich ist. Fix: LAN-direkter `ctr import` › interner TLS-Endpoint + Split-Horizon-DNS. KEINE Firewall-Änderung. Vollanalyse: `../public_k8s/docs/harbor-slow-from-home-lan.md`)
 
 ---
 
