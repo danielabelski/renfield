@@ -428,3 +428,174 @@ class TestVoiceAuthBehaviour:
         assert out.success is False
         assert out.access_token is None
         assert resp.headers.getlist("set-cookie") == [], "abgelehnt, aber Cookie gesetzt"
+
+
+@pytest.mark.database
+class TestVoiceAuthLeaksNothing:
+    """🛑 Das Orakel. Gefunden vom Sicherheits- UND vom adversarialen Durchgang.
+
+    Bis zum /review gab JEDER Fehlschlag `speaker_id`, `speaker_name`,
+    `confidence`, und bei einem deaktivierten Konto auch `user_id` und
+    `username` an einen UNANGEMELDETEN Aufrufer zurueck. Das ist zweierlei
+    Angriff in einem:
+
+    * eine Namensliste des Haushalts ohne Zugangsdaten;
+    * ein GRADIENT — `match_known_speaker` trifft ab
+      `speaker_recognition_threshold` (0,25), die Route verlangt
+      `voice_auth_min_confidence` (0,7). Das Band [0,25 – 0,70) lieferte also
+      Name plus zweistelligen Kosinuswert: Audio aendern, Zahl steigen sehen,
+      bei 0,70 aufhoeren. Bei einem Faktor ohne Lebendigkeitspruefung ist genau
+      das die fehlende Rueckkopplung fuer einen Wiedereinspielungs-Angriff.
+
+    Diese Tests pruefen die ABWESENHEIT von Feldern. Ohne sie kommt das Orakel
+    beim naechsten „gib doch eine hilfreichere Fehlermeldung" zurueck.
+    """
+
+    _FORBIDDEN = ("speaker_id", "speaker_name", "confidence", "user_id", "username")
+
+    def _assert_opaque(self, out):
+        assert out.success is False
+        assert out.message == "Voice authentication failed", (
+            "der Text verraet, WELCHE Bedingung fehlschlug"
+        )
+        for field in self._FORBIDDEN:
+            value = getattr(out, field)
+            assert value in (None, 0.0), f"{field} wird an einen Unangemeldeten verraten: {value!r}"
+
+    async def test_a_match_below_the_auth_bar_reveals_nothing(self, db_session, monkeypatch):
+        """Der Gradient: 0,25 <= score < 0,70 — erkannt, aber nicht gut genug."""
+        from fastapi import Response
+
+        from api.routes import auth as auth_routes
+        from utils.config import settings
+
+        b = TestVoiceAuthBehaviour()
+        sp, _u = await b._linked_user(db_session)
+        monkeypatch.setattr(settings, "voice_auth_enabled", True)
+        monkeypatch.setattr(settings, "speaker_recognition_enabled", True)
+        monkeypatch.setattr(settings, "speaker_recognition_threshold", 0.25)
+        monkeypatch.setattr(settings, "voice_auth_min_confidence", 0.7)
+        monkeypatch.setattr(settings, "speaker_controlled_enrollment_enabled", False)
+        b._stub_service(monkeypatch, match=(sp.id, sp.name, 0.55))
+
+        resp = Response()
+        out = await auth_routes.voice_authenticate(
+            b._request(), resp, audio_file=b._upload(), db=db_session)
+        self._assert_opaque(out)
+        assert resp.headers.getlist("set-cookie") == []
+
+    async def test_an_unlinked_speaker_reveals_nothing(self, db_session, monkeypatch):
+        """Erkannt, aber kein Konto daran — das waere eine Aussage ueber den
+        Haushalt und darf nicht nach draussen."""
+        import numpy as np
+        from fastapi import Response
+
+        from api.routes import auth as auth_routes
+        from models.database import Speaker, SpeakerEmbedding
+        from services.speaker_service import SpeakerService
+        from utils.config import settings
+
+        sp = Speaker(name="Gast", enrolled=True)
+        db_session.add(sp)
+        await db_session.flush()
+        db_session.add(SpeakerEmbedding(
+            speaker_id=sp.id,
+            embedding=SpeakerService.embedding_to_base64(np.array([1.0, 0.0], dtype=np.float32)),
+        ))
+        await db_session.commit()
+        await db_session.refresh(sp)
+
+        b = TestVoiceAuthBehaviour()
+        monkeypatch.setattr(settings, "voice_auth_enabled", True)
+        monkeypatch.setattr(settings, "speaker_recognition_enabled", True)
+        monkeypatch.setattr(settings, "voice_auth_min_confidence", 0.5)
+        monkeypatch.setattr(settings, "speaker_controlled_enrollment_enabled", False)
+        b._stub_service(monkeypatch, match=(sp.id, sp.name, 0.99))
+
+        out = await auth_routes.voice_authenticate(
+            b._request(), Response(), audio_file=b._upload(), db=db_session)
+        self._assert_opaque(out)
+
+    async def test_a_disabled_account_reveals_no_username(self, db_session, monkeypatch):
+        from fastapi import Response
+
+        from api.routes import auth as auth_routes
+        from utils.config import settings
+
+        b = TestVoiceAuthBehaviour()
+        sp, user = await b._linked_user(db_session)
+        user.is_active = False
+        await db_session.commit()
+
+        monkeypatch.setattr(settings, "voice_auth_enabled", True)
+        monkeypatch.setattr(settings, "speaker_recognition_enabled", True)
+        monkeypatch.setattr(settings, "voice_auth_min_confidence", 0.5)
+        monkeypatch.setattr(settings, "speaker_controlled_enrollment_enabled", False)
+        b._stub_service(monkeypatch, match=(sp.id, sp.name, 0.99))
+
+        out = await auth_routes.voice_authenticate(
+            b._request(), Response(), audio_file=b._upload(), db=db_session)
+        self._assert_opaque(out)
+
+
+class TestTheMarginGateIsShared:
+    """🛑 Geteilt wurde erst nur der Schwerpunkt-BAUER, nicht die ENTSCHEIDUNG.
+
+    `SpeakerService.identify_speaker` ist reines Argmax ueber einer Schwelle.
+    Der Resolver verlangt unter der kontrollierten Erkennung zusaetzlich einen
+    Abstand zum Zweitplatzierten. Solange die Anmeldung `identify_speaker`
+    benutzte, galt: Audio, das 0,72 gegen ZWEI Haushaltsmitglieder erreicht,
+    wird von der Erkennung als Muenzwurf abgelehnt — und haette sich an der
+    Anmeldung als das naechstliegende Profil ANGEMELDET. Eines dieser Profile
+    kann das Administratorkonto sein.
+
+    Der Test vergleicht die beiden Entscheidungen direkt, damit die Halbierung
+    nicht zurueckkommt.
+    """
+
+    pytestmark = [pytest.mark.unit]
+
+    @staticmethod
+    def _two_close_profiles():
+        import numpy as np
+
+        # Zwei Profile, beide nah an der Anfrage und nah aneinander.
+        q = np.array([1.0, 0.0], dtype=np.float32)
+        a = np.array([1.0, 0.05], dtype=np.float32)
+        b = np.array([1.0, 0.10], dtype=np.float32)
+        return q, [(1, "Anna", a), (2, "Admin", b)]
+
+    def test_a_coin_flip_is_refused_under_controlled(self, monkeypatch):
+        from services.speaker_resolver import match_known_speaker
+
+        monkeypatch.setattr("utils.config.settings.speaker_recognition_threshold", 0.25)
+        monkeypatch.setattr("utils.config.settings.speaker_match_min_margin", 0.1)
+        q, known = self._two_close_profiles()
+
+        mid, best, runner = match_known_speaker(q, known, controlled=True)
+        assert best >= 0.25, "Voraussetzung: beide liegen ueber der Schwelle"
+        assert (best - runner) < 0.1, "Voraussetzung: sie liegen zu nah beieinander"
+        assert mid is None, "ein Muenzwurf zwischen zwei Profilen darf NICHT zuordnen"
+
+    def test_without_controlled_it_is_plain_argmax(self, monkeypatch):
+        """Die Gegenrichtung — sonst wuerde der Test auch bei einer Marge
+        bestehen, die IMMER greift."""
+        from services.speaker_resolver import match_known_speaker
+
+        monkeypatch.setattr("utils.config.settings.speaker_recognition_threshold", 0.25)
+        monkeypatch.setattr("utils.config.settings.speaker_match_min_margin", 0.1)
+        q, known = self._two_close_profiles()
+
+        mid, _best, _runner = match_known_speaker(q, known, controlled=False)
+        assert mid is not None, "ohne kontrollierte Erkennung gilt die Marge nicht"
+
+    def test_the_route_uses_the_shared_decision_not_argmax(self):
+        """Der Riegel gegen das Zurueckrutschen: die Route darf
+        `identify_speaker` nicht wieder direkt aufrufen."""
+        from api.routes import auth
+
+        body = _function_body(auth.voice_authenticate)
+        assert "match_known_speaker" in body
+        assert "identify_speaker" not in body, (
+            "die Anmeldung waere wieder reines Argmax ohne Laeufer-Marge"
+        )

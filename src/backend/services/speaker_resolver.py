@@ -116,6 +116,62 @@ def build_known_speaker_centroids(
     return known, with_embeddings
 
 
+def match_known_speaker(
+    embedding: np.ndarray,
+    known_speakers: list[tuple[int, str, np.ndarray]],
+    *,
+    controlled: bool,
+) -> tuple[int | None, float, float]:
+    """DIE Entscheidung — nicht nur die Profile. Eine Fassung fuer alle Pfade.
+
+    🛑 WARUM DAS HIER STEHT UND NICHT IM AUFRUFER
+    ---------------------------------------------
+    Am 2026-09-27 habe ich `build_known_speaker_centroids` herausgezogen, damit
+    Anmeldung, Diagnose und Erkennung gegen DIESELBEN Referenzprofile
+    vergleichen — und dann geschrieben, sie taeten das auch. Das war wahr und
+    genau deshalb verdeckend: geteilt waren die PROFILE, nicht die ENTSCHEIDUNG.
+
+    `SpeakerService.identify_speaker` ist reines Argmax mit einer Schwelle
+    (`speaker_recognition_threshold`, Standard 0,25). Der Resolver verlangt unter
+    `speaker_controlled_enrollment_enabled` zusaetzlich einen Abstand zum
+    Zweitplatzierten (`speaker_match_min_margin`, 0,1), weil Kosinuswerte nahe am
+    Rauschen nicht trennen — ohne die Marge ist eine Zuordnung bei zwei aehnlich
+    guten Profilen ein Muenzwurf.
+
+    Folge, solange nur der Bauer geteilt war: Audio, das 0,72 gegen ZWEI
+    Haushaltsmitglieder erreicht, wird von der Erkennung als Muenzwurf
+    abgelehnt — und haette sich an der Sprachanmeldung als das naechstliegende
+    Profil ANGEMELDET. Eines davon kann das Administratorkonto sein. Die
+    Halbierung war schlimmer als keine Teilung, weil sie nach Einheit aussah.
+
+    Rueckgabe: `(speaker_id | None, best_score, runner_up)`. Die beiden Werte
+    kommen mit, weil die kontrollierte Erkennung einen Fehlschlag in den
+    Pruefkorb legt und dafuer die Zahlen braucht. Ein ANMELDEpfad wirft sie weg.
+    """
+    if not known_speakers:
+        return None, 0.0, -1.0
+
+    service = get_speaker_service()
+    scored = sorted(
+        (
+            (service.compute_similarity(embedding, centroid), sid)
+            for sid, _name, centroid in known_speakers
+        ),
+        key=lambda x: x[0], reverse=True,
+    )
+    best_score, best_id = scored[0]
+    runner_up = scored[1][0] if len(scored) > 1 else -1.0
+
+    if best_score < settings.speaker_recognition_threshold:
+        return None, best_score, runner_up
+    # Die Marge gilt unter der kontrollierten Erkennung — dort sind die Profile
+    # eingeschrieben und unveraenderlich, also ist ein Muenzwurf zwischen zwei
+    # von ihnen eine echte Verwechslungsgefahr.
+    if controlled and (best_score - runner_up) < settings.speaker_match_min_margin:
+        return None, best_score, runner_up
+    return best_id, best_score, runner_up
+
+
 async def resolve_speaker_from_embedding(
     db_session: AsyncSession,
     embedding: list[float] | np.ndarray,

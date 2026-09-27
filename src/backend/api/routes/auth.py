@@ -936,6 +936,7 @@ async def voice_authenticate(
         from services.speaker_resolver import (
             build_known_speaker_centroids,
             known_speaker_flags,
+            match_known_speaker,
         )
         from services.speaker_service import get_speaker_service
 
@@ -964,32 +965,55 @@ async def voice_authenticate(
             controlled=controlled,
             quality_active=quality_active,
         )
-        if not known_speakers:
+
+        # 🛑 DIESELBE Entscheidung wie die Erkennung, nicht nur dieselben
+        # Profile. `SpeakerService.identify_speaker` waere reines Argmax ab 0,25
+        # ohne Laeufer-Marge; der Resolver verlangt unter der kontrollierten
+        # Erkennung zusaetzlich `speaker_match_min_margin`. Mit dem blossen
+        # Argmax haette sich Audio, das 0,72 gegen ZWEI Haushaltsmitglieder
+        # erreicht, hier als das naechstliegende Profil angemeldet — waehrend die
+        # Erkennung es als Muenzwurf ablehnt. Eines dieser Profile kann das
+        # Administratorkonto sein. Begruendung in `match_known_speaker`.
+        matched_id, best_score, _runner_up = match_known_speaker(
+            query_embedding, known_speakers, controlled=controlled
+        )
+
+        # 🛑 EIN Fehlschlag, EINE Antwort. Ab hier gibt es keinen
+        # unterscheidbaren Ausgang mehr, und das ist der Kern:
+        #
+        # `identify_speaker`/`match_known_speaker` treffen ab
+        # `speaker_recognition_threshold` (0,25), diese Route verlangt
+        # `voice_auth_min_confidence` (0,7). Das Band [0,25 – 0,70) erreichte
+        # deshalb einen Zweig, der KLARNAMEN und einen zweistelligen
+        # Kosinuswert an einen UNANGEMELDETEN Aufrufer zurueckgab. Beides
+        # zusammen ist zweierlei Angriff: eine Namensliste des Haushalts ohne
+        # Zugangsdaten, und ein Gradient — Audio aendern, Zahl steigen sehen,
+        # bei 0,70 aufhoeren. 10 Anfragen je Minute und IP sind dagegen eine
+        # Bremsschwelle, keine Grenze.
+        #
+        # Deshalb: keine `speaker_id`, kein `speaker_name`, keine `confidence`,
+        # keine `user_id`, kein `username` auf einem Fehlschlag, und ein Text,
+        # der nicht verraet, WELCHE Bedingung fehlschlug. Genau wie der
+        # Passwortpfad nicht zwischen „Nutzer unbekannt" und „Passwort falsch"
+        # unterscheidet. Die Diagnose steht im Protokoll, nicht in der Antwort.
+        def _refused(reason: str) -> VoiceAuthResponse:
+            logger.info(f"Voice authentication refused: {reason}")
             return VoiceAuthResponse(
                 success=False,
-                message="No enrolled speaker profiles to compare against"
+                message="Voice authentication failed",
             )
 
-        result = speaker_service.identify_speaker(query_embedding, known_speakers)
+        if matched_id is None:
+            return _refused(f"no match (best {best_score:.2f})")
 
-        if not result:
-            return VoiceAuthResponse(
-                success=False,
-                confidence=0.0,
-                message="Speaker not recognized"
+        if best_score < settings.voice_auth_min_confidence:
+            return _refused(
+                f"below the voice-auth bar ({best_score:.2f} < "
+                f"{settings.voice_auth_min_confidence}) for speaker {matched_id}"
             )
 
-        speaker_id, speaker_name, confidence = result
-
-        # Check confidence threshold
-        if confidence < settings.voice_auth_min_confidence:
-            return VoiceAuthResponse(
-                success=False,
-                speaker_id=speaker_id,
-                speaker_name=speaker_name,
-                confidence=confidence,
-                message=f"Confidence too low ({confidence:.2f} < {settings.voice_auth_min_confidence})"
-            )
+        speaker_id = matched_id
+        confidence = best_score
 
         # Check if speaker is linked to a user
         speaker_result = await db.execute(
@@ -998,13 +1022,7 @@ async def voice_authenticate(
         speaker = speaker_result.scalar_one_or_none()
 
         if not speaker:
-            return VoiceAuthResponse(
-                success=False,
-                speaker_id=speaker_id,
-                speaker_name=speaker_name,
-                confidence=confidence,
-                message="Speaker profile not found in database"
-            )
+            return _refused(f"speaker {speaker_id} vanished between match and lookup")
 
         # Check if speaker is linked to a user
         user_result = await db.execute(
@@ -1015,24 +1033,13 @@ async def voice_authenticate(
         user = user_result.scalar_one_or_none()
 
         if not user:
-            return VoiceAuthResponse(
-                success=False,
-                speaker_id=speaker_id,
-                speaker_name=speaker_name,
-                confidence=confidence,
-                message="Speaker is not linked to a user account"
-            )
+            # Ein unangemeldeter Aufrufer darf NICHT erfahren, dass eine Stimme
+            # erkannt wurde, aber kein Konto daran haengt — das waere eine
+            # Aussage ueber den Haushalt.
+            return _refused(f"speaker {speaker_id} has no linked user account")
 
         if not user.is_active:
-            return VoiceAuthResponse(
-                success=False,
-                speaker_id=speaker_id,
-                speaker_name=speaker_name,
-                confidence=confidence,
-                user_id=user.id,
-                username=user.username,
-                message="User account is disabled"
-            )
+            return _refused(f"user {user.id} is disabled")
 
         # Success! Generate tokens
         user.last_login = datetime.now(UTC).replace(tzinfo=None)
@@ -1048,12 +1055,12 @@ async def voice_authenticate(
         # Sitzung ein — die Oberflaeche arbeitet auf dem HttpOnly-Cookie.
         _set_auth_cookies(response, access_token=access_token, refresh_token=refresh_token)
 
-        logger.info(f"Voice authentication successful: {user.username} (speaker: {speaker_name}, confidence: {confidence:.2f})")
+        logger.info(f"Voice authentication successful: {user.username} (speaker {speaker.id}, confidence {confidence:.2f})")
 
         return VoiceAuthResponse(
             success=True,
             speaker_id=speaker_id,
-            speaker_name=speaker_name,
+            speaker_name=speaker.name,
             confidence=confidence,
             user_id=user.id,
             username=user.username,
