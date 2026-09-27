@@ -26,6 +26,14 @@ select = [
     "SIM",  # flake8-simplify
     "RUF",  # ruff-specific rules
 ]
+# 🛑 `BLE` (blind-except) ist ABSICHTLICH nicht ausgewaehlt, und das ist eine
+# Entscheidung, keine Luecke. Im Backend sind 577 Stellen betroffen; der grosse
+# Teil davon ist das gewollte Muster an Dienstgrenzen — „eine fehlgeschlagene
+# Benachrichtigung darf die Aufgabe nie umbringen", „ein geschlossener
+# WebSocket darf eine foederierte Abfrage nicht abbrechen". Die Regel scharf zu
+# machen hiesse 206 zusaetzliche `noqa`-Gummistempel, ohne eine einzige echte
+# Fangstelle. Wer hier trotzdem `# noqa: BLE001` schreibt, bekommt ihn von
+# RUF100 als toten Ballast zurueck — das ist der Hinweis, nicht ein Fehler.
 ignore = [
     "E501",   # line too long — handled by formatter
     "E402",   # module-level import not at top — intentional for conditional/lazy imports
@@ -37,6 +45,17 @@ ignore = [
     "UP007",  # X | Y union syntax — keep Optional[X] for clarity
     "RUF012", # mutable-class-default — false positives on Pydantic models
     "RUF013", # implicit-optional — gradual migration, too many changes at once
+    "SIM117", # multiple-with-statements — verschachtelte `with` bleiben lesbarer,
+              # dieselbe Haltung wie SIM102/105/108 daneben
+    "UP042",  # replace-str-enum — `class X(str, Enum)` -> `StrEnum` aendert das
+              # Verhalten von `str(x)` und damit JSON-Ausgaben. Kein Umbau ohne
+              # Anlass; die 16 Stellen liegen in Schemata, die ueber die API gehen.
+    # Mehrdeutige Unicode-Zeichen: das Projekt schreibt deutsche Prosa in
+    # Docstrings und Modulkoepfen. `×`, `–` und „…" sind dort die RICHTIGEN
+    # Zeichen, nicht Tippfehler. 106 Befunde, alle typografisch gewollt.
+    "RUF001", # ambiguous-unicode-character-string
+    "RUF002", # ambiguous-unicode-character-docstring
+    "RUF003", # ambiguous-unicode-character-comment
 ]
 
 [tool.ruff.lint.isort]
@@ -44,7 +63,10 @@ known-first-party = ["services", "api", "models", "utils", "integrations", "prom
 
 [tool.ruff.lint.per-file-ignores]
 "src/backend/alembic/**" = ["E", "W", "F", "I", "UP", "B", "SIM", "RUF"]
-"tests/**" = ["B011", "SIM300"]
+# E702 (Semikolon-Mehrfachanweisung) nur in Tests: dort verdichtet
+# `a = 1; b = 2` bewusst Tabellenaufbau und Fixture-Vorbereitung. 57 Stellen,
+# alle in Testdateien. Im Produktionscode bleibt die Regel scharf.
+"tests/**" = ["B011", "SIM300", "E702"]
 
 # =============================================================================
 # Pytest
