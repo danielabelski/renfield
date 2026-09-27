@@ -29,6 +29,29 @@ export default function TierPicker({ value, onChange, disabled = false, classNam
   const { t } = useTranslation();
   const buttonRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
+  // Track which tier *we* just moved to via keyboard so we can restore focus
+  // after React re-renders with the new selection. Without this, roving-tabindex
+  // leaves focus on the previously-selected (now tabindex=-1) button and the
+  // user can't arrow past the end.
+  const pendingFocusTier = useRef<CircleTier | null>(null);
+
+  useEffect(() => {
+    if (pendingFocusTier.current != null) {
+      const tier = pendingFocusTier.current;
+      pendingFocusTier.current = null;
+      buttonRefs.current[tier]?.focus();
+    }
+  }, [value]);
+
+  // 🛑 JEDER Hook steht VOR diesem Ausstieg. Bis 2026-09-27 standen
+  // `pendingFocusTier` und der `useEffect` DAHINTER: bei `variant="compact"`
+  // kehrte die Komponente vorher zurueck und rief zwei Hooks weniger auf. React
+  // fuehrt Hooks ueber die Aufrufreihenfolge, nicht ueber Namen — wechselt eine
+  // Instanz die Variante, verrutscht der ganze Hook-Zustand und React wirft
+  // „Rendered fewer hooks than expected". Latent blieb das nur, weil alle vier
+  // Aufrufstellen die Variante als Literal setzen (PairInitiatorModal,
+  // PairResponderModal, TierControlPopover: "pills"; WissenDetailDrawer:
+  // "compact"). Die erste veraenderliche Variante waere ein Absturz.
   if (variant === 'compact') {
     const current: CircleTier = (value != null ? (value as CircleTier) : 0);
     return (
@@ -47,20 +70,6 @@ export default function TierPicker({ value, onChange, disabled = false, classNam
       </select>
     );
   }
-
-  // Track which tier *we* just moved to via keyboard so we can restore focus
-  // after React re-renders with the new selection. Without this, roving-tabindex
-  // leaves focus on the previously-selected (now tabindex=-1) button and the
-  // user can't arrow past the end.
-  const pendingFocusTier = useRef<CircleTier | null>(null);
-
-  useEffect(() => {
-    if (pendingFocusTier.current != null) {
-      const tier = pendingFocusTier.current;
-      pendingFocusTier.current = null;
-      buttonRefs.current[tier]?.focus();
-    }
-  }, [value]);
 
   const move = (newTier: number): void => {
     if (disabled) return;

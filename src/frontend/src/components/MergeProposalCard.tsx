@@ -140,7 +140,8 @@ export default function MergeProposalCard({ proposal, onApprove, onReject, busy 
           className="btn btn-secondary"
           onClick={onReject}
           disabled={busy}
-          // eslint-disable-next-line jsx-a11y/no-autofocus
+          // Absicht: bei einem vorsichtigen Vorschlag bekommt die SICHERE
+          // Aktion den Fokus, nicht die zusammenfuehrende.
           autoFocus={cautious}
         >
           {t('circles.mergeProposals.reject')}

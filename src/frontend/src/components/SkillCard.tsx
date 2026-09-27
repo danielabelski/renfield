@@ -85,7 +85,7 @@ export default function SkillCard({
               key={trigger}
               className="px-2 py-0.5 rounded-md bg-gray-100 dark:bg-gray-800 text-xs text-gray-700 dark:text-gray-300"
             >
-              "{trigger}"
+              &quot;{trigger}&quot;
             </li>
           ))}
           {skill.trigger_examples.length > 4 && (
