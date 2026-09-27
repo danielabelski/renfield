@@ -505,7 +505,10 @@ async def _satellite_fleet_watchdog_handler(app: FastAPI, params: dict) -> str |
     # aktiviert, Handler entscheidet zur Laufzeit), damit ein spaeter
     # eingeschaltetes Satellitenmerkmal keine Migration der Saatzeile braucht.
     if not settings.features.get("satellites"):
-        return None
+        # Marker statt stummem `None`: dasselbe wie beim MCP-Gesundheitsmonitor
+        # daneben. Wer ins Laufprotokoll schaut, soll „das Tor war zu" lesen und
+        # nicht eine leere Zeile, die auch ein Fehler sein koennte.
+        return "skipped: Satellitenmerkmal aus"
 
     from services.satellite_fleet_watchdog import check_satellite_fleet
 

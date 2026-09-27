@@ -49,7 +49,8 @@ def _empty_speaker_info() -> dict[str, Any]:
 
 
 def known_speaker_flags() -> tuple[bool, bool, bool]:
-    """Die zwei Schalter, die den Vergleichsmassstab bestimmen.
+    """Die zwei Schalter, die den Vergleichsmassstab bestimmen — als Dreitupel
+    `(gating, controlled, quality_active)`, weil der dritte aus den ersten zwei folgt.
 
     🛑 Beides zusammen, nicht einzeln. `quality_active` ist `gating ODER
     controlled`: die Dauerschranke gilt unter Phase-0-Gating UND unter der

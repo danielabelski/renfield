@@ -39,7 +39,8 @@ The same-speaker and different-speaker distributions **overlap almost completely
 1. **Ambient auto-enroll is the wrong data source.** Every spoken turn that clears a 0.5 s / cosine-0.25 bar silently mutates the speaker DB — no consent, no quality gate, no distinction between "deliberate enrollment" and "passive recognition". Far-field, short, noisy utterances produce embeddings that barely encode identity.
 2. **No quality gating.** Only guard anywhere is a 0.5 s min-duration (in-process path only) + an empty-PCM check. No SNR, no min-speech-duration, no min-sample-count, no per-enrollment consistency check.
 3. **Threshold 0.25 is in the ambiguous band** — and no *fixed* threshold works until embedding quality improves; not the real lever.
-4. **Averaging un-normalized embeddings** (`np.mean(raw)` over vectors with norms 246–412, then normalize) — larger-norm samples dominate the centroid. Secondary but real.
+4. **Averaging un-normalized embeddings** (`np.mean(raw)` über Vektoren mit Normen 246–412, dann normalisieren) — Aufnahmen mit größerer Norm dominieren den Schwerpunkt. Sekundär, aber real.
+   🛑 **Nachtrag 2026-09-27:** `GET /api/speakers/identify` rechnete diesen Schwerpunkt bis dahin SELBST und wich vom lebenden Pfad in drei Punkten ab — normalisierte nur unter `speaker_quality_gating_enabled` (im Haushalt aus, während `controlled` an ist), nahm alle statt nur der eingeschriebenen Sprecher, und mittelte alle statt der `MAX_EMBEDDINGS_PER_SPEAKER` jüngsten Einbettungen. Das Diagnose-Endpunkt antwortete damit aus einem anderen Modell als die Erkennung. Die Rechnung steht jetzt genau einmal, als `speaker_resolver.build_known_speaker_centroids` + `known_speaker_flags`; Phase 0 und Phase 3 gelten dort damit gleichermaßen.
 5. **Continuous-learning pollution loop** — compounds (1)+(3).
 
 ### Hard constraint discovered

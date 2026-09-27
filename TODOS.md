@@ -43,6 +43,7 @@ Funktionen sind auf **keiner** Instanz je eingeschaltet worden. Kein P0.
 | Sache | Warum zuerst | Quelle |
 |---|---|---|
 | ~~Browser-Mikrofon im Haushalt tot seit ~Juli~~ **behoben 2026-09-18** | Verwaister Ingress aus #1119; ersetzt durch eine IngressRoute in ns `voice`. Browser-Test bestanden | `:56` |
+| 🛑 Haushalt läuft auth-on OHNE HttpOnly-Sitzung | `AUTH_ENABLED=true` seit 2026-09-23, `AUTH_COOKIE_ENABLED` dort **nicht gesetzt** (Standard `false`, `config.py:1437`, auch nicht im `renfield-env-private`-Secret) → Sitzungstoken liegt in `localStorage` (`utils/axios.ts:45`), für jedes Skript auf der Seite lesbar. xidra führt mit `AUTH_COOKIE_ENABLED=true` eine HttpOnly-Sitzung. Solange die Anmeldung aus war, war der Schalter belanglos — mit dem Umlegen ist er ein Ausfall. Umlegen ändert den Anmeldeweg der Oberfläche, Browser-E2E danach zwingend | gemessen 2026-09-27, `docs/BACKLOG_INVENTORY.md` §4a |
 | `sat-wohnzimmer` ist taub (WM8960-Probe −110) | Gerät hört nichts **und** meldet sich gesund — der Überwachungs-Blindfleck wiegt schwerer | #1211 |
 | KV-Cache auf `cuda.local` gesättigt | 2267 Fehler, gemeinsamer Pool für 4 Slots, keine Mandantentrennung | `docs/GPU_TOPOLOGY.md` §5 |
 | ~~OTA-Rollback terminiert nicht~~ **behoben 2026-09-19** | Endstufen terminieren jetzt und behalten die Ursache; der Kehraus hatte gar keinen Takt — nachgezogen und kalibriert. Der Geräte-Kehraus bleibt offen | #1209, #1277 |

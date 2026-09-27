@@ -2380,6 +2380,13 @@ DEFAULT_ADMIN_PASSWORD=changeme
 # Voice Authentication
 VOICE_AUTH_ENABLED=false
 VOICE_AUTH_MIN_CONFIDENCE=0.7
+# 🛑 `VOICE_AUTH_ENABLED` bleibt aus. Eine Tonaufnahme der Stimme reicht für
+# Zugriffs- UND Erneuerungstoken; keine Lebendigkeitsprüfung, kein zweiter
+# Faktor. Die Route war bis 2026-09-27 ohnehin unbenutzbar (falsche
+# Aufrufsignatur → `TypeError` bei jedem Versuch). Sie funktioniert jetzt,
+# prüft `SPEAKER_RECOGNITION_ENABLED` vor jeder Einbettung, schreibt kein
+# Profil und setzt dieselben HttpOnly-Cookies wie die anderen Anmeldewege —
+# tragbar wäre sie trotzdem nur als ZUSATZfaktor.
 
 # === Pluggable auth provider registry (ebongard/renfield#591) ===
 # Per-provider credential-walk timeout; a provider exceeding this is

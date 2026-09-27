@@ -800,3 +800,57 @@ class TestRunHistory:
 
         runs = await self._runs(session_factory, tid)
         assert len(runs) == 3  # pruned to the newest N
+
+
+class TestSatelliteFleetGate:
+    """Das Merkmalstor der Flottenwache — Geschwister zu `TestBuiltinHandlers`
+    `test_mcp_health_gate_*`.
+
+    🛑 Warum das hier stehen MUSS: das Tor existiert nicht wegen eines Flags,
+    sondern wegen der Architekturgrenze. Eine Plattform-Installation ohne
+    `ha_glue` hat keine Satelliten, und der Waechter wuerde dort
+    `ha_glue.services.satellite_manager` importieren. `test_ha_glue_boundary.py`
+    laesst `services/satellite_fleet_watchdog.py` nur durch, WEIL dieses Tor
+    davor steht — ohne diese Tests haengt der Allowlist-Eintrag an einer
+    ungepruften Behauptung.
+    """
+
+    @staticmethod
+    def _app():
+        from types import SimpleNamespace
+
+        return SimpleNamespace(state=SimpleNamespace())
+
+    async def test_gate_off_skips_and_says_so(self, monkeypatch):
+        from services import satellite_fleet_watchdog as wd
+        from services.scheduled_tasks import builtins
+        from utils.config import settings
+
+        monkeypatch.setattr(settings, "feature_satellites", False)
+        assert settings.features.get("satellites") is False
+        called = []
+
+        async def _check():
+            called.append(1)
+
+        monkeypatch.setattr(wd, "check_satellite_fleet", _check)
+        out = await builtins._satellite_fleet_watchdog_handler(self._app(), {})
+        assert "skipped" in out
+        assert not called, "ohne Satellitenmerkmal darf der Waechter nicht laufen"
+
+    async def test_gate_on_calls_the_watchdog(self, monkeypatch):
+        from services import satellite_fleet_watchdog as wd
+        from services.scheduled_tasks import builtins
+        from utils.config import settings
+
+        monkeypatch.setattr(settings, "feature_satellites", True)
+        called = []
+
+        async def _check():
+            called.append(1)
+            return "offline: Kueche"
+
+        monkeypatch.setattr(wd, "check_satellite_fleet", _check)
+        out = await builtins._satellite_fleet_watchdog_handler(self._app(), {})
+        assert called == [1]
+        assert out == "offline: Kueche", "das Ergebnis muss unveraendert durchgereicht werden"

@@ -64,7 +64,8 @@ A failing test is an issue, not noise: the backend suite is green, so investigat
 ```bash
 ./bin/start.sh                  # Start entire stack (build-box / dev compose)
 ./bin/quick-update.sh           # Quick backend restart
-make lint                       # Lint all (ruff + eslint)
+make lint                       # Lint all (ruff + eslint) — einmalig: pipx install ruff==0.16.9
+                                #   (ruff laeuft auf dem HOST, nicht im Bild; s. bin/lint-backend.sh)
 make format-backend             # Format + auto-fix with ruff
 bin/deploy-production.sh …      # Real deploy (see the deploy-production skill; user-invoked)
 ```

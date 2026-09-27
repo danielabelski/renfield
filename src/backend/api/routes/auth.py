@@ -992,10 +992,8 @@ async def voice_authenticate(
             )
 
         # Check if speaker is linked to a user
-        from models.database import Speaker
-
         speaker_result = await db.execute(
-            select(Speaker).where(Speaker.id == speaker_id)
+            select(SpeakerModel).where(SpeakerModel.id == speaker_id)
         )
         speaker = speaker_result.scalar_one_or_none()
 

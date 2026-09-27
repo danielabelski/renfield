@@ -212,3 +212,219 @@ def _speaker(sid, name, *, enrolled, values=(1.0,)):
     # Der ERSTE Wert ist der jüngste, damit `values` sich wie „neu zuerst" liest.
     return _Speaker(sid, name, enrolled,
                     [_Emb(v, base - timedelta(days=i)) for i, v in enumerate(values)])
+
+
+# ---------------------------------------------------------------------------
+# 1b. VOICE_AUTH_ENABLED — die Route WIRKLICH fahren, nicht ihren Quelltext lesen
+# ---------------------------------------------------------------------------
+@pytest.mark.database
+class TestVoiceAuthBehaviour:
+    """🛑 Die Tests oben pruefen Quelltext-Textstellen. Das war zu wenig.
+
+    Ein Test, der `inspect.getsource` durchsucht, belegt, dass ein Aufruf DASTEHT
+    — nicht, dass er wirkt. Er haette jede der vier Bruecken dieser Route
+    ueberlebt, solange nur die richtigen Zeichenketten im Koerper stehen. Dieser
+    Block fuehrt die Funktion aus und behauptet ueber das ERGEBNIS: gesetzte
+    Cookies, gemeldeter Passwortzwang, verweigerte Anmeldung ohne Erkennung, und
+    kein geschriebenes Profil.
+    """
+
+    @staticmethod
+    def _upload(data: bytes = b"RIFFfake", name: str = "turn.wav"):
+        class _Up:
+            filename = name
+
+            async def read(self):
+                return data
+
+        return _Up()
+
+    @staticmethod
+    def _request():
+        r"""Eine ECHTE starlette-Anfrage aus einem minimalen ASGI-Scope.
+
+        Nachgebaut ging es nicht: der Ratenbegrenzer-Dekorator prueft den Typ und
+        wirft `parameter \`request\` must be an instance of
+        starlette.requests.Request`. Ein Attrappen-Objekt haette den Test an
+        einer Stelle scheitern lassen, die mit der Route nichts zu tun hat.
+        """
+        from starlette.requests import Request
+
+        return Request({
+            "type": "http",
+            "method": "POST",
+            "path": "/api/auth/voice",
+            "raw_path": b"/api/auth/voice",
+            "root_path": "",
+            "scheme": "http",
+            "query_string": b"",
+            "headers": [],
+            "client": ("127.0.0.1", 12345),
+            "server": ("test", 80),
+            "app": None,
+        })
+
+    async def _linked_user(self, db, *, must_change=False):
+        """Ein Sprecher mit einer Einbettung, verknuepft mit einem Nutzer."""
+        import numpy as np
+
+        from models.database import Role, Speaker, SpeakerEmbedding, User
+        from services.speaker_service import SpeakerService
+
+        role = Role(name="VA", description="", permissions=["chat.own"])
+        db.add(role)
+        await db.flush()
+        sp = Speaker(name="Anna", enrolled=True)
+        db.add(sp)
+        await db.flush()
+        db.add(SpeakerEmbedding(
+            speaker_id=sp.id,
+            embedding=SpeakerService.embedding_to_base64(
+                np.array([1.0, 0.0], dtype=np.float32)),
+        ))
+        user = User(username="anna", password_hash="x", role_id=role.id,
+                    is_active=True, token_epoch=0, speaker_id=sp.id,
+                    must_change_password=must_change)
+        db.add(user)
+        await db.commit()
+        await db.refresh(sp)
+        await db.refresh(user)
+        return sp, user
+
+    @staticmethod
+    def _stub_service(monkeypatch, *, match):
+        """Die ML-Haelfte ersetzen: Einbettung und Zuordnung. Alles andere echt."""
+        import numpy as np
+
+        from services import speaker_service as ss
+
+        class _Svc:
+            def extract_embedding_from_bytes(self, _b, _n):
+                return np.array([1.0, 0.0], dtype=np.float32)
+
+            def identify_speaker(self, _q, _known):
+                return match
+
+            @staticmethod
+            def embedding_from_base64(enc):
+                return ss.SpeakerService.embedding_from_base64(enc)
+
+        monkeypatch.setattr(ss, "get_speaker_service", lambda: _Svc())
+        monkeypatch.setattr("services.speaker_resolver.get_speaker_service", lambda: _Svc())
+
+    async def test_success_sets_the_httponly_cookies(self, db_session, monkeypatch):
+        """🛑 Der Kern. Ohne `_set_auth_cookies` richtete eine erfolgreiche
+        Sprachanmeldung ueberhaupt keine Sitzung ein — die Oberflaeche arbeitet
+        seit #1125 auf dem HttpOnly-Cookie. Der Quelltext-Test sah nur, dass der
+        Aufruf DASTEHT."""
+        from fastapi import Response
+
+        from api.routes import auth as auth_routes
+        from utils.config import settings
+
+        sp, _user2 = await self._linked_user(db_session)
+        monkeypatch.setattr(settings, "voice_auth_enabled", True)
+        monkeypatch.setattr(settings, "speaker_recognition_enabled", True)
+        monkeypatch.setattr(settings, "auth_cookie_enabled", True)
+        monkeypatch.setattr(settings, "voice_auth_min_confidence", 0.5)
+        self._stub_service(monkeypatch, match=(sp.id, sp.name, 0.99))
+
+        resp = Response()
+        out = await auth_routes.voice_authenticate(
+            self._request(), resp, audio_file=self._upload(), db=db_session)
+
+        assert out.success is True
+        assert out.username == "anna"
+        cookies = resp.headers.getlist("set-cookie")
+        names = {c.split("=", 1)[0] for c in cookies}
+        assert settings.auth_cookie_name in names, f"kein Zugriffs-Cookie: {names}"
+        assert any("httponly" in c.lower() for c in cookies), "Cookie nicht HttpOnly"
+
+    async def test_it_reports_the_password_gate(self, db_session, monkeypatch):
+        """Sonst kaeme ein Konto mit Passwortzwang per Stimme daran vorbei."""
+        from fastapi import Response
+
+        from api.routes import auth as auth_routes
+        from utils.config import settings
+
+        sp, _user = await self._linked_user(db_session, must_change=True)
+        monkeypatch.setattr(settings, "voice_auth_enabled", True)
+        monkeypatch.setattr(settings, "speaker_recognition_enabled", True)
+        monkeypatch.setattr(settings, "voice_auth_min_confidence", 0.5)
+        self._stub_service(monkeypatch, match=(sp.id, sp.name, 0.99))
+
+        out = await auth_routes.voice_authenticate(
+            self._request(), Response(), audio_file=self._upload(), db=db_session)
+        assert out.success is True
+        assert out.must_change_password is True
+
+    async def test_recognition_off_refuses_before_any_embedding(self, db_session, monkeypatch):
+        """Ein ECAPA-Stimmabdruck ist biometrisches Datum (Art. 9 DSGVO). Ist die
+        Erkennung aus, darf hier auch keiner BERECHNET werden."""
+        from fastapi import Response
+
+        from api.routes import auth as auth_routes
+        from utils.config import settings
+
+        monkeypatch.setattr(settings, "voice_auth_enabled", True)
+        monkeypatch.setattr(settings, "speaker_recognition_enabled", False)
+        extracted = []
+
+        import numpy as np
+
+        from services import speaker_service as ss
+
+        class _Svc:
+            def extract_embedding_from_bytes(self, _b, _n):
+                extracted.append(1)
+                return np.array([1.0, 0.0], dtype=np.float32)
+
+        monkeypatch.setattr(ss, "get_speaker_service", lambda: _Svc())
+
+        out = await auth_routes.voice_authenticate(
+            self._request(), Response(), audio_file=self._upload(), db=db_session)
+        assert out.success is False
+        assert not extracted, "ohne Erkennung darf keine Einbettung berechnet werden"
+
+    async def test_an_unknown_voice_creates_no_speaker(self, db_session, monkeypatch):
+        """🛑 Ein ANMELDEVERSUCH darf niemals ein Profil anlegen — sonst legte
+        jeder Fehlversuch einen Stimmabdruck ohne Einwilligung an, und ein
+        Fremder koennte ein Profil auf seine Stimme ziehen."""
+        from fastapi import Response
+        from sqlalchemy import func, select
+
+        from api.routes import auth as auth_routes
+        from models.database import Speaker
+        from utils.config import settings
+
+        _sp, _user = await self._linked_user(db_session)
+        before = (await db_session.execute(select(func.count()).select_from(Speaker))).scalar()
+
+        monkeypatch.setattr(settings, "voice_auth_enabled", True)
+        monkeypatch.setattr(settings, "speaker_recognition_enabled", True)
+        self._stub_service(monkeypatch, match=None)   # keine Zuordnung
+
+        out = await auth_routes.voice_authenticate(
+            self._request(), Response(), audio_file=self._upload(), db=db_session)
+        assert out.success is False
+        after = (await db_session.execute(select(func.count()).select_from(Speaker))).scalar()
+        assert after == before, "ein Fehlversuch hat ein Sprecherprofil angelegt"
+
+    async def test_low_confidence_is_refused(self, db_session, monkeypatch):
+        from fastapi import Response
+
+        from api.routes import auth as auth_routes
+        from utils.config import settings
+
+        sp, _user = await self._linked_user(db_session)
+        monkeypatch.setattr(settings, "voice_auth_enabled", True)
+        monkeypatch.setattr(settings, "speaker_recognition_enabled", True)
+        monkeypatch.setattr(settings, "voice_auth_min_confidence", 0.9)
+        self._stub_service(monkeypatch, match=(sp.id, sp.name, 0.60))
+
+        resp = Response()
+        out = await auth_routes.voice_authenticate(
+            self._request(), resp, audio_file=self._upload(), db=db_session)
+        assert out.success is False
+        assert out.access_token is None
+        assert resp.headers.getlist("set-cookie") == [], "abgelehnt, aber Cookie gesetzt"

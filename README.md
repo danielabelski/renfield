@@ -194,6 +194,7 @@ METRICS_ENABLED=false             # Prometheus /metrics (opt-in)
 
 ```bash
 make lint                    # lint all code (ruff + eslint)
+                             #   one-time: pipx install ruff==0.16.9 (host, not the image)
 make test                    # all tests
 make test-backend            # backend tests (3,400+)
 make test-frontend-react     # React tests (Vitest + RTL)
