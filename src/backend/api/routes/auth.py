@@ -17,8 +17,10 @@ from loguru import logger
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from models.database import Role, User
+from models.database import Speaker as SpeakerModel
 from models.permissions import Permission, get_all_permissions
 from services.api_rate_limiter import limiter
 from services.auth_service import (
@@ -844,6 +846,9 @@ class VoiceAuthResponse(BaseModel):
     username: str | None = None
     access_token: str | None = None
     refresh_token: str | None = None
+    # 🛑 Jeder andere Anmeldeweg meldet das (Zeilen 337/453/516/588/620/806).
+    # Ohne dieses Feld kaeme ein Konto mit Passwortzwang per Stimme daran vorbei.
+    must_change_password: bool = False
     message: str
 
 
@@ -851,6 +856,7 @@ class VoiceAuthResponse(BaseModel):
 @limiter.limit(settings.api_rate_limit_auth)
 async def voice_authenticate(
     request: Request,
+    response: Response,
     audio_file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db)
 ):
@@ -859,22 +865,62 @@ async def voice_authenticate(
 
     Requires:
     - voice_auth_enabled in settings
+    - speaker_recognition_enabled (ein ECAPA-Stimmabdruck ist biometrisches
+      Datum, Art. 9 DSGVO — eine Instanz, die Erkennung abgeschaltet hat, darf
+      auch keinen LESEN)
+    - speaker_inprocess_embeddings_enabled (dieser Pfad rechnet mit dem
+      In-Prozess-SpeechBrain-Modell; ohne den Schalter weist der zentrale Riegel
+      in `SpeakerService` ab)
     - Speaker profile linked to a User account
 
     Process:
     1. Receive audio file
-    2. Run speaker recognition
+    2. Extract an embedding, compare against the ENROLLED reference profiles
     3. If speaker identified with confidence >= threshold:
        - Check if speaker is linked to a User
        - If linked, return JWT tokens
     4. Otherwise, return identification result without tokens
-    """
-    from services.speaker_service import SpeakerService
 
+    🛑 DIESE ROUTE WAR KAPUTT, SOLANGE SIE EXISTIERTE
+    ------------------------------------------------
+    Sie rief `speaker_service.identify_speaker(audio_bytes)` auf. Die Signatur ist
+    `(query_embedding, known_speakers)` — zwei Pflichtargumente — und der
+    Rueckgabewert ist ein `tuple[int, str, float] | None`, den der Code als
+    `dict` mit `speaker_id`/`confidence`/`name` las. `VOICE_AUTH_ENABLED=true`
+    endete also in einem `TypeError` bei JEDEM Anmeldeversuch. Die Route war
+    gegen eine Schnittstelle geschrieben, die es nie gab.
+
+    🛑 NUR LESEN, NIE EINSCHREIBEN
+    ------------------------------
+    Der Vergleich laeuft absichtlich NICHT ueber
+    `resolve_speaker_from_embedding`: der schreibt einen unbekannten Sprecher als
+    „Unbekannter Sprecher #N" an und verstaerkt bestehende Profile. Bei einem
+    ANMELDEVERSUCH waere das falsch in beide Richtungen — jeder Fehlversuch
+    legte einen Stimmabdruck an (biometrisches Datum ohne Einwilligung), und ein
+    Fremder koennte ein Profil nach und nach auf seine Stimme ziehen. Deshalb
+    hier ausschliesslich die lesende Haelfte: dieselben Referenzprofile wie die
+    Erkennung, kein Schreibvorgang.
+
+    🛑 WIEDEREINSPIELUNG
+    --------------------
+    Eine Tonaufnahme der Stimme reicht fuer ein Zugriffs- UND ein
+    Erneuerungstoken; es gibt keine Lebendigkeitspruefung und keinen zweiten
+    Faktor. `VOICE_AUTH_ENABLED` gehoert deshalb aus, solange das nicht
+    dazukommt. Diese Aenderung macht die Route funktionsfaehig, nicht
+    empfehlenswert.
+    """
     if not settings.voice_auth_enabled:
         return VoiceAuthResponse(
             success=False,
             message="Voice authentication is disabled"
+        )
+
+    # Ein Stimmabdruck ist biometrisches Datum. Ist die Erkennung aus, wird
+    # hier auch keiner BERECHNET — derselbe Grundsatz wie im Resolver.
+    if not settings.speaker_recognition_enabled:
+        return VoiceAuthResponse(
+            success=False,
+            message="Speaker recognition is disabled"
         )
 
     # Read audio file
@@ -887,22 +933,53 @@ async def voice_authenticate(
         )
 
     try:
-        # Get speaker service
-        speaker_service = SpeakerService()
+        from services.speaker_resolver import (
+            build_known_speaker_centroids,
+            known_speaker_flags,
+        )
+        from services.speaker_service import get_speaker_service
 
-        # Identify speaker
-        result = speaker_service.identify_speaker(audio_bytes)
+        speaker_service = get_speaker_service()
 
-        if not result or not result.get("speaker_id"):
+        # Gibt `None` zurueck, wenn In-Prozess-Einbettungen abgeschaltet sind —
+        # der zentrale Riegel in `SpeakerService` nennt „voice-login" selbst als
+        # abgedeckten Aufrufer, hier ist kein zweiter noetig.
+        query_embedding = speaker_service.extract_embedding_from_bytes(
+            audio_bytes, audio_file.filename or "voice-login"
+        )
+        if query_embedding is None:
             return VoiceAuthResponse(
                 success=False,
-                confidence=result.get("confidence", 0.0) if result else 0.0,
+                message="Could not extract a voice embedding from the audio"
+            )
+
+        speaker_rows = await db.execute(
+            select(SpeakerModel)
+            .where(SpeakerModel.embeddings.any())
+            .options(selectinload(SpeakerModel.embeddings))
+        )
+        _gating, controlled, quality_active = known_speaker_flags()
+        known_speakers, _ = build_known_speaker_centroids(
+            list(speaker_rows.scalars().all()),
+            controlled=controlled,
+            quality_active=quality_active,
+        )
+        if not known_speakers:
+            return VoiceAuthResponse(
+                success=False,
+                message="No enrolled speaker profiles to compare against"
+            )
+
+        result = speaker_service.identify_speaker(query_embedding, known_speakers)
+
+        if not result:
+            return VoiceAuthResponse(
+                success=False,
+                confidence=0.0,
                 message="Speaker not recognized"
             )
 
-        speaker_id = result["speaker_id"]
-        confidence = result.get("confidence", 0.0)
-        speaker_name = result.get("name", "Unknown")
+        speaker_id, speaker_name, confidence = result
 
         # Check confidence threshold
         if confidence < settings.voice_auth_min_confidence:
@@ -915,9 +992,7 @@ async def voice_authenticate(
             )
 
         # Check if speaker is linked to a user
-        from sqlalchemy.orm import selectinload
-
-        from models.database import Speaker, User
+        from models.database import Speaker
 
         speaker_result = await db.execute(
             select(Speaker).where(Speaker.id == speaker_id)
@@ -970,6 +1045,10 @@ async def voice_authenticate(
             token_epoch=user.token_epoch,
         )
         refresh_token = create_refresh_token(user.id, token_epoch=user.token_epoch)
+        # 🛑 Wie jeder andere Anmeldeweg (#1125). Ohne das lieferte die
+        # Sprachanmeldung nur Token im Rumpf und richtete ueberhaupt keine
+        # Sitzung ein — die Oberflaeche arbeitet auf dem HttpOnly-Cookie.
+        _set_auth_cookies(response, access_token=access_token, refresh_token=refresh_token)
 
         logger.info(f"Voice authentication successful: {user.username} (speaker: {speaker_name}, confidence: {confidence:.2f})")
 
@@ -982,6 +1061,7 @@ async def voice_authenticate(
             username=user.username,
             access_token=access_token,
             refresh_token=refresh_token,
+            must_change_password=user.must_change_password,
             message="Voice authentication successful"
         )
 

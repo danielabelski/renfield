@@ -5,7 +5,6 @@ Endpoints for speaker enrollment, identification, verification, and management.
 Uses SpeechBrain ECAPA-TDNN for speaker embeddings.
 """
 
-import numpy as np
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from loguru import logger
 from pydantic import BaseModel
@@ -154,45 +153,36 @@ class ServiceStatusResponse(BaseModel):
 async def get_speaker_embeddings_averaged(
     db: AsyncSession
 ) -> list[tuple]:
-    """
-    Load all speakers with their averaged embeddings.
+    """Die Referenzprofile fuer `/identify` — DIESELBE Rechnung wie die Erkennung.
+
+    🛑 Diese Funktion hatte bis 2026-09-27 ihre eigene Fassung und wich vom
+    lebenden Pfad in drei Punkten ab (Normalisierung nur unter
+    `speaker_quality_gating_enabled`, keine `enrolled`-Auswahl, alle statt der 10
+    juengsten Einbettungen). Damit antwortete das DIAGNOSE-Endpunkt aus einem
+    anderen Modell als die Erkennung — ausgerechnet das Werkzeug, mit dem man
+    einer Fehlerkennung nachgeht. Die Rechnung steht jetzt genau einmal, in
+    `speaker_resolver`. Begruendung dort im Docstring.
 
     Returns:
         List of (speaker_id, speaker_name, averaged_embedding) tuples
     """
-    service = get_speaker_service()
+    from services.speaker_resolver import (
+        build_known_speaker_centroids,
+        known_speaker_flags,
+    )
 
-    # Get all speakers with embeddings (eagerly loaded)
     result = await db.execute(
         select(Speaker)
         .where(Speaker.embeddings.any())
         .options(selectinload(Speaker.embeddings))
     )
-    speakers = result.scalars().all()
-
-    speaker_data = []
-    for speaker in speakers:
-        if not speaker.embeddings:
-            continue
-
-        # Decode and average embeddings
-        embeddings = [
-            service.embedding_from_base64(emb.embedding)
-            for emb in speaker.embeddings
-        ]
-
-        if embeddings:
-            # Phase-0: L2-normalize before averaging (mirror speaker_resolver) so
-            # /identify uses the same centroid as live recognition. Off = legacy.
-            if settings.speaker_quality_gating_enabled:
-                embeddings = [
-                    (e / n if (n := float(np.linalg.norm(e))) > 0 else e)
-                    for e in embeddings
-                ]
-            averaged = np.mean(embeddings, axis=0)
-            speaker_data.append((speaker.id, speaker.name, averaged))
-
-    return speaker_data
+    _gating, controlled, quality_active = known_speaker_flags()
+    known, _with_embeddings = build_known_speaker_centroids(
+        list(result.scalars().all()),
+        controlled=controlled,
+        quality_active=quality_active,
+    )
+    return known
 
 
 # --- Endpoints ---
