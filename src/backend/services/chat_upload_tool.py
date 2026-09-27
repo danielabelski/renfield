@@ -34,7 +34,6 @@ from loguru import logger
 
 from utils.config import settings
 
-
 # Cold-start window for the LLM-metadata confirm flow: the first N archives
 # require an explicit confirm; after that the system trusts itself and archives
 # silently. Sourced from settings (default 3) so it's tunable without a code

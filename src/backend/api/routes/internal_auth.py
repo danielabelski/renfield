@@ -123,7 +123,7 @@ async def verify_token(
         try:
             async with AsyncSessionLocal() as db:
                 user = await get_user_by_id(db, user_id_int)
-        except Exception as e:  # noqa: BLE001 — DB outage closes voice fail-safe
+        except Exception as e:
             logger.warning("verify_token: user lookup failed: %s", e)
             raise _unauthorized() from e
 

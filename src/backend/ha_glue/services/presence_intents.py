@@ -13,10 +13,8 @@ AND presence is enabled.
 
 from __future__ import annotations
 
-from services.intent_registry import IntegrationIntents, IntentDef, IntentParam
-
 from ha_glue.utils.config import ha_glue_settings
-
+from services.intent_registry import IntegrationIntents, IntentDef, IntentParam
 
 PRESENCE_INTENTS = IntegrationIntents(
     integration_name="presence",

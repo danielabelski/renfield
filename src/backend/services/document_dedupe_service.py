@@ -36,10 +36,8 @@ Scope + safety:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-
 from datetime import UTC, datetime
 
-from loguru import logger
 from sqlalchemy import and_, exists, func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession

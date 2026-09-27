@@ -19,13 +19,12 @@ Tests:
 
 import base64
 import json
-from datetime import datetime, UTC
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from ha_glue.services.paperless_audit_service import PaperlessAuditService
-
 
 # ============================================================================
 # Fixtures
@@ -2280,8 +2279,9 @@ class TestApiRouteHelpers:
     @pytest.mark.unit
     def test_get_service_raises_503(self):
         """_get_service should raise 503 when service not in app state."""
-        from ha_glue.api.routes.paperless_audit import _get_service
         from fastapi import HTTPException
+
+        from ha_glue.api.routes.paperless_audit import _get_service
 
         mock_request = MagicMock()
         mock_request.app.state = MagicMock(spec=[])  # no paperless_audit attr

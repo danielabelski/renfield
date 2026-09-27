@@ -5,9 +5,9 @@ Tests for DiscoveredServer dataclass and ServiceDiscovery helper behavior,
 including the ws_url property and availability checks when zeroconf is absent.
 """
 
-import pytest
 from unittest.mock import patch
 
+import pytest
 from renfield_satellite.network.discovery import DiscoveredServer, ServiceDiscovery
 
 

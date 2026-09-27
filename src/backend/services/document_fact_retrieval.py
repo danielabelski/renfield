@@ -39,7 +39,6 @@ from services.fts_languages import build_tsquery_union_sql
 from services.lexical_retrieval import _significant_tokens
 from utils.config import settings
 
-
 # Rank floor for rows that match ONLY via the identifier-ILIKE branch (no FTS
 # hit). Small positive constant so an exact-identifier match always sorts above
 # nothing but below any genuine FTS relevance score.
@@ -163,7 +162,7 @@ class DocumentFactRetrieval:
         except (OperationalError, ProgrammingError):
             logger.error(f"🔍 {label}: operational DB error — re-raising (not masking as empty)")
             raise
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"🔍 {label} failed (ignored): {e}")
             return []
 

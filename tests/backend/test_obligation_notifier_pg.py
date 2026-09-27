@@ -14,7 +14,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import Atom, Document, DocumentFact, Notification, Role, User
+from models.database import Atom, Document, DocumentFact, Role, User
 from services.obligation_deadline_notifier import (
     ObligationDeadlineNotifier,
     current_milestone,
@@ -237,7 +237,7 @@ class TestConfirmEndpoints:
     async def test_confirm_then_reopen_roundtrip(self, pg_db_session, monkeypatch):
         monkeypatch.setattr(settings, "auth_enabled", True)
         _commit_as_flush(pg_db_session, monkeypatch)
-        from api.routes.atoms import confirm_obligation, reopen_obligation, get_obligations
+        from api.routes.atoms import confirm_obligation, get_obligations, reopen_obligation
         owner = await _make_user(pg_db_session, "ep_owner")
         fid = await _mk_obligation(pg_db_session, owner, ob_date=TODAY + dt.timedelta(days=3))
 
@@ -261,6 +261,7 @@ class TestConfirmEndpoints:
         monkeypatch.setattr(settings, "auth_enabled", True)
         _commit_as_flush(pg_db_session, monkeypatch)
         from fastapi import HTTPException
+
         from api.routes.atoms import confirm_obligation
         owner = await _make_user(pg_db_session, "ep_own2")
         peer = await _make_user(pg_db_session, "ep_peer2")

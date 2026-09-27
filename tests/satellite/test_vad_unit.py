@@ -10,11 +10,11 @@ Tests for renfield_satellite.audio.vad.VoiceActivityDetector with RMS backend:
 - is_speech() delegates to correct backend
 """
 
-import numpy as np
-import pytest
 from unittest.mock import patch
 
-from renfield_satellite.audio.vad import VoiceActivityDetector, VADBackend
+import numpy as np
+import pytest
+from renfield_satellite.audio.vad import VADBackend, VoiceActivityDetector
 
 
 class TestVADConstructor:

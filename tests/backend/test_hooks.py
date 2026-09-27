@@ -1,6 +1,5 @@
 """Tests for the async hook system (utils/hooks.py)."""
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

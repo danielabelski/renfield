@@ -236,8 +236,8 @@ class TestIrkPushEnrollmentGate:
     async def test_broadcast_push_respects_enrollment_auth(self, monkeypatch):
         """push_macs_to_satellites is the second IRK path — must also gate on
         per-connection enrollment auth when enrollment is on."""
-        from unittest.mock import AsyncMock
         from types import SimpleNamespace
+        from unittest.mock import AsyncMock
 
         import ha_glue.services.satellite_manager as sm
         monkeypatch.setattr(settings, "satellite_enrollment_enabled", True)

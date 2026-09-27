@@ -27,13 +27,13 @@ from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 from utils.config import settings
 
 __all__ = [
-    "encrypt_secret",
+    "InvalidToken",
     "decrypt_secret",
-    "rotate_secret",
+    "encrypt_secret",
     "is_current_key",
     "previous_key_count",
     "reset_key_cache",
-    "InvalidToken",
+    "rotate_secret",
 ]
 
 logger = logging.getLogger(__name__)

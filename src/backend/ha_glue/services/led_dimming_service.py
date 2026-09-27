@@ -53,7 +53,7 @@ class LedDimmingService:
 
         try:
             night = is_night()
-        except Exception:  # noqa: BLE001 — never break startup on a clock error
+        except Exception:
             logger.opt(exception=True).warning(
                 "LedDimmingService: is_night() failed, assuming day"
             )
@@ -101,7 +101,7 @@ class LedDimmingService:
             try:
                 await sat.websocket.send_json(message)
                 sent += 1
-            except Exception as e:  # noqa: BLE001 — one dead link must not break the rest
+            except Exception as e:
                 logger.warning(
                     f"💡 Failed to push LED brightness to {sat.satellite_id}: {e}"
                 )

@@ -141,8 +141,8 @@ class TestCookieHelpers:
 # CSRF middleware (double-submit)
 # =============================================================================
 def _csrf_client(monkeypatch, *, enabled=True):
-    from main import CSRFMiddleware
     import main as m
+    from main import CSRFMiddleware
     monkeypatch.setattr(m.settings, "auth_cookie_enabled", enabled)
     app = FastAPI()
     app.add_middleware(CSRFMiddleware)
@@ -255,6 +255,7 @@ async def test_ws_scoped_token_rejected_on_rest(monkeypatch):
     the REST API (only the WS handshake) — get_current_user rejects it before any
     DB use, so db=None is safe here."""
     from fastapi import HTTPException
+
     from services import auth_service as a
     monkeypatch.setattr(a.settings, "auth_enabled", True)
     ws_token = a.create_ws_token_jwt(user_id=1, token_epoch=0)
@@ -270,6 +271,7 @@ class TestVoiceFaucetToken:
     @pytest.mark.unit
     def test_minter_voice_scope(self):
         from jose import jwt
+
         from services.auth_service import ALGORITHM, WS_FAUCET_SCOPES, create_ws_token_jwt
         from utils.config import settings
         assert "voice" in WS_FAUCET_SCOPES
@@ -280,6 +282,7 @@ class TestVoiceFaucetToken:
     @pytest.mark.unit
     def test_minter_default_is_ws(self):
         from jose import jwt
+
         from services.auth_service import ALGORITHM, create_ws_token_jwt
         from utils.config import settings
         p = jwt.decode(
@@ -298,6 +301,7 @@ class TestVoiceFaucetToken:
     async def test_voice_token_rejected_on_rest(self, monkeypatch):
         """A harvested scope:voice token must NOT work against the REST API."""
         from fastapi import HTTPException
+
         from services import auth_service as a
         monkeypatch.setattr(a.settings, "auth_enabled", True)
         tok = a.create_ws_token_jwt(1, 0, scope="voice")
@@ -324,6 +328,7 @@ class TestVoiceFaucetToken:
         WS auth off → {token:None}."""
         from fastapi import HTTPException
         from jose import jwt
+
         from main import create_ws_token
         from services import auth_service as a
         from utils.config import settings
@@ -352,6 +357,7 @@ class TestVoiceFaucetToken:
         """internal_auth.verify accepts a scope:voice token (the voice-server path)
         — it only rejects scope:ws."""
         from unittest.mock import patch
+
         from api.routes.internal_auth import VerifyRequest, verify_token
         from services import auth_service as a
         monkeypatch.setattr(a.settings, "auth_enabled", True)
@@ -397,6 +403,7 @@ class TestRefreshCookieDualRead:
 
     async def test_refresh_reads_cookie_when_body_absent(self, db_session, monkeypatch):
         from unittest.mock import patch
+
         from api.routes.auth import refresh_token
         from services import auth_service
         from services.auth_service import create_refresh_token

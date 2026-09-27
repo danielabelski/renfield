@@ -10,7 +10,6 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import EMBEDDING_DIMENSION, KGEntity, Role, User

@@ -58,13 +58,14 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship
 
-from models.database import Base, _utcnow
-
 # Ensure User is registered with Base.metadata before ha_glue classes that
 # FK into users.id are defined. Importing the class triggers registration
 # as a side effect of the decorator-less declarative mapping.
-from models.database import User  # noqa: F401 — side-effect import
-
+from models.database import (
+    Base,
+    User,  # noqa: F401 — side-effect import
+    _utcnow,
+)
 
 # ---------------------------------------------------------------------------
 # CameraEvent — Frigate event log

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from models.database import Document, KnowledgeBase, Project, User
+from models.database import Document, KnowledgeBase, User
 from utils.config import settings
 
 pytestmark = [pytest.mark.asyncio]

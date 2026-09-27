@@ -42,8 +42,7 @@ if not (_runner_dir / "memory_v1_baseline.py").exists():
 if str(_runner_dir) not in sys.path:
     sys.path.insert(0, str(_runner_dir))
 
-import memory_v1_baseline as runner  # noqa: E402
-
+import memory_v1_baseline as runner
 
 # ---------------------------------------------------------------------------
 # Fixtures

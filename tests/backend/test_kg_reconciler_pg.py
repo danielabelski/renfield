@@ -28,8 +28,8 @@ from models.database import (
     Role,
     User,
 )
-from services.knowledge_graph_service import KnowledgeGraphService
 from services.kg_reconciler_service import _RECONCILER_LOCK_NS, KgReconcilerService
+from services.knowledge_graph_service import KnowledgeGraphService
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
 

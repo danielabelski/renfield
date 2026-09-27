@@ -38,13 +38,12 @@ _ANTI_DASHBOARD = re.compile(
 
 from services.prompt_manager import prompt_manager
 from utils.config import settings
-from utils.metrics import record_router_fallback
 from utils.llm_client import (
     extract_response_content,
-    get_agent_client,
     get_classification_chat_kwargs,
     get_dedicated_client,
 )
+from utils.metrics import record_router_fallback
 
 if TYPE_CHECKING:
     from services.mcp_client import MCPManager

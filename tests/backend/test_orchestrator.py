@@ -11,7 +11,7 @@ import pytest
 if "ollama" not in sys.modules:
     try:
         import ollama  # noqa: F401
-    except Exception:  # noqa: BLE001
+    except Exception:
         sys.modules["ollama"] = MagicMock()
 
 from services.orchestrator import QueryOrchestrator
@@ -132,12 +132,11 @@ class TestDetectMultiDomain:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_timeout_returns_none(self):
-        import asyncio
         roles = [_make_role("smart_home"), _make_role("media")]
         router = _make_router(roles)
         ollama = MagicMock()
         ollama.client = AsyncMock()
-        ollama.client.chat = AsyncMock(side_effect=asyncio.TimeoutError())
+        ollama.client.chat = AsyncMock(side_effect=TimeoutError())
         orchestrator = QueryOrchestrator(router, MagicMock())
 
         with patch("services.orchestrator.prompt_manager") as pm, \
@@ -277,8 +276,8 @@ class TestOrchestrationHooks:
         semantics handlers would have to guard against. See the
         orchestrator-uplift design doc for the rationale.
         """
-        from utils.hooks import register_hook
         from services.agent_service import AgentStep
+        from utils.hooks import register_hook
 
         captured = {"pre": [], "post": []}
 
@@ -323,8 +322,8 @@ class TestOrchestrationHooks:
     @pytest.mark.asyncio
     async def test_post_hook_card_emitted_as_step(self):
         """A post_orchestration handler returning {'card': ...} yields a card step."""
-        from utils.hooks import register_hook
         from services.agent_service import AgentStep
+        from utils.hooks import register_hook
 
         card_payload = {"type": "AdaptiveCard", "version": "1.5", "body": [{"type": "TextBlock", "text": "hi"}]}
 
@@ -360,8 +359,8 @@ class TestOrchestrationHooks:
     @pytest.mark.asyncio
     async def test_post_hook_first_card_wins(self):
         """When multiple handlers return a card, only the first lands as a step."""
-        from utils.hooks import register_hook
         from services.agent_service import AgentStep
+        from utils.hooks import register_hook
 
         async def first(**kw):
             return {"card": {"version": "1.5", "marker": "first"}}
@@ -397,8 +396,8 @@ class TestOrchestrationHooks:
     @pytest.mark.asyncio
     async def test_post_hook_failure_does_not_break_orchestration(self):
         """A raising hook is logged and ignored, final_answer still streams."""
-        from utils.hooks import register_hook
         from services.agent_service import AgentStep
+        from utils.hooks import register_hook
 
         async def broken_handler(**kw):
             raise RuntimeError("boom")
@@ -713,8 +712,8 @@ class TestSubAgentHooks:
     @pytest.mark.asyncio
     async def test_pre_sub_agent_fires_with_step_role_registry(self):
         """pre_sub_agent receives the step dict, role name, and tool_registry."""
-        from utils.hooks import register_hook
         from services.agent_service import AgentStep
+        from utils.hooks import register_hook
 
         captured = []
 
@@ -754,8 +753,8 @@ class TestSubAgentHooks:
     @pytest.mark.asyncio
     async def test_post_sub_agent_fires_with_completed_result(self):
         """post_sub_agent receives the populated result dict (role, query, answer, steps)."""
-        from utils.hooks import register_hook
         from services.agent_service import AgentStep
+        from utils.hooks import register_hook
 
         captured = []
 
@@ -796,8 +795,8 @@ class TestSubAgentHooks:
     @pytest.mark.asyncio
     async def test_post_sub_agent_return_dicts_merged_into_plugin_data(self):
         """Each handler's return-dict is merged into result.plugin_data."""
-        from utils.hooks import register_hook
         from services.agent_service import AgentStep
+        from utils.hooks import register_hook
 
         async def first(**kw):
             return {"contacts": [{"name": "Alice"}]}
@@ -841,8 +840,8 @@ class TestSubAgentHooks:
     @pytest.mark.asyncio
     async def test_pre_sub_agent_can_mutate_tool_registry(self):
         """A handler can mutate the per-task registry (e.g. tool pre-selection)."""
-        from utils.hooks import register_hook
         from services.agent_service import AgentStep
+        from utils.hooks import register_hook
 
         async def preselect_handler(**kw):
             registry = kw["tool_registry"]
@@ -957,8 +956,8 @@ class TestSubAgentHooks:
     @pytest.mark.asyncio
     async def test_pre_sub_agent_failure_does_not_break_sub_agent(self):
         """A raising pre_sub_agent is logged and ignored — the agent still runs."""
-        from utils.hooks import register_hook
         from services.agent_service import AgentStep
+        from utils.hooks import register_hook
 
         async def broken(**kw):
             raise RuntimeError("preselect failed")
@@ -991,8 +990,8 @@ class TestSubAgentHooks:
     @pytest.mark.asyncio
     async def test_post_sub_agent_failure_does_not_break_sub_agent(self):
         """A raising post_sub_agent leaves plugin_data empty but doesn't crash."""
-        from utils.hooks import register_hook
         from services.agent_service import AgentStep
+        from utils.hooks import register_hook
 
         async def broken(**kw):
             raise RuntimeError("drain failed")
@@ -1414,8 +1413,8 @@ class TestVanillaRenfieldBackwardsCompat:
     @pytest.mark.asyncio
     async def test_pre_and_post_sub_agent_each_fire_once_per_sub_agent(self):
         """pre_sub_agent and post_sub_agent each fire exactly once per ``_run_sub_agent`` call."""
-        from utils.hooks import register_hook
         from services.agent_service import AgentStep
+        from utils.hooks import register_hook
 
         pre_calls: list[dict] = []
         post_calls: list[dict] = []
@@ -1466,8 +1465,8 @@ class TestVanillaRenfieldBackwardsCompat:
     @pytest.mark.asyncio
     async def test_post_orchestration_fires_with_zero_handlers_no_card_step(self):
         """post_orchestration fires once; with no handler returning a card, no card step yields."""
-        from utils.hooks import register_hook
         from services.agent_service import AgentStep
+        from utils.hooks import register_hook
 
         spy_calls: list[dict] = []
 
@@ -1512,8 +1511,8 @@ class TestVanillaRenfieldBackwardsCompat:
         registered ``pre_orchestration`` handler is NOT called from
         within ``run_orchestrated``.
         """
-        from utils.hooks import register_hook
         from services.agent_service import AgentStep
+        from utils.hooks import register_hook
 
         pre_calls: list[dict] = []
 
@@ -1801,8 +1800,8 @@ class TestPluginDataMergeSemantics:
     @pytest.mark.asyncio
     async def test_list_shaped_field_concatenated_across_handlers(self):
         """Two handlers contributing to ``contacts`` produce a merged list."""
-        from utils.hooks import register_hook
         from services.agent_service import AgentStep
+        from utils.hooks import register_hook
 
         async def first(**kw):
             return {"contacts": [{"name": "Alice"}]}
@@ -1841,8 +1840,8 @@ class TestPluginDataMergeSemantics:
     @pytest.mark.asyncio
     async def test_non_list_field_collision_last_writer_wins(self):
         """Non-list keys: second handler overwrites first."""
-        from utils.hooks import register_hook
         from services.agent_service import AgentStep
+        from utils.hooks import register_hook
 
         async def first(**kw):
             return {"telemetry_run_id": "run-1"}
@@ -2295,13 +2294,12 @@ class TestSynthesisHooks:
         timeout (str(asyncio.TimeoutError()) is empty) and the fallback path
         must concatenate sub-agent answers so the user still gets a response.
         Regression guard for issue #182."""
-        import asyncio
 
         orchestrator = QueryOrchestrator(_make_router([]), MagicMock())
 
         ollama = MagicMock()
         ollama.client = AsyncMock()
-        ollama.client.chat = AsyncMock(side_effect=asyncio.TimeoutError())
+        ollama.client.chat = AsyncMock(side_effect=TimeoutError())
 
         sub_results = [
             {"role": "release", "query": "q1", "answer": "release answer"},

@@ -365,6 +365,6 @@ async def _safe_entity_map(producer: str) -> list[dict]:
     try:
         from ha_glue.integrations.homeassistant import HomeAssistantClient
         return await HomeAssistantClient().get_entity_map()
-    except Exception as e:  # noqa: BLE001 — HA down must degrade to prose, not crash
+    except Exception as e:
         logger.warning(f"smarthome_artifacts[{producer}]: HA entity map fetch failed: {e}")
         return []

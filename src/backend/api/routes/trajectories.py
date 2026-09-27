@@ -15,8 +15,8 @@ Routes (prefix `/api/trajectories` added by main.py):
   GET  /stats                — aggregate counts by outcome + last 7d
 """
 
-from datetime import datetime, timedelta, UTC
 import json
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request

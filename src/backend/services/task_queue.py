@@ -303,7 +303,7 @@ class DocumentTaskQueue:
                 counts = await self._pending_delivery_counts()
                 for e in claimed:
                     e.delivery_count = counts.get(e.entry_id, e.delivery_count)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning(
                     f"DocumentTaskQueue: delivery-count fetch failed ({exc}); "
                     f"reclaimed entries proceed without a poison stamp"
@@ -413,7 +413,7 @@ async def document_worker_is_alive() -> bool:
 
     try:
         value = await get_redis().get(DOCUMENT_WORKER_HEARTBEAT_KEY)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         # A Redis outage masks the worker's real state; treat as dead so we
         # fail loudly rather than silently enqueue into a broken Redis.
         logger.warning(f"heartbeat check failed: {e}; treating worker as unavailable")
@@ -467,7 +467,7 @@ async def pdf_split_worker_is_alive() -> bool:
 
     try:
         value = await get_redis().get(PDF_SPLIT_WORKER_HEARTBEAT_KEY)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(
             f"pdfsplit heartbeat check failed: {e}; treating worker as unavailable"
         )

@@ -394,10 +394,11 @@ class TestKnowledgeBaseAPI:
         permissions for N KBs, `get_user_kb_permission_levels` is called at
         most ONCE — not N times (the pre-fix behavior that fired one
         atom_explicit_grants query per KB in the response loop)."""
-        from api.routes import knowledge as route_mod
-        from services import kb_shares_service
         from types import SimpleNamespace
         from unittest.mock import AsyncMock, MagicMock
+
+        from api.routes import knowledge as route_mod
+        from services import kb_shares_service
 
         call_counter = {"n": 0}
 

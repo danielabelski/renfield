@@ -16,6 +16,7 @@ _missing_stubs = [
     "docling.datamodel.base_models",
 ]
 import importlib as _importlib
+
 for _mod in _missing_stubs:
     # Stub ONLY when genuinely unimportable — unconditional stubbing
     # poisons sys.modules for the rest of the session, breaking later
@@ -24,7 +25,7 @@ for _mod in _missing_stubs:
         continue
     try:
         _importlib.import_module(_mod)
-    except Exception:  # noqa: BLE001
+    except Exception:
         sys.modules[_mod] = MagicMock()
 
 from unittest.mock import patch
@@ -599,7 +600,7 @@ def test_ocr_engine_easyocr_legacy():
 
 # ── VLM re-OCR fallback (rotated/poor scans that Tesseract garbles) ──────────
 
-import pytest as _pytest  # noqa: E402
+import pytest as _pytest
 
 _VLM_GARBLE = (
     "Rechnung KIJ Betrag Bez:-ihl unq Maa KNr lUGB Datum i;5.Lei "

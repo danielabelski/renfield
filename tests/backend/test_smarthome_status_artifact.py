@@ -19,7 +19,6 @@ from ha_glue.services.smarthome_status import (
 )
 from services.artifact_service import validate_artifacts
 
-
 # --- shared fixtures --------------------------------------------------------
 
 _ENTITY_MAP = [

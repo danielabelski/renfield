@@ -24,7 +24,8 @@ code review and a CI lint rule (lint not yet built; will land in Lane C).
 """
 from __future__ import annotations
 
-from typing import Protocol, Sequence
+from collections.abc import Sequence
+from typing import Protocol
 
 from services.atom_types import Atom, AtomMatch
 

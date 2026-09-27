@@ -118,7 +118,7 @@ async def consume_handoff_code(code: str) -> HandoffSession | None:
         return None
     try:
         raw = await get_redis().getdel(_key(code))
-    except Exception as e:  # noqa: BLE001 — never leak the store's internals to the caller
+    except Exception as e:
         logger.warning(f"sso handoff: GETDEL failed: {e}")
         return None
     if not raw:

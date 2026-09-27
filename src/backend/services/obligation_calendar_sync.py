@@ -123,7 +123,7 @@ class ObligationCalendarSync:
             res = await self.mcp.execute_tool(
                 tool, args, user_permissions=_PERMS, user_id=user_id,
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"calendar sync: {tool} raised: {e}")
             return None
         if not res or not res.get("success"):
@@ -276,7 +276,7 @@ class ObligationCalendarSync:
                                 report.errors += 1
                         else:
                             report.errors += 1
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 report.errors += 1
                 logger.warning(f"calendar sync: fact {fact_id} create/update failed: {e}")
                 await self.db.rollback()
@@ -296,7 +296,7 @@ class ObligationCalendarSync:
         try:
             await self.db.commit()
             return True
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"calendar sync: commit failed: {e}")
             await self.db.rollback()
             return False
@@ -312,7 +312,7 @@ class ObligationCalendarSync:
                 _DELETE, {"calendar": calendar, "event_id": event_id},
                 user_permissions=_PERMS, user_id=user_id,
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"calendar sync: delete {event_id} raised: {e}")
             return "fail"
         if res and res.get("success"):
@@ -369,5 +369,5 @@ async def reconcile_all_users(mcp_manager: Any) -> None:
                         f"Calendar sync user {uid}: +{rep.created} ~{rep.updated} "
                         f"-{rep.deleted} err={rep.errors}"
                     )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"Calendar sync failed for user {uid}: {e}")

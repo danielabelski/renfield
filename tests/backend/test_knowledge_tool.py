@@ -21,7 +21,6 @@ import pytest
 import services.document_fact_retrieval  # noqa: F401
 from services.knowledge_tool import knowledge_search
 
-
 # ============================================================================
 # Helpers
 # ============================================================================

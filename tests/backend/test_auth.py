@@ -255,6 +255,7 @@ class TestRefreshTokenRotation:
         # slowapi's @limiter.limit on /refresh requires a real starlette Request
         # (keyed by client IP; conftest resets the limiter between tests).
         from starlette.requests import Request
+
         from services.api_rate_limiter import limiter as app_limiter
         state = type("S", (), {})()
         state.limiter = app_limiter

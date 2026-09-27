@@ -20,7 +20,6 @@ import pytest
 from models.database import EMBEDDING_DIMENSION, KnowledgeBase
 from services.rag_service import RAGService
 
-
 GARBAGE = "- r . : ■ { - n ; ; : t » - , : :' r ' ● r : ; '\nydl .'-Ti'"
 CLEAN = "Der Benutzer und Jutta sind seit 26 Jahren verheiratet."
 

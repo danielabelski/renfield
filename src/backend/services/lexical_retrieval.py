@@ -44,7 +44,6 @@ from services.fts_languages import FTS_LANGUAGES, build_tsquery_union_sql
 from utils.config import settings
 from utils.content_quality import is_low_quality_text
 
-
 # Drop short tokens (≤2 chars) and a bare-minimum German+English stop list.
 # Lexical retrieval on "the" or "und" produces matches with no signal;
 # this is just enough to keep the LIKE/tsquery patterns sharp without
@@ -190,7 +189,7 @@ class LexicalRetrieval:
         }
         try:
             rows = (await self.db.execute(sql, params)).fetchall()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             # Don't let a malformed query take the brain page down — we
             # have a vector retriever as the primary path.
             logger.warning(f"🔍 Lexical chunk search failed (ignored): {e}")
@@ -344,7 +343,7 @@ class LexicalRetrieval:
 
         try:
             rows = (await self.db.execute(sql, params)).fetchall()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"🔍 Lexical memory search failed (ignored): {e}")
             return []
 

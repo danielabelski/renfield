@@ -45,7 +45,7 @@ from __future__ import annotations
 
 import math
 import time
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 
 from loguru import logger
 from sqlalchemy import func, select, text
@@ -54,7 +54,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.database import (
     ATOM_TYPE_PROCEDURAL_SKILL,
     EMBEDDING_DIMENSION,
-    ProceduralSkill,
     SKILL_SOURCE_AUTO_EXTRACTED,
     SKILL_SOURCE_SEED,
     SKILL_SOURCE_USER_CREATED,
@@ -62,9 +61,10 @@ from models.database import (
     SKILL_STATUS_ARCHIVED,
     SKILL_STATUS_DRAFT,
     SKILL_STATUSES,
-    SkillWouldHaveInjectedLog,
     TIER_PUBLIC,
     TIER_SELF,
+    ProceduralSkill,
+    SkillWouldHaveInjectedLog,
 )
 from services.atom_service import AtomService
 from utils.config import settings

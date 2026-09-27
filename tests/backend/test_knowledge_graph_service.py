@@ -19,7 +19,6 @@ from services.knowledge_graph_service import (
     kg_post_document_ingest_hook,
 )
 
-
 # ==========================================================================
 # §2 Phase 0 — speaker-pseudonym stripping for meeting transcripts
 # ==========================================================================

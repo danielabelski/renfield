@@ -235,7 +235,7 @@ async def authenticate_websocket(
         try:
             async with AsyncSessionLocal() as db:
                 satellite_id = await authorize_handshake(db, token, client_ip)
-        except Exception as e:  # noqa: BLE001 — fail CLOSED, never admit on a DB error
+        except Exception as e:
             logger.error(f"Satellite handshake auth errored (fail-closed): {e}")
             return None
         if satellite_id is None:
@@ -273,7 +273,7 @@ async def authenticate_websocket(
         from services.auth_service import decode_token
 
         payload = decode_token(token)
-    except Exception as e:  # noqa: BLE001 — decode_token shouldn't raise, but defend
+    except Exception as e:
         logger.debug(f"WebSocket JWT decode raised unexpectedly: {e}")
 
     # A "voice"-scoped faucet token is ONLY for the external voice-server's
@@ -321,7 +321,7 @@ async def authenticate_websocket(
 
             async with AsyncSessionLocal() as db:
                 user = await get_user_by_id(db, user_id_int)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"WebSocket JWT user lookup failed: {e}")
             return None
 

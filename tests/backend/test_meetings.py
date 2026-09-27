@@ -382,6 +382,7 @@ class TestMeetingRoutes:
         self, async_client, monkeypatch, tmp_path, db_session
     ):
         import os
+
         from models.database import User
 
         _enable(monkeypatch, tmp_path, auth=True)
@@ -1137,6 +1138,7 @@ class TestReviewFixes:
         self, async_client, db_session, monkeypatch, tmp_path
     ):
         import glob as _glob
+
         from sqlalchemy import select as _sel
 
         from api.routes import meetings as meetings_mod
@@ -1346,6 +1348,7 @@ class TestMeetingProjectPatch:
 
     async def test_patch_rejects_non_owned_project(self, db_session: AsyncSession, monkeypatch):
         from fastapi import HTTPException
+
         from api.routes.meetings import UpdateMeetingRequest, update_meeting
         from models.database import Project
 
@@ -1369,6 +1372,7 @@ class TestMeetingProjectPatch:
 
     async def test_patch_owner_gated_meeting(self, db_session: AsyncSession, monkeypatch):
         from fastapi import HTTPException
+
         from api.routes.meetings import UpdateMeetingRequest, update_meeting
 
         monkeypatch.setattr(settings, "meeting_transcription_enabled", True)

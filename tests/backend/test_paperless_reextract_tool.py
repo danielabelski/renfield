@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 import services.paperless_reextract_tool as rt
-from models.permissions import Permission
 
 pytestmark = [pytest.mark.unit]
 
@@ -71,7 +70,7 @@ async def test_gapfill_skips_already_complete_and_patches_empty(monkeypatch):
     mgr.execute_tool = AsyncMock(side_effect=_execute)
 
     # extractor returns a document_type for doc 22
-    from services.paperless_metadata_extractor import PaperlessMetadata, ExtractionResult
+    from services.paperless_metadata_extractor import ExtractionResult, PaperlessMetadata
     inst = MagicMock()
     inst.extract_from_doc_text = AsyncMock(
         return_value=ExtractionResult(metadata=PaperlessMetadata(document_type="Mahnung"), doc_text="t")
@@ -103,7 +102,7 @@ async def test_no_docling_only_extract_from_doc_text(monkeypatch):
     mgr = MagicMock()
     mgr.execute_tool = AsyncMock(return_value=_envelope({"correspondent": "", "document_type": "", "tags": []}))
 
-    from services.paperless_metadata_extractor import PaperlessMetadata, ExtractionResult
+    from services.paperless_metadata_extractor import ExtractionResult, PaperlessMetadata
     inst = MagicMock()
     inst.extract_from_doc_text = AsyncMock(return_value=ExtractionResult(metadata=PaperlessMetadata(), doc_text="t"))
     inst.extract_from_file = AsyncMock(side_effect=AssertionError("extract_from_file must NOT be called (Docling OOM)"))

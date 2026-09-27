@@ -29,7 +29,6 @@ import os
 import pytest
 from playwright.sync_api import Page, expect, sync_playwright
 
-
 BASE_URL = os.environ.get("RENFIELD_E2E_URL", "")
 HEADLESS = os.environ.get("RENFIELD_E2E_HEADLESS", "true").lower() != "false"
 

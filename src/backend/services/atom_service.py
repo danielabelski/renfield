@@ -39,13 +39,12 @@ ASCII upsert flow:
 """
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from loguru import logger
-from sqlalchemy import delete, select, text, update
+from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
@@ -53,11 +52,12 @@ from models.database import (
     ATOM_TYPE_KB_DOCUMENT,
     ATOM_TYPE_KG_EDGE,
     ATOM_TYPE_KG_NODE,
+)
+from models.database import (
     Atom as AtomModel,
 )
 from services.atom_types import Atom
 from services.circle_resolver import CircleResolver, atom_from_orm
-
 
 # Source table → discriminator atom_type → row id column map.
 # Used by update_tier to dispatch the denormalized circle_tier write.

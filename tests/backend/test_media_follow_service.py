@@ -11,7 +11,6 @@ import pytest
 
 from ha_glue.services.media_follow_service import (
     MediaFollowService,
-    MediaSession,
     MediaType,
     SessionState,
 )

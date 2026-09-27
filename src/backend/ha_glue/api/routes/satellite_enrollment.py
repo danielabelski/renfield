@@ -17,12 +17,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ha_glue.services import satellite_enrollment_service as enroll_svc
+from ha_glue.services.satellite_manager import get_satellite_manager
 from models.database import Satellite, User
 from models.permissions import Permission
 from services.auth_service import require_permission
 from services.database import get_db
-from ha_glue.services import satellite_enrollment_service as enroll_svc
-from ha_glue.services.satellite_manager import get_satellite_manager
 from utils.config import settings
 
 router = APIRouter(prefix="/api/satellite-enrollment")

@@ -2,10 +2,10 @@
 E2E Browser Test: WakeWord (Ear Icon) on renfield.local
 Troubleshoots the error that occurs when clicking the ear icon.
 """
-from playwright.sync_api import sync_playwright
 import os
-import json
 import time
+
+from playwright.sync_api import sync_playwright
 
 SCREENSHOTS_DIR = os.environ.get(
     "RENFIELD_TEST_SCREENSHOTS_DIR",
@@ -94,7 +94,7 @@ def test_wakeword_click():
                     print(f"    [{i}] aria='{aria}' title='{title}' text='{text}' html={inner}...")
                     if "wake" in aria.lower() or "wake" in title.lower() or "ohr" in aria.lower() or "ear" in aria.lower():
                         ear_button = btn
-                        print(f"    -> MATCH!")
+                        print("    -> MATCH!")
                         break
             if ear_button:
                 break
@@ -139,7 +139,7 @@ def test_wakeword_click():
 
         # 4. Clear console logs and click
         console_logs.clear()
-        print(f"\nClicking ear button...")
+        print("\nClicking ear button...")
         ear_button.click()
 
         # 5. Wait for any error dialog/toast/modal to appear

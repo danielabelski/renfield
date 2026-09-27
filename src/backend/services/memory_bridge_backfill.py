@@ -127,7 +127,7 @@ async def run_backfill(db: AsyncSession, user_id: int | None = None, limit: int 
                 rep.created += 1
                 logger.info("created entity #%d %r (tier=%d) for memory #%d",
                             ent.id, m.subject_name, m.circle_tier, m.id)
-        except Exception as e:  # noqa: BLE001 — isolate one bad row, keep going
+        except Exception as e:
             await db.rollback()
             rep.failed += 1
             logger.warning("skip memory #%d subject=%r: %s", m.id, m.subject_name, e)

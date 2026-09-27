@@ -12,7 +12,6 @@ import pytest
 
 from services.widget_tools import render_list, render_table, weather_widget
 
-
 # --- render_table -----------------------------------------------------------
 
 @pytest.mark.unit

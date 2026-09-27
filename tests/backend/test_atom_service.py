@@ -14,7 +14,7 @@ All tests @pytest.mark.unit — no network, no DB engine.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 

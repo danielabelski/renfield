@@ -8,8 +8,9 @@ Tests for renfield_satellite.hardware.led.XVF3800LEDController:
 - Error handling
 """
 
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 
 
 class TestXVF3800LEDControllerInit:
@@ -72,7 +73,7 @@ class TestXVF3800LEDControllerPatterns:
     @pytest.mark.satellite
     @patch("subprocess.run")
     def test_set_pattern_listening(self, mock_run):
-        from renfield_satellite.hardware.led import XVF3800LEDController, LEDPattern
+        from renfield_satellite.hardware.led import LEDPattern, XVF3800LEDController
 
         ctrl = XVF3800LEDController(xvf_host_path="/bin/xvf_host")
         ctrl.set_pattern(LEDPattern.LISTENING)
@@ -84,7 +85,7 @@ class TestXVF3800LEDControllerPatterns:
     @pytest.mark.satellite
     @patch("subprocess.run")
     def test_set_pattern_boot_rainbow(self, mock_run):
-        from renfield_satellite.hardware.led import XVF3800LEDController, LEDPattern
+        from renfield_satellite.hardware.led import LEDPattern, XVF3800LEDController
 
         ctrl = XVF3800LEDController(xvf_host_path="/bin/xvf_host")
         ctrl.set_pattern(LEDPattern.BOOT)
@@ -97,7 +98,7 @@ class TestXVF3800LEDControllerPatterns:
     @pytest.mark.satellite
     @patch("subprocess.run")
     def test_set_pattern_idle_dim_blue_breath(self, mock_run):
-        from renfield_satellite.hardware.led import XVF3800LEDController, LEDPattern
+        from renfield_satellite.hardware.led import LEDPattern, XVF3800LEDController
 
         ctrl = XVF3800LEDController(xvf_host_path="/bin/xvf_host")
         ctrl.set_pattern(LEDPattern.IDLE)
@@ -109,7 +110,7 @@ class TestXVF3800LEDControllerPatterns:
     @pytest.mark.satellite
     @patch("subprocess.run")
     def test_set_pattern_off(self, mock_run):
-        from renfield_satellite.hardware.led import XVF3800LEDController, LEDPattern
+        from renfield_satellite.hardware.led import LEDPattern, XVF3800LEDController
 
         ctrl = XVF3800LEDController(xvf_host_path="/bin/xvf_host")
         ctrl._pattern = LEDPattern.IDLE  # Set non-OFF so change triggers
@@ -123,7 +124,7 @@ class TestXVF3800LEDControllerPatterns:
     @pytest.mark.satellite
     @patch("subprocess.run")
     def test_set_pattern_error_red(self, mock_run):
-        from renfield_satellite.hardware.led import XVF3800LEDController, LEDPattern
+        from renfield_satellite.hardware.led import LEDPattern, XVF3800LEDController
 
         ctrl = XVF3800LEDController(xvf_host_path="/bin/xvf_host")
         ctrl.set_pattern(LEDPattern.ERROR)
@@ -135,7 +136,7 @@ class TestXVF3800LEDControllerPatterns:
     @pytest.mark.satellite
     @patch("subprocess.run")
     def test_set_pattern_processing_breath_yellow(self, mock_run):
-        from renfield_satellite.hardware.led import XVF3800LEDController, LEDPattern
+        from renfield_satellite.hardware.led import LEDPattern, XVF3800LEDController
 
         ctrl = XVF3800LEDController(xvf_host_path="/bin/xvf_host")
         ctrl.set_pattern(LEDPattern.PROCESSING)
@@ -147,7 +148,7 @@ class TestXVF3800LEDControllerPatterns:
     @pytest.mark.satellite
     @patch("subprocess.run")
     def test_duplicate_pattern_skipped(self, mock_run):
-        from renfield_satellite.hardware.led import XVF3800LEDController, LEDPattern
+        from renfield_satellite.hardware.led import LEDPattern, XVF3800LEDController
 
         ctrl = XVF3800LEDController(xvf_host_path="/bin/xvf_host")
         ctrl.set_pattern(LEDPattern.LISTENING)
@@ -157,7 +158,7 @@ class TestXVF3800LEDControllerPatterns:
 
     @pytest.mark.satellite
     def test_current_pattern_tracks_state(self):
-        from renfield_satellite.hardware.led import XVF3800LEDController, LEDPattern
+        from renfield_satellite.hardware.led import LEDPattern, XVF3800LEDController
 
         ctrl = XVF3800LEDController(xvf_host_path="/bin/xvf_host")
         assert ctrl.current_pattern == LEDPattern.OFF
@@ -172,7 +173,7 @@ class TestXVF3800LEDControllerClose:
     @pytest.mark.satellite
     @patch("subprocess.run")
     def test_close_turns_off_leds(self, mock_run):
-        from renfield_satellite.hardware.led import XVF3800LEDController, LEDPattern
+        from renfield_satellite.hardware.led import LEDPattern, XVF3800LEDController
 
         ctrl = XVF3800LEDController(xvf_host_path="/bin/xvf_host")
         ctrl._pattern = LEDPattern.BOOT
@@ -190,7 +191,7 @@ class TestXVF3800LEDControllerErrors:
     @pytest.mark.satellite
     @patch("subprocess.run", side_effect=FileNotFoundError("xvf_host not found"))
     def test_subprocess_error_handled_gracefully(self, mock_run):
-        from renfield_satellite.hardware.led import XVF3800LEDController, LEDPattern
+        from renfield_satellite.hardware.led import LEDPattern, XVF3800LEDController
 
         ctrl = XVF3800LEDController(xvf_host_path="/bin/xvf_host")
         # Should not raise

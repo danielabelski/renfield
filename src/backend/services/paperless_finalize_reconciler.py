@@ -163,7 +163,7 @@ async def reconcile_pending_finalizes(mcp_manager: Any = None) -> None:
                 announce_pending=False,
             )
             reran += 1
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning(
                 "paperless-finalize-reconciler: re-finalize row {} failed: {}",
                 row["id"], exc,

@@ -5,7 +5,6 @@ built-in edit-not-delete, and next_run_at recompute on a schedule change. Auth i
 disabled in the test harness, so require_permission(ADMIN) short-circuits.
 """
 import pytest
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from models.database import SCHEDULE_KIND_CRON, SCHEDULE_KIND_INTERVAL, ScheduledTask

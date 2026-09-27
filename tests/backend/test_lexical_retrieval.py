@@ -12,7 +12,7 @@ exercises the token-pattern, stop-word, and result-shape logic.
 """
 from __future__ import annotations
 
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession

@@ -15,8 +15,8 @@ from enum import Enum
 
 from loguru import logger
 
-from utils.config import settings
 from ha_glue.utils.config import ha_glue_settings
+from utils.config import settings
 
 
 class MediaType(str, Enum):

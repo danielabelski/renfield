@@ -13,7 +13,7 @@ logic that DOES run on sqlite:
   - run_for_user: full pipeline returns CuratorReport
 """
 
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -22,10 +22,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
     EMBEDDING_DIMENSION,
-    ProceduralSkill,
-    Role,
     SKILL_SOURCE_AUTO_EXTRACTED,
     SKILL_SOURCE_SEED,
+    ProceduralSkill,
+    Role,
     User,
 )
 

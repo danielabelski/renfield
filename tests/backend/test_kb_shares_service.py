@@ -253,13 +253,13 @@ async def test_get_user_kb_permission_levels_none_returns_all_grants():
 # when RENFIELD_TEST_PG_URL is unset, matching the other @pytest.mark.database
 # Postgres tests.
 # ===========================================================================
-from sqlalchemy import text  # noqa: E402
-from sqlalchemy.ext.asyncio import (  # noqa: E402
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy.pool import NullPool  # noqa: E402
+from sqlalchemy.pool import NullPool
 
 
 def _pg_test_dsn() -> str | None:

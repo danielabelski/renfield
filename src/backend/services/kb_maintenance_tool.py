@@ -233,7 +233,7 @@ async def sweep_low_coverage_reindex(cap: int = 50, threshold: float | None = No
                 {"document_id": did, "force_ocr": False, "user_id": None, "trigger": "user_reindex"}
             )
             enqueued.append(did)
-        except Exception as e:  # noqa: BLE001 — one bad enqueue mustn't abort the batch
+        except Exception as e:
             logger.warning(f"low_coverage_reindex: enqueue failed for doc {did}: {e}")
 
     if enqueued:
@@ -487,7 +487,7 @@ async def ingest_status(params: dict, user_id: int | None = None) -> dict:
         queue_depth = None
         try:
             worker_alive, queue_depth = await ingest_worker_and_backlog()
-        except Exception as e:  # noqa: BLE001 - liveness is a nice-to-have
+        except Exception as e:
             logger.warning(f"ingest_status: worker/queue probe failed: {e}")
 
         pending = status_counts.get("pending", 0)
@@ -713,7 +713,7 @@ async def reindex_documents(
                     }
                 )
                 enqueued_ids.append(did)
-            except Exception as e:  # noqa: BLE001 - one bad enqueue mustn't abort the batch
+            except Exception as e:
                 logger.warning(f"reindex_documents: enqueue failed for doc {did}: {e}")
 
         # Had work but nothing could be enqueued → the queue is unreachable.
@@ -1213,7 +1213,7 @@ async def refile_to_paperless(
                     }
                 )
                 queued += 1
-            except Exception as e:  # noqa: BLE001 — one bad enqueue mustn't abort the batch
+            except Exception as e:
                 logger.warning(f"refile_to_paperless: enqueue failed for doc {doc_id}: {e}")
 
         # The docs are already flipped to 'pending', so even if every direct enqueue

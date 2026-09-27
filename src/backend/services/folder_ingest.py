@@ -100,7 +100,7 @@ class IngestMeta:
     mime: str | None = None
 
     @classmethod
-    def from_dict(cls, raw: dict) -> "IngestMeta":
+    def from_dict(cls, raw: dict) -> IngestMeta:
         filename = str(raw.get("filename") or raw.get("relpath") or "").strip()
         if not filename:
             raise ValueError("metadata is missing a filename")
@@ -345,7 +345,7 @@ async def ingest_document(
                 document_id=winner.id if winner else None,
                 detail="concurrent_in_progress",
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             _cleanup(file_path)
             logger.error(f"folder-ingest: create failed for {meta.filename!r}: {exc}")
             return IngestResult(IngestStatus.FAILED, detail="create_error")

@@ -13,12 +13,12 @@ from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
+    EMBEDDING_DIMENSION,
     MEMORY_CATEGORY_FACT,
     EpisodicMemory,
 )
 from utils.config import settings
 from utils.llm_client import get_embed_client
-from models.database import EMBEDDING_DIMENSION
 
 
 class EpisodicMemoryService:

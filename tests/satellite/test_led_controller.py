@@ -8,8 +8,9 @@ Tests for renfield_satellite.hardware.led.LEDController:
 - Dual-HAT compatibility (2-mic vs 4-mic)
 """
 
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import MagicMock, patch, PropertyMock
 
 
 class TestLEDControllerInit:
@@ -163,7 +164,7 @@ class TestEndFrame:
     @patch("renfield_satellite.hardware.led.spidev")
     def test_end_frame_uses_zero_bytes(self, mock_spidev):
         """_write() uses 0x00 end frame bytes (matching 4-mic HAT reference driver)."""
-        from renfield_satellite.hardware.led import LEDController, Color
+        from renfield_satellite.hardware.led import Color, LEDController
 
         mock_spi = MagicMock()
         mock_spidev.SpiDev.return_value = mock_spi

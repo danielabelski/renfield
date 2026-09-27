@@ -83,7 +83,8 @@ async def _user(db_session, uid: int):
     name users that existed nowhere — the ownership gate they assert was a
     comparison between two phantoms.
     """
-    from models.database import Role, User as _U
+    from models.database import Role
+    from models.database import User as _U
 
     role = (await db_session.execute(
         select(Role).where(Role.name == "branching-role")

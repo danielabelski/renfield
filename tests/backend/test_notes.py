@@ -179,7 +179,7 @@ async def test_resave_does_not_duplicate_link_entities_with_seeded_user(
     _enable(monkeypatch, auth=False)
     await _persist_user(db_session, 1, "owner")
 
-    def _note_entity_count() -> "object":
+    def _note_entity_count() -> object:
         return select(func.count()).select_from(KGEntity).where(KGEntity.entity_type == "note")
 
     alpha = (await async_client.post(

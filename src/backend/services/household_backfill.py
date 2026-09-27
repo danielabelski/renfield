@@ -92,7 +92,7 @@ class RunLog:
         }
 
     @classmethod
-    def from_json(cls, raw: dict[str, Any]) -> "RunLog":
+    def from_json(cls, raw: dict[str, Any]) -> RunLog:
         return cls(
             kg_atom_ids=list(raw.get("kg_atom_ids") or []),
             membership_pairs=[tuple(p) for p in (raw.get("membership_pairs") or [])],

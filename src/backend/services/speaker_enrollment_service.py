@@ -32,7 +32,6 @@ from models.database import Speaker, SpeakerCandidate, SpeakerEmbedding, User
 from services.speaker_service import get_speaker_service
 from utils.config import settings
 
-
 # Defense in depth behind the route gate: with speaker recognition off no
 # voiceprint (SpeakerEmbedding) is ever written, whoever calls these functions.
 _RECOGNITION_OFF_REASON = (

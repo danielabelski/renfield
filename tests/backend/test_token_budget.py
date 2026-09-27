@@ -1,7 +1,7 @@
 """Tests for Token Budget Enforcement -- progressive prompt reduction."""
 
 import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -10,7 +10,7 @@ import pytest
 if "ollama" not in sys.modules:
     try:
         import ollama  # noqa: F401
-    except Exception:  # noqa: BLE001
+    except Exception:
         sys.modules["ollama"] = MagicMock()
 
 from services.agent_service import AgentContext, AgentService, AgentStep

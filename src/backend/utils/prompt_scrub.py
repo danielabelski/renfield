@@ -28,7 +28,6 @@ from __future__ import annotations
 import re
 import unicodedata
 
-
 # ---------------------------------------------------------------- literal
 # Chat-template tokens — these are fixed-string sequences shipped by the
 # instruct templates of every major model family. Case sensitivity is

@@ -1493,6 +1493,7 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
         `?user_id=<anyone>` and exfiltrate the full entity set (review BLOCKING #8).
         """
         from sqlalchemy import text as sa_text
+
         from services.circle_sql import kg_entities_circles_filter
 
         query = select(KGEntity).where(KGEntity.is_active == True)  # noqa: E712
@@ -1562,6 +1563,7 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
     def _apply_entity_circle_filter(self, query, asker_id: int | None):
         """Append the auth-aware circle clause to a ``select(KGEntity)`` query."""
         from sqlalchemy import text as sa_text
+
         from services.circle_sql import kg_entities_circles_filter
 
         if not settings.auth_enabled:
@@ -1693,6 +1695,7 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
         KG_VIEW caller could page the full relation set. Mirrors ``list_entities``.
         """
         from sqlalchemy import text as sa_text
+
         from services.circle_sql import kg_relations_circles_filter
 
         query = (
@@ -1842,6 +1845,7 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
         size via ``?user_id=X``.
         """
         from sqlalchemy import text as sa_text
+
         from services.circle_sql import (
             kg_entities_circles_filter,
             kg_relations_circles_filter,
@@ -1966,9 +1970,10 @@ async def kg_retrieve_context_hook(
 ) -> str | None:
     """Retrieve relevant graph context for LLM prompt (retrieve_context hook)."""
     try:
+        from sqlalchemy.orm import selectinload
+
         from models.database import User
         from services.database import AsyncSessionLocal
-        from sqlalchemy.orm import selectinload
 
         async with AsyncSessionLocal() as db:
             user_role = None

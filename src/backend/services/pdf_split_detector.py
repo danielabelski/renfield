@@ -201,7 +201,7 @@ def _pdfium_page_count(file_path: str) -> int | None:
             return len(pdf)
         finally:
             pdf.close()
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
 
 
@@ -221,7 +221,7 @@ def _pypdfium_page_texts(file_path: str) -> list[str]:
                     pages.append(textpage.get_text_bounded() or "")
                 else:  # pragma: no cover - legacy pypdfium2
                     pages.append(textpage.get_text_range() or "")
-            except Exception:  # noqa: BLE001 - one broken page ≠ broken file
+            except Exception:
                 pages.append("")
         return pages
     finally:
@@ -258,7 +258,7 @@ def extract_page_signals(file_path: str) -> list[PageSignal]:
                 f"to pypdfium textpages"
             )
         return _signals_from_page_texts(_pypdfium_page_texts(file_path))
-    except Exception as e:  # noqa: BLE001 - detection must never break ingest
+    except Exception as e:
         logger.warning(f"pdf-split: page-signal extraction failed for {file_path}: {e}")
         return []
 
@@ -513,7 +513,7 @@ async def detect_boundaries(
         return SplitVerdict(kind=VERDICT_MULTI, pieces=pieces, page_signals=signals)
     except SplitTransientError:
         raise
-    except Exception as e:  # noqa: BLE001 - detection must never break ingest
+    except Exception as e:
         if is_llm_transient(e):
             raise SplitTransientError(
                 f"boundary detection hit a transient LLM failure: {e}"
@@ -548,7 +548,7 @@ def _render_page_b64(file_path: str, page_number: int) -> str | None:
             return base64.b64encode(buf.getvalue()).decode()
         finally:
             pdf.close()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"pdf-split: VLM page render failed for {file_path}: {e}")
         return None
 
@@ -569,7 +569,7 @@ def _page_is_blank(image_b64: str) -> bool:
 
         with Image.open(io.BytesIO(base64.b64decode(image_b64))) as im:
             histogram = im.convert("L").histogram()
-    except Exception as e:  # noqa: BLE001 - undecidable ≠ blank
+    except Exception as e:
         logger.warning(f"pdf-split: blank-page check failed: {e}")
         return False
     total = sum(histogram)
@@ -634,7 +634,7 @@ async def vlm_fill_signals(
             )
             failed += 1
             continue
-        except Exception as e:  # noqa: BLE001 - one bad page ≠ a dead job
+        except Exception as e:
             logger.warning(
                 f"pdf-split: VLM transcription of page {sig.page} failed: {e}"
             )

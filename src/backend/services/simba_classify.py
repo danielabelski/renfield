@@ -110,6 +110,6 @@ async def classify_simba(
             return None, None
         typ = _match(payload.get("type"), categories.get(cat, []))
         return cat, typ
-    except Exception as e:  # noqa: BLE001 — a failed suggestion must never break the menu
+    except Exception as e:
         logger.warning(f"Simba classification failed: {e}")
         return None, None

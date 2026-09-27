@@ -11,13 +11,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from loguru import logger
 from pydantic import BaseModel, Field
 
+from ha_glue.services.satellite_manager import get_satellite_manager
+from ha_glue.services.satellite_update_service import get_satellite_update_service
 from models.database import User
 from models.permissions import Permission
 from services.auth_service import require_permission
-from ha_glue.services.satellite_manager import get_satellite_manager
-from ha_glue.services.satellite_update_service import get_satellite_update_service
-from utils.config import settings
-from ha_glue.utils.config import ha_glue_settings
 
 router = APIRouter()
 

@@ -57,7 +57,7 @@ def is_llm_transient(exc: BaseException) -> bool:
     """
     try:
         import openai
-    except Exception:  # noqa: BLE001 - classification degrades gracefully
+    except Exception:
         openai = None  # type: ignore[assignment]
 
     seen: set[int] = set()

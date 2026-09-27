@@ -31,7 +31,6 @@ from services.document_fact_retrieval import (
 from services.fts_languages import build_generated_tsvector_expression
 from utils.config import settings
 
-
 # Must match alembic/versions/pc20260602_document_facts_fts.py::_CONTENT_EXPR.
 # Replicated (not imported) because alembic version modules aren't an importable
 # package; the behavioral FTS tests below guard against drift (a wrong column

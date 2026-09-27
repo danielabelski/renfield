@@ -53,7 +53,6 @@ def session_factory(monkeypatch, db_session):
 async def _referenced_rows(db_session):
     """User 1 and chat upload 1 — what every `_mk` row below points at."""
     from models.database import ChatUpload
-
     from tests.backend.dbrows import ensure_user
 
     await ensure_user(db_session, 1)

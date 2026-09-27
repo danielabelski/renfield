@@ -18,12 +18,13 @@ _missing_stubs = [
     "openwakeword", "openwakeword.model",
 ]
 import importlib as _importlib
+
 for _mod in _missing_stubs:
     if _mod in sys.modules:
         continue
     try:
         _importlib.import_module(_mod)
-    except Exception:  # noqa: BLE001
+    except Exception:
         sys.modules[_mod] = MagicMock()
 
 import pytest

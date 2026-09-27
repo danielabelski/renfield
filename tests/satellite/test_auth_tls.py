@@ -8,7 +8,6 @@ Verifies correct behavior for HTTPS (with and without verification) and HTTP URL
 import ssl
 
 import pytest
-
 from renfield_satellite.network.auth import _create_ssl_context_for_url
 
 

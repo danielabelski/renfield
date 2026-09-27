@@ -12,7 +12,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-import services.document_dedupe_service as dd
 import services.document_dedupe_tool as tool
 from services.document_dedupe_service import DedupeReport, DocumentDedupeService
 

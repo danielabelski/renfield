@@ -34,7 +34,7 @@ for _mod in _optional_stubs:
         continue
     try:
         importlib.import_module(_mod)
-    except Exception:  # noqa: BLE001 — genuinely absent: stub it
+    except Exception:
         sys.modules[_mod] = MagicMock()
         _stubbed.append(_mod)
 

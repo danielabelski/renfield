@@ -89,7 +89,7 @@ def register_domain_contract(domain: str, contract: DomainContract) -> None:
         try:
             from utils.metrics import record_contract_version_mismatch
             record_contract_version_mismatch(domain)
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
         return
     _REGISTRY[domain] = contract

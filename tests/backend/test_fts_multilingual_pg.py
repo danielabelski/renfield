@@ -36,7 +36,6 @@ from services.fts_languages import (
 )
 from services.lexical_retrieval import LexicalRetrieval
 
-
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
 
 

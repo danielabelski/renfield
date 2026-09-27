@@ -22,7 +22,6 @@ from pydantic import ValidationError
 from models.database import (
     MEMORY_CATEGORY_FACT,
     MEMORY_CATEGORY_PREFERENCE,
-    MEMORY_CATEGORY_PROCEDURAL,
 )
 from services.memory_ops import (
     MAX_CONTENT_CHARS,
@@ -33,7 +32,6 @@ from services.memory_ops import (
     OpType,
     validate_against_candidates,
 )
-
 
 # ---------------------------------------------------------------------------
 # OpType enum

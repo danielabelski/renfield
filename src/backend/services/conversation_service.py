@@ -165,7 +165,7 @@ class ConversationService:
                     source_id=conversation.id,
                 )
                 conversation.atom_id = atom_id
-        except Exception as e:  # noqa: BLE001 — a turn must not die over an atom
+        except Exception as e:
             conversation.atom_id = None
             logger.warning(f"⚠️ Konversation ohne Atom angelegt (id={conversation.id}): {e}")
 

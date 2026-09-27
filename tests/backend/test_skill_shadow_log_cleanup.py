@@ -7,7 +7,7 @@ runner — what we care about is that the SQL is correct and bounded.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import delete, select

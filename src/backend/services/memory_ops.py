@@ -42,13 +42,11 @@ for the valid-category set would silently drift.
 from __future__ import annotations
 
 import enum
-from typing import Optional
 
 from pydantic import BaseModel, Field, RootModel, field_validator, model_validator
 
 # Imported from models.database; matches the canonical set used by v1.
 from models.database import MEMORY_CATEGORIES
-
 
 # Hard cap on batch size. Matches v1's `max_extracts = 10` cap (see
 # conversation_memory_service.py:347). Set as a module-level constant
@@ -105,21 +103,21 @@ class MemoryOp(BaseModel):
     # Integer FK to conversation_memories.id. Required for UPDATE / DELETE.
     # Must belong to the retrieve_top_K candidate set the LLM saw,
     # enforced by `validate_against_candidates` at apply time.
-    target_id: Optional[int] = Field(default=None, ge=1)
+    target_id: int | None = Field(default=None, ge=1)
 
-    content: Optional[str] = Field(default=None, min_length=1, max_length=MAX_CONTENT_CHARS)
+    content: str | None = Field(default=None, min_length=1, max_length=MAX_CONTENT_CHARS)
 
     # Must be one of MEMORY_CATEGORIES when set. Validator below.
-    category: Optional[str] = None
+    category: str | None = None
 
     # Float 0.1–1.0 to match the existing DB column. The Mem0 paper
     # uses int 1–5; we keep Renfield's float range so v2 rows can
     # save through the same path as v1.
-    importance: Optional[float] = Field(default=None, ge=0.1, le=1.0)
+    importance: float | None = Field(default=None, ge=0.1, le=1.0)
 
     # Free-text rationale the LLM emits for the human reviewer.
     # Capped to keep prompts bounded.
-    reason: Optional[str] = Field(default=None, max_length=MAX_REASON_CHARS)
+    reason: str | None = Field(default=None, max_length=MAX_REASON_CHARS)
 
     # The person this memory is ABOUT, verbatim as named in the turn — the v1
     # extractor's `subject`, brought to v2 so the subsume gate works on both
@@ -127,11 +125,11 @@ class MemoryOp(BaseModel):
     # OPTIONAL and deliberately never required: a model that omits it yields
     # "no subject" → the fact is kept FLAT, which is the fail-safe direction.
     # Omitting it can cost a duplicate, never a lost memory.
-    subject: Optional[str] = Field(default=None, max_length=MAX_SUBJECT_CHARS)
+    subject: str | None = Field(default=None, max_length=MAX_SUBJECT_CHARS)
 
     @field_validator("category")
     @classmethod
-    def _validate_category(cls, v: Optional[str]) -> Optional[str]:
+    def _validate_category(cls, v: str | None) -> str | None:
         if v is None:
             return v
         if v not in MEMORY_CATEGORIES:
@@ -141,7 +139,7 @@ class MemoryOp(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def _validate_op_constraints(self) -> "MemoryOp":
+    def _validate_op_constraints(self) -> MemoryOp:
         """Cross-field rules per op type.
 
         Raises ValueError on violation. The service layer treats a
@@ -191,7 +189,7 @@ class MemoryOpsList(RootModel[list[MemoryOp]]):
     """
 
     @model_validator(mode="after")
-    def _validate_batch(self) -> "MemoryOpsList":
+    def _validate_batch(self) -> MemoryOpsList:
         ops = self.root
 
         if len(ops) > MAX_OPS_PER_BATCH:
@@ -231,7 +229,7 @@ class MemoryOpsList(RootModel[list[MemoryOp]]):
 def validate_against_candidates(
     ops: MemoryOpsList,
     candidate_ids: set[int],
-) -> Optional[str]:
+) -> str | None:
     """Reject the batch if any op references a target_id outside the
     candidate set the LLM saw (optimistic concurrency check).
 

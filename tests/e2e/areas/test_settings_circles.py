@@ -19,22 +19,22 @@ backend API as source of truth rather than just UI DOM state.
 from __future__ import annotations
 
 import re
-import time
 import uuid
 
 import httpx
 import pytest
 
-from tests.e2e.helpers.api import BASE_URL, _HEADERS
+from tests.e2e.helpers.api import _HEADERS, BASE_URL
 from tests.e2e.helpers.asserts import (
     assert_body_not_blank,
     assert_no_critical_console_errors,
 )
 from tests.e2e.helpers.page import (
     BASE_URL as PAGE_BASE_URL,
+)
+from tests.e2e.helpers.page import (
     capture_console_errors,
 )
-
 
 pytestmark = pytest.mark.e2e
 

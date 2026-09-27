@@ -360,7 +360,9 @@ async def _voice_chat_via_voice_server(
     as the legacy in-process path so satellites notice no difference.
     """
     from services.speaker_resolver import resolve_speaker_from_embedding
-    from services.voice_server_client import VoiceServerError, stt as vs_stt, tts as vs_tts
+    from services.voice_server_client import VoiceServerError
+    from services.voice_server_client import stt as vs_stt
+    from services.voice_server_client import tts as vs_tts
 
     try:
         stt_result = await vs_stt(

@@ -48,11 +48,11 @@ zombie ``processing`` rows from crashes (see above).
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
-from typing import AsyncIterator
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -393,7 +393,7 @@ class DocumentProcessingHistoryService:
         except Exception as exc:
             try:
                 await self.close_failure(hid, str(exc))
-            except Exception as close_exc:  # noqa: BLE001 — secondary; logged then dropped
+            except Exception as close_exc:
                 logger.error(
                     "Failed to write history close_failure for hid=%s (doc_id=%s): %s",
                     hid, document_id, close_exc,

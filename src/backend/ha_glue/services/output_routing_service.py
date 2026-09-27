@@ -680,7 +680,7 @@ class OutputRoutingService:
                 try:
                     found = await asyncio.wait_for(provider.discover(room_id), timeout=timeout)
                     return [t.to_dict() for t in found]
-                except (OutputProviderError, asyncio.TimeoutError, Exception) as e:  # noqa: BLE001
+                except (TimeoutError, OutputProviderError, Exception) as e:
                     logger.warning(f"output provider '{provider.key}' discover failed: {e}")
                     return [{
                         "provider": provider.key, "target_id": "",

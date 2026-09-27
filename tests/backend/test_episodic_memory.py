@@ -5,7 +5,7 @@ Uses in-memory SQLite (no pgvector). Embedding generation is mocked.
 Actual similarity search requires PostgreSQL and is covered by e2e tests.
 """
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import func, select
@@ -18,7 +18,6 @@ from models.database import (
     EpisodicMemory,
 )
 from services.episodic_memory_service import EpisodicMemoryService
-
 
 # ==========================================================================
 # Fixtures

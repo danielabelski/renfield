@@ -165,11 +165,11 @@ async def test_handler_runs_sweep_when_enabled(monkeypatch):
 # (inverted drop-rate, wrong latest-run isolation, or a dropped trigger filter).
 # This exercises the actual SQL against Postgres and pins the loop-prevention
 # property: an already-reindexed-still-bad doc is 'attempted', NOT reindexable.
-from datetime import datetime, timezone  # noqa: E402
+from datetime import UTC, datetime
 
-import pytest_asyncio  # noqa: E402
-from sqlalchemy import select, text  # noqa: E402
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker  # noqa: E402
+import pytest_asyncio
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 
 @pytest_asyncio.fixture
@@ -201,8 +201,8 @@ async def _hist(session, doc_id, *, trigger, prod, drop, minute, status="complet
         document_id=doc_id, status=status, force_ocr=False,
         ocr_engine="poppler_text_layer", chunks_produced=prod,
         chunks_dropped_low_quality=drop, trigger=trigger,
-        started_at=datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
-        finished_at=datetime(2026, 1, 1, 0, minute, tzinfo=timezone.utc),
+        started_at=datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+        finished_at=datetime(2026, 1, 1, 0, minute, tzinfo=UTC),
     ))
     await session.commit()
 

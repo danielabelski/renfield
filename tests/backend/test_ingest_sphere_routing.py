@@ -67,6 +67,7 @@ async def test_tier_is_clamped_to_the_circle_ladder(db_session):
     await ic.mint_credential(db_session, client_id="scanner", label="S",
                              route=ic.ROUTE_FOLDER, tier=99)
     from sqlalchemy import select
+
     from models.database import IngestCredential
     row = (await db_session.execute(
         select(IngestCredential).where(IngestCredential.client_id == "scanner")
@@ -112,10 +113,11 @@ async def test_owner_falls_back_to_global_when_unset(db_session, monkeypatch):
 @pytest.fixture
 async def push_client(db_session):
     """The folder-ingest push route, mounted alone against the test session."""
+    from unittest.mock import MagicMock
+
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
     from slowapi.errors import RateLimitExceeded
-    from unittest.mock import MagicMock
 
     from api.routes import folder_ingest as route
     from services.api_rate_limiter import limiter, rate_limit_exceeded_handler
@@ -144,6 +146,7 @@ async def test_a_push_cannot_choose_its_own_sphere(db_session, push_client, monk
     """
     import json
     from unittest.mock import AsyncMock
+
     from api.routes import folder_ingest as route
     from services.folder_ingest import IngestResult, IngestStatus
 

@@ -19,7 +19,6 @@ from tests.e2e.helpers.asserts import (
 )
 from tests.e2e.helpers.page import BASE_URL, capture_console_errors
 
-
 pytestmark = pytest.mark.e2e
 
 

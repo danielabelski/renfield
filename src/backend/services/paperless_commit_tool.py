@@ -721,7 +721,7 @@ async def _finalize_paperless_commit(
         failure_reason, document_id = await _poll_paperless_task(
             task_id, timeout_s=poll_timeout_s,
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("paperless finalize: task poll failed: %s", exc)
 
     patch_note = ""
@@ -738,7 +738,7 @@ async def _finalize_paperless_commit(
                     " (Zusatz-Metadaten konnten nicht gesetzt werden — "
                     "bitte in Paperless prüfen)"
                 )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("paperless finalize: update_document failed: %s", exc)
             patch_note = " (Zusatz-Metadaten konnten nicht gesetzt werden)"
 
@@ -836,7 +836,7 @@ async def _finalize_paperless_commit(
                         "conversation the caller does not own"
                     )
             await db.commit()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("paperless finalize: outcome persist failed: %s", exc)
 
     if session_id and not already_tracked and not suppress_announce:
@@ -849,7 +849,7 @@ async def _finalize_paperless_commit(
                 "filename": filename,
                 "message": message,
             })
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("paperless finalize: notify_session failed: %s", exc)
 
     # Reported to the reconciler (#658): a "pending" consume refunds its attempt

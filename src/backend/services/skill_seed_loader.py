@@ -35,7 +35,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.skill_service import SkillService
 from utils.config import settings
 
-
 _FRONT_MATTER_RE = re.compile(
     r"^---\s*\n(.*?)\n---\s*\n(.*)$", re.DOTALL
 )

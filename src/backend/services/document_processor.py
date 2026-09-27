@@ -85,7 +85,7 @@ class DocumentProcessor:
                 opts = TesseractCliOcrOptions(lang=["deu", "eng"], force_full_page_ocr=True)
                 logger.info("Initialisiere force_full_page_ocr-Converter (Engine: Tesseract-CLI deu+eng)")
                 return opts
-            except Exception:  # noqa: BLE001 - fall through to the binding
+            except Exception:
                 pass
 
         import importlib.util
@@ -95,7 +95,7 @@ class DocumentProcessor:
                 opts = TesseractOcrOptions(lang=["deu", "eng"], force_full_page_ocr=True)
                 logger.info("Initialisiere force_full_page_ocr-Converter (Engine: tesserocr deu+eng)")
                 return opts
-            except Exception:  # noqa: BLE001 - binding present but options unbuildable
+            except Exception:
                 pass
 
         return None
@@ -109,7 +109,7 @@ class DocumentProcessor:
                 ["tesseract", "--list-langs"],
                 capture_output=True, text=True, timeout=10,
             )
-        except Exception:  # noqa: BLE001 - binary missing / unrunnable
+        except Exception:
             return False
         langs = (res.stdout or "") + (res.stderr or "")
         return "deu" in langs and "eng" in langs
@@ -121,9 +121,9 @@ class DocumentProcessor:
 
         try:
             from docling.chunking import HybridChunker
+            from docling.datamodel.base_models import InputFormat
             from docling.datamodel.pipeline_options import OcrAutoOptions, PdfPipelineOptions
             from docling.document_converter import DocumentConverter, PdfFormatOption
-            from docling.datamodel.base_models import InputFormat
 
             logger.info("Initialisiere Docling DocumentConverter (Standard)...")
             self._converter = DocumentConverter()
@@ -568,7 +568,7 @@ class DocumentProcessor:
                     buf = io.BytesIO()
                     im.convert("RGB").save(buf, format="PNG")
                     out.append(base64.b64encode(buf.getvalue()).decode())
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"VLM re-OCR: page render failed for {file_path}: {e}")
             return []
         return out
@@ -725,7 +725,7 @@ class DocumentProcessor:
                 f"VLM re-OCR for {Path(file_path).name} not better — keeping OCR text"
             )
             return None
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"VLM re-OCR fallback failed for {file_path}: {e}")
             return None
 

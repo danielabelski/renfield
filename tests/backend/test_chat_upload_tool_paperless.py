@@ -28,7 +28,6 @@ from services.chat_upload_tool import (
     forward_attachment_to_paperless,
 )
 
-
 # ===========================================================================
 # _should_auto_skip_metadata — heuristic
 # ===========================================================================
@@ -460,7 +459,7 @@ class TestForwardAttachmentColdStart:
         """
         import json
         from datetime import date
-        import services.chat_upload_tool as cut_mod
+
 
         upload = _upload_stub(tmp_path, filename="rechnung.pdf", size=200_000)
         mcp = MagicMock()
@@ -469,7 +468,8 @@ class TestForwardAttachmentColdStart:
         # Real pydantic model with a real date — so model_dump(mode="json")
         # matters. SimpleNamespace mocks would hide the bug.
         from services.paperless_metadata_extractor import (
-            ExtractionResult, PaperlessMetadata,
+            ExtractionResult,
+            PaperlessMetadata,
         )
         extractor_result = ExtractionResult(
             metadata=PaperlessMetadata(

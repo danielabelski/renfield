@@ -9,9 +9,8 @@ import json
 import logging
 import subprocess
 import threading
-import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import urllib3
@@ -93,7 +92,7 @@ class SystemMonitor:
 
     def _collect_sample(self) -> HealthSample:
         """Collect a single health + docker stats sample."""
-        ts = datetime.now(timezone.utc).isoformat()
+        ts = datetime.now(UTC).isoformat()
 
         # Health check
         health = "error"
@@ -160,7 +159,7 @@ class SystemMonitor:
         """Write collected metrics to JSON file."""
         self.results_dir.mkdir(parents=True, exist_ok=True)
         output = {
-            "test_date": datetime.now(timezone.utc).isoformat(),
+            "test_date": datetime.now(UTC).isoformat(),
             "total_scenarios": len(self.scenario_results),
             "successful": sum(1 for s in self.scenario_results if not s.error),
             "failed": sum(1 for s in self.scenario_results if s.error),

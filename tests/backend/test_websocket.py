@@ -856,16 +856,16 @@ class TestWebSocketAuthentication:
         if the token doesn't decode as a JWT, the device-token store
         gets a chance to validate it.
         """
+        from unittest.mock import MagicMock
+
+        # Replace the module singleton with a fresh one for isolation.
+        import services.websocket_auth as ws_auth_mod
         from services.websocket_auth import (
             WSTokenStore,
             authenticate_websocket,
             get_token_store,
         )
         from utils.config import settings
-        from unittest.mock import MagicMock
-
-        # Replace the module singleton with a fresh one for isolation.
-        import services.websocket_auth as ws_auth_mod
         original_store = ws_auth_mod._token_store
         ws_auth_mod._token_store = WSTokenStore()
         try:

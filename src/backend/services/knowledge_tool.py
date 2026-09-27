@@ -82,7 +82,7 @@ async def _retrieve_facts(
         facts = await DocumentFactRetrieval(db).search(
             query, asker_id=user_id_int, top_k=_FACT_SEARCH_TOP_K,
         )
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"knowledge_search: fact retrieval failed (ignored): {e}")
         return [], {}
 
@@ -91,7 +91,7 @@ async def _retrieve_facts(
     if doc_ids:
         try:
             doc_meta = await _visible_document_meta(db, doc_ids, user_id_int)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(
                 f"knowledge_search: fact source-title lookup failed (ignored): {e}"
             )

@@ -1900,16 +1900,18 @@ class TestRecencyScore:
 
     @pytest.mark.unit
     def test_recent_near_one(self):
-        from services.conversation_memory_service import ConversationMemoryService
         from datetime import UTC
+
+        from services.conversation_memory_service import ConversationMemoryService
         now = datetime.now(UTC).replace(tzinfo=None)
         score = ConversationMemoryService._recency_score(now)
         assert score > 0.99
 
     @pytest.mark.unit
     def test_old_decays(self):
-        from services.conversation_memory_service import ConversationMemoryService
         from datetime import UTC
+
+        from services.conversation_memory_service import ConversationMemoryService
         old = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=14)
         score = ConversationMemoryService._recency_score(old, half_life_days=14.0)
         assert 0.45 < score < 0.55  # approximately 0.5 at half-life

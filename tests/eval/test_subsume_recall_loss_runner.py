@@ -22,7 +22,7 @@ if not (_runner_dir / "run_subsume_recall_loss_eval.py").exists():
 if str(_runner_dir) not in sys.path:
     sys.path.insert(0, str(_runner_dir))
 
-import run_subsume_recall_loss_eval as R  # noqa: E402
+import run_subsume_recall_loss_eval as R
 
 _CORPUS = Path(__file__).resolve().parent / "subsume_recall_loss_eval.yaml"
 

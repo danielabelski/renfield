@@ -7,8 +7,6 @@ reset_fact_tier clears the override back to the document tier. Real PG.
 """
 from __future__ import annotations
 
-import datetime as dt
-
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -152,6 +150,7 @@ class TestResetRoute:
         monkeypatch.setattr(settings, "auth_enabled", True)
         _commit_as_flush(pg_db_session, monkeypatch)
         from fastapi import HTTPException
+
         from api.routes.atoms import reset_fact_tier as reset_route
         owner = await _make_user(pg_db_session, "rr_owner")
         peer = await _make_user(pg_db_session, "rr_peer")

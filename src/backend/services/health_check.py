@@ -83,7 +83,7 @@ async def check_redis() -> dict:
         async with asyncio.timeout(settings.health_ready_aux_timeout_seconds):
             await _get_redis_client().ping()
         return {"status": "healthy"}
-    except Exception as e:  # noqa: BLE001 — incl. TimeoutError
+    except Exception as e:
         logger.warning(f"Health check: redis degraded: {type(e).__name__}: {e}")
         return {"status": "degraded", "error": "connection failed"}
 
@@ -98,7 +98,7 @@ async def device_summary() -> dict:
         for result in results:
             if isinstance(result, dict):
                 return {"status": "healthy", **result}
-    except Exception as e:  # noqa: BLE001 — incl. TimeoutError
+    except Exception as e:
         logger.debug(f"Health check: device summary unavailable: {type(e).__name__}")
     return {"status": "unknown"}
 
@@ -109,12 +109,12 @@ async def dispose() -> None:
     if _engine is not None:
         try:
             await _engine.dispose()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.debug(f"health engine dispose failed: {e}")
         _engine = None
     if _redis_client is not None:
         try:
             await _redis_client.aclose()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.debug(f"health redis close failed: {e}")
         _redis_client = None

@@ -142,16 +142,16 @@ class _FallbackLLMClient:
             )
             return await getattr(self._fallback, method)(*args, **kwargs)
 
-    async def chat(self, *args: Any, **kwargs: Any) -> Any:  # noqa: D102
+    async def chat(self, *args: Any, **kwargs: Any) -> Any:
         return await self._call("chat", *args, **kwargs)
 
-    async def embeddings(self, *args: Any, **kwargs: Any) -> Any:  # noqa: D102
+    async def embeddings(self, *args: Any, **kwargs: Any) -> Any:
         return await self._call("embeddings", *args, **kwargs)
 
-    async def list(self, *args: Any, **kwargs: Any) -> Any:  # noqa: D102
+    async def list(self, *args: Any, **kwargs: Any) -> Any:
         return await self._call("list", *args, **kwargs)
 
-    async def generate(self, *args: Any, **kwargs: Any) -> Any:  # noqa: D102
+    async def generate(self, *args: Any, **kwargs: Any) -> Any:
         return await self._call("generate", *args, **kwargs)
 
 
@@ -198,7 +198,7 @@ def _should_fallback(exc: BaseException) -> bool:
     try:
         import httpx
         import openai
-    except Exception:  # noqa: BLE001
+    except Exception:
         return False
     # openai collapses BOTH connect-timeout (host down → MUST fall over) and
     # read/pool-timeout (server up, just slow → keep primary) into APITimeoutError,
@@ -386,7 +386,7 @@ class _OpenAICompatFallbackClient:
             return self._chat_stream(model, messages, kwargs)
         try:
             return await self._primary.chat(model=model, messages=messages, stream=False, **kwargs)
-        except Exception as exc:  # noqa: BLE001 — _should_fallback re-raises what it can't handle
+        except Exception as exc:
             if not _should_fallback(exc):
                 raise
             fb_model, fb_kwargs, fb_messages = self._prepare_fallback(exc, messages, kwargs, stream=False)
@@ -400,7 +400,7 @@ class _OpenAICompatFallbackClient:
             first = await primary_gen.__anext__()
         except StopAsyncIteration:
             return  # primary produced an empty (but successful) stream
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             if not _should_fallback(exc):
                 raise
             fb_model, fb_kwargs, fb_messages = self._prepare_fallback(exc, messages, kwargs, stream=True)
@@ -413,11 +413,11 @@ class _OpenAICompatFallbackClient:
         async for chunk in primary_gen:
             yield chunk
 
-    async def embeddings(self, *args: Any, **kwargs: Any) -> Any:  # noqa: D102
+    async def embeddings(self, *args: Any, **kwargs: Any) -> Any:
         # No fail-over: embeddings route via get_embed_client(), not this client.
         return await self._primary.embeddings(*args, **kwargs)
 
-    async def list(self, *args: Any, **kwargs: Any) -> Any:  # noqa: D102
+    async def list(self, *args: Any, **kwargs: Any) -> Any:
         # No fail-over: list() is a health/status probe — it must reflect the
         # PRIMARY's real state, not Ollama's (a masked list makes a dead
         # cuda.local look healthy).
@@ -478,7 +478,7 @@ class _CountingEmbedClient:
     def __init__(self, inner: LLMClient) -> None:
         self.inner = inner
 
-    async def embeddings(self, *args: Any, **kwargs: Any) -> Any:  # noqa: D102
+    async def embeddings(self, *args: Any, **kwargs: Any) -> Any:
         try:
             return await self.inner.embeddings(*args, **kwargs)
         except Exception:
@@ -502,13 +502,13 @@ class _CountingEmbedClient:
             model = args[0]
         return str(model or "")
 
-    async def chat(self, *args: Any, **kwargs: Any) -> Any:  # noqa: D102
+    async def chat(self, *args: Any, **kwargs: Any) -> Any:
         return await self.inner.chat(*args, **kwargs)
 
-    async def list(self, *args: Any, **kwargs: Any) -> Any:  # noqa: D102
+    async def list(self, *args: Any, **kwargs: Any) -> Any:
         return await self.inner.list(*args, **kwargs)
 
-    async def generate(self, *args: Any, **kwargs: Any) -> Any:  # noqa: D102
+    async def generate(self, *args: Any, **kwargs: Any) -> Any:
         return await self.inner.generate(*args, **kwargs)
 
 
@@ -603,7 +603,7 @@ class _OllamaShapedMessage:
     """Mimics ollama.ChatResponse.message — attribute access for content,
     tool_calls, role, thinking. Renfield reads via getattr/dict mixed."""
 
-    __slots__ = ("role", "content", "tool_calls", "thinking")
+    __slots__ = ("content", "role", "thinking", "tool_calls")
 
     def __init__(self, role: str, content: str, tool_calls: list[Any] | None, thinking: str | None) -> None:
         self.role = role
@@ -623,7 +623,7 @@ class _OllamaShapedResponse:
     ``response_was_truncated``.
     """
 
-    __slots__ = ("message", "model", "done", "done_reason")
+    __slots__ = ("done", "done_reason", "message", "model")
 
     def __init__(
         self, message: _OllamaShapedMessage, model: str, done_reason: str | None = None
@@ -859,7 +859,7 @@ class OpenAICompatibleClient:
         model: str = "",
         prompt: str = "",
         *,
-        options: dict[str, Any] | None = None,  # noqa: ARG002
+        options: dict[str, Any] | None = None,
         **_kwargs: Any,
     ) -> Any:
         """Embed `prompt` and return an Ollama-shaped result with `.embedding`.
@@ -876,7 +876,7 @@ class OpenAICompatibleClient:
         embedding = list(first.embedding) if first else []
         return SimpleNamespace(embedding=embedding, model=request_model)
 
-    async def list(self) -> Any:  # noqa: D401
+    async def list(self) -> Any:
         """Return a minimal Ollama-style model list. Used by health checks."""
         from types import SimpleNamespace
 

@@ -33,7 +33,6 @@ from auth.providers.base import make_result, normalize_email
 from auth.registry import ProviderRegistry
 from utils.hooks import clear_hooks, register_hook
 
-
 # ---------------------------------------------------------------------------
 # Test doubles
 # ---------------------------------------------------------------------------

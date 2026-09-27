@@ -126,7 +126,7 @@ async def _document_period(db, document_id: int, doc=None) -> tuple[int | None, 
         )
         if got is not None:
             return got.month, got.year
-    except Exception as e:  # noqa: BLE001 — period is best-effort
+    except Exception as e:
         logger.debug(f"simba period: date derivation failed for doc {document_id}: {e}")
     return None, None
 
@@ -173,7 +173,7 @@ async def simba_ingest_post_hook(
             category, type_ = await classify_simba(
                 field_text or "", KNOWN_SIMBA_TAXONOMY, lang=lang or "de"
             )
-        except Exception as e:  # noqa: BLE001 — classification is optional
+        except Exception as e:
             logger.warning(f"simba-ingest: classify failed for doc {document_id}: {e}")
 
         try:
@@ -197,7 +197,7 @@ async def simba_ingest_post_hook(
             # (partial-unique uq_simba_ingest_proposals_pending_doc).
             await db.rollback()
             logger.info(f"simba-ingest: proposal already pending for doc {document_id}: {e}")
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             # Real failure (FK/connection/serialization) — this hook is the ONLY
             # path that surfaces the PDF for Simba review, so a silent drop means
             # the document never reaches the queue. Log loud, not as a race.
@@ -220,7 +220,7 @@ def _is_admin(user) -> bool:
         from models.permissions import Permission, has_permission
 
         return has_permission(user.get_permissions(), Permission.ADMIN)
-    except Exception:  # noqa: BLE001 — permission parse must not 500 the route
+    except Exception:
         return False
 
 
@@ -310,7 +310,7 @@ async def _classify_document(db, document_id: int) -> tuple[str | None, str | No
         from services.simba_classify import classify_simba
 
         return await classify_simba(text, KNOWN_SIMBA_TAXONOMY, lang="de")
-    except Exception as e:  # noqa: BLE001 — classification is optional
+    except Exception as e:
         logger.warning(f"simba-ingest: classify failed for existing doc {document_id}: {e}")
         return None, None
 
@@ -555,7 +555,7 @@ async def confirm(
         result = await mcp_manager.execute_tool(
             "mcp.simba.upload_documents", tool_args, truncate=False
         )
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error(f"simba-ingest confirm: upload error for proposal {proposal_id}: {e}")
         await _revert_claim(db, proposal_id)
         return {"success": False, "message": f"upload error: {e}"}
@@ -595,7 +595,7 @@ async def confirm(
             get_redis(), reason="simba",
             owner_user_id=getattr(p, "user_id", None), db=db, document=doc,
         )
-    except Exception:  # noqa: BLE001 — never break a completed upload on an event
+    except Exception:
         pass
     if res.rowcount == 0:
         # The upload LANDED but the row left UPLOADING out from under us — the
@@ -639,7 +639,7 @@ async def _find_in_simba(
         args["type"] = type_.strip()
     try:
         res = await mcp_manager.execute_tool("mcp.simba.list_transfers", args, truncate=False)
-    except Exception as e:  # noqa: BLE001 — the guard is advisory, never fatal
+    except Exception as e:
         logger.warning(f"simba-ingest: list_transfers check failed: {e}")
         return []
     rows = _inner(res).get("zeilen")

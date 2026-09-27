@@ -357,7 +357,7 @@ async def process_meeting(meeting_id: int, audio_path: str) -> None:
                     n = apply_known_names(segments, resolved)
                     if n:
                         logger.info(f"meeting {meeting_id}: auto-named {n} known speaker(s)")
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.warning(f"meeting {meeting_id}: fingerprint matching failed: {e}")
         segments = _set_segments(meeting, segments)
         del raw_segments  # nothing below may read (or persist) the voiceprints

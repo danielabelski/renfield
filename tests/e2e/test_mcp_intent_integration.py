@@ -9,9 +9,10 @@ Tests that the full pipeline works:
 5. Intents admin page shows MCP tools section
 6. Chat page loads correctly
 """
-from playwright.sync_api import sync_playwright
-import requests
 import os
+
+import requests
+from playwright.sync_api import sync_playwright
 
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:3000")
 API_URL = os.environ.get("API_URL", "http://localhost:8000")

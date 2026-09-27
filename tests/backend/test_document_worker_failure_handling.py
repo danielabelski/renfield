@@ -14,7 +14,6 @@ Pure unit tests — collaborators are mocked; no DB / Redis.
 """
 from __future__ import annotations
 
-import asyncio
 import types
 from unittest.mock import AsyncMock, MagicMock
 
@@ -82,7 +81,7 @@ def _entry(doc_id: int = 5, trigger: str | None = None):
 @pytest.mark.parametrize(
     "exc",
     [
-        asyncio.TimeoutError(),
+        TimeoutError(),
         httpx.ConnectError("conn refused"),
         httpx.ConnectTimeout("slow"),
         httpx.ReadTimeout("slow"),
@@ -132,7 +131,7 @@ def test_ollama_4xx_is_terminal(status):
 # ---------------------------------------------------------------------------
 
 async def test_transient_error_left_in_pel_not_acked(monkeypatch):
-    rag, queue = _wire(monkeypatch, process_side_effect=asyncio.TimeoutError())
+    rag, queue = _wire(monkeypatch, process_side_effect=TimeoutError())
     mark = AsyncMock()
     monkeypatch.setattr(worker, "_mark_document_failed", mark)
 

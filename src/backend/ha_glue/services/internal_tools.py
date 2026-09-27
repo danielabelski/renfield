@@ -247,9 +247,9 @@ class InternalToolService:
             }
 
         try:
-            from services.database import AsyncSessionLocal
             from ha_glue.services.output_routing_service import OutputRoutingService
             from ha_glue.services.room_service import RoomService
+            from services.database import AsyncSessionLocal
 
             async with AsyncSessionLocal() as db:
                 room_service = RoomService(db)
@@ -398,8 +398,8 @@ class InternalToolService:
     async def _get_room_id(self, room_name: str) -> int | None:
         """Resolve room_name → room_id via RoomService."""
         try:
-            from services.database import AsyncSessionLocal
             from ha_glue.services.room_service import RoomService
+            from services.database import AsyncSessionLocal
 
             async with AsyncSessionLocal() as db:
                 rs = RoomService(db)
@@ -471,7 +471,7 @@ class InternalToolService:
             from ha_glue.integrations.homeassistant import HomeAssistantClient
             ha = HomeAssistantClient()
             states = await ha.get_states()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"device_controls: HA states fetch failed: {e}")
             return {
                 "success": False,
@@ -600,7 +600,7 @@ class InternalToolService:
                 "message": f"{entity_id} → {action}",
                 "data": {"entity_id": entity_id, "state": resolved},
             }
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.error(f"device_action {action} on {entity_id} failed: {e}")
             return {"success": False, "message": f"Fehler: {e!s}", "action_taken": False}
 
@@ -615,7 +615,7 @@ class InternalToolService:
             from ha_glue.services.presence_service import get_presence_service
             ps = get_presence_service()
             all_presence = ps.get_all_presence()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"presence_map: presence fetch failed: {e}")
             return {"success": False, "message": "Anwesenheit konnte nicht geladen werden.", "action_taken": False}
 
@@ -687,6 +687,8 @@ class InternalToolService:
         )
         from ha_glue.services.smarthome_status import (
             _prose as _status_prose,
+        )
+        from ha_glue.services.smarthome_status import (
             build_status_table,
         )
 
@@ -820,13 +822,13 @@ class InternalToolService:
         try:
             import base64
 
-            from services.database import AsyncSessionLocal
-            from services.piper_service import PiperService
             from ha_glue.services.audio_output_service import get_audio_output_service
             from ha_glue.services.device_manager import get_device_manager
             from ha_glue.services.output_routing_service import OutputRoutingService
             from ha_glue.services.presence_service import get_presence_service
             from ha_glue.services.room_service import RoomService
+            from services.database import AsyncSessionLocal
+            from services.piper_service import PiperService
 
             async with AsyncSessionLocal() as db:
                 room_service = RoomService(db)
@@ -916,7 +918,7 @@ class InternalToolService:
                                             _ollama.count_people_in_image(img),
                                             timeout=_ha.announce_snapshot_timeout,
                                         )
-                                except Exception:  # noqa: BLE001 (incl. TimeoutError)
+                                except Exception:
                                     people = None
                             if people is not None and people > len(occupants):
                                 return {
@@ -992,7 +994,7 @@ class InternalToolService:
                             "is_final": True,
                         })
                         any_ok = True
-                    except Exception:  # noqa: BLE001 — one dead link must not skip the rest
+                    except Exception:
                         continue
             if any_ok:
                 return {
@@ -1002,7 +1004,7 @@ class InternalToolService:
                 }
             return {"success": False, "message": f"Kein Lautsprecher in {resolved_room_name} verfügbar", "action_taken": False}
 
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.error(f"Error announcing in room '{room_name}': {e}")
             return {"success": False, "message": f"Error announcing: {e!s}", "action_taken": False}
 
@@ -1035,10 +1037,10 @@ class InternalToolService:
             }
 
         try:
-            from services.database import AsyncSessionLocal
-            from services.piper_service import PiperService
             from ha_glue.services.presence_service import get_presence_service
             from ha_glue.services.room_service import RoomService
+            from services.database import AsyncSessionLocal
+            from services.piper_service import PiperService
 
             presence = get_presence_service()
             all_presence = presence.get_all_presence()
@@ -1081,7 +1083,7 @@ class InternalToolService:
                             privacy="public", for_users=[], force=False,
                         )
                         return (room_name, bool(res.get("success")))
-                    except Exception as e:  # noqa: BLE001 — one room must not break the rest
+                    except Exception as e:
                         logger.warning(f"broadcast: room '{room_name}' failed: {e}")
                         return (room_name, False)
 
@@ -1099,7 +1101,7 @@ class InternalToolService:
                 "message": msg,
                 "data": {"reached": reached, "failed": failed, "text": text},
             }
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.error(f"Error broadcasting announcement: {e}")
             return {"success": False, "message": f"Error broadcasting: {e!s}", "action_taken": False}
 
@@ -1401,8 +1403,8 @@ class InternalToolService:
         if not target_type:
             return None
         try:
-            from main import app
             from ha_glue.services.output_providers import build_mcp_output_providers
+            from main import app
             mcp_manager = getattr(app.state, "mcp_manager", None)
             if not mcp_manager:
                 return None
@@ -2413,9 +2415,9 @@ class InternalToolService:
             }
 
         try:
-            from services.database import AsyncSessionLocal
             from ha_glue.services.output_routing_service import OutputRoutingService
             from ha_glue.services.room_service import RoomService
+            from services.database import AsyncSessionLocal
 
             async with AsyncSessionLocal() as db:
                 room_service = RoomService(db)
@@ -3224,7 +3226,7 @@ class InternalToolService:
 
                 return {
                     "success": True,
-                    "message": f"Removed station from your favorites",
+                    "message": "Removed station from your favorites",
                     "action_taken": True,
                 }
 
@@ -3298,7 +3300,7 @@ class InternalToolService:
                 "action_taken": True,
                 "data": data,
             }
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.error(f"Error running Bluetooth scan: {e}")
             return {
                 "success": False,

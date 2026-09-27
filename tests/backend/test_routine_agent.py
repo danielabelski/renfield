@@ -17,7 +17,7 @@ import pytest
 if "ollama" not in sys.modules:
     try:
         import ollama  # noqa: F401
-    except Exception:  # noqa: BLE001
+    except Exception:
         _ollama_stub = MagicMock()
         _ollama_stub.AsyncClient = MagicMock()
         sys.modules["ollama"] = _ollama_stub

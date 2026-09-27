@@ -28,7 +28,7 @@ _KEYWORD_BOOST_AMOUNT = 0.15
 
 
 def find_shadowed_sub_intent_utterances(
-    roles: dict[str, "AgentRole"],
+    roles: dict[str, AgentRole],
 ) -> dict[tuple[str, str], list[str]]:
     """Find sub_intent utterances that are byte-identical to a role utterance.
 

@@ -7,11 +7,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from models.database import PresenceEvent, Role, Room, User
 from ha_glue.services.presence_analytics import (
     PresenceAnalyticsService,
     _on_enter_room,
 )
+from models.database import PresenceEvent, Role, Room, User
 
 # ---------------------------------------------------------------------------
 # Helpers

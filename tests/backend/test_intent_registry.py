@@ -4,7 +4,7 @@ Tests for IntentRegistry — Dynamic intent management.
 Core integrations are now limited to Knowledge (RAG) and General.
 Home Assistant, n8n, and Camera intents are provided via MCP servers.
 """
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from services.intent_registry import (
     CORE_INTEGRATIONS,

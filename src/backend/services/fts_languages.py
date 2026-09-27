@@ -20,7 +20,6 @@ personal corpus is small).
 """
 from __future__ import annotations
 
-
 # Postgres ships these six text-search configurations in the default
 # install (``pg_catalog.*``). All have full stemming + stop-word support.
 # Adding any non-default config would require ensuring it's available

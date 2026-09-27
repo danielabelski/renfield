@@ -155,7 +155,6 @@ class TestExecuteToolStreamingYieldOnce:
         iterator. `aclose()` cannot serve here: calling it from another
         task while an `__anext__()` is in flight raises RuntimeError at the
         Python level — not a usage pattern real consumers have."""
-        import asyncio
 
         manager = MCPManager()
         started = asyncio.Event()

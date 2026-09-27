@@ -14,7 +14,6 @@ Coverage:
 """
 from __future__ import annotations
 
-import asyncio
 import time
 from unittest.mock import AsyncMock, MagicMock
 
@@ -33,9 +32,9 @@ from services.federation_pending_store import (
     reset_store_for_tests,
 )
 from services.federation_query_responder import (
+    MAX_PROGRESS_UPDATES,
     FederationQueryError,
     FederationQueryResponder,
-    MAX_PROGRESS_UPDATES,
     _clear_state_for_tests,
 )
 from services.federation_query_schemas import (
@@ -47,7 +46,6 @@ from services.federation_query_schemas import (
     QueryBrainRetrieveRequest,
     complete_canonical_payload,
     initiate_canonical_payload,
-    retrieve_canonical_payload,
 )
 from services.mcp_streaming import (
     PROGRESS_LABEL_COMPLETE,
@@ -56,7 +54,6 @@ from services.mcp_streaming import (
 )
 from services.pairing_service import _canonical_bytes
 from utils.config import settings
-
 
 # =============================================================================
 # Fixtures
@@ -539,7 +536,6 @@ class TestBackgroundTaskSession:
         anything), the outer try/except must still mark the pending
         as STATUS_FAILED + set answered_at so the asker sees a
         terminal status instead of polling into TTL."""
-        from services import federation_query_responder as fqr
 
         pending = _PendingRequest(
             request_id="bg-test-fail",
@@ -597,8 +593,8 @@ class TestEnforceCirclesOnRetrieve:
     @pytest.mark.asyncio
     @pytest.mark.unit
     async def test_retrieve_forces_enforce_circles_true(self, responder_identity, monkeypatch):
-        from services.federation_pending_store import _PendingRequest
         import services.polymorphic_atom_store as pas
+        from services.federation_pending_store import _PendingRequest
 
         captured = {}
 

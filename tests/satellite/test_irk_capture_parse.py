@@ -5,10 +5,8 @@ reverses BlueZ's least-significant-octet-first byte order to the most-significan
 octet-first form the resolver/backend expect, and ignores devices/sections
 without an IRK.
 """
-import os
 
 import pytest
-
 from renfield_satellite.satellite import Satellite
 
 _WITH_IRK = """[General]

@@ -10,12 +10,12 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ha_glue.integrations.homeassistant import HomeAssistantClient
+from ha_glue.services.room_service import RoomService
 from models.database import User
 from models.permissions import Permission
 from services.auth_service import require_permission
 from services.database import get_db
 from utils.hooks import run_hooks
-from ha_glue.services.room_service import RoomService
 
 # Import all schemas from separate file
 from .rooms_schemas import (
@@ -883,8 +883,8 @@ async def reorder_output_devices(
 
     The device_ids list should be in the desired order (first = highest priority).
     """
-    from models.database import OUTPUT_TYPES
     from ha_glue.services.output_routing_service import OutputRoutingService
+    from models.database import OUTPUT_TYPES
 
     service = RoomService(db)
     room = await service.get_room(room_id)

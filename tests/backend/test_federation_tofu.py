@@ -25,7 +25,6 @@ import pytest
 from services.federation_cert_pin import probe_peer_cert_fingerprint
 from services.pairing_service import _first_https_url, _with_tofu_fingerprint
 
-
 # =============================================================================
 # _first_https_url — endpoint-shape tolerance
 # =============================================================================
@@ -319,8 +318,8 @@ class TestPairingServiceTofuIntegration:
         from services.pairing_service import (
             PairingResponse,
             PairingService,
-            _canonical_bytes,
             _cache_nonce,
+            _canonical_bytes,
         )
 
         reset_federation_identity_for_tests()
@@ -399,8 +398,8 @@ class TestPairingServiceTofuIntegration:
         from services.pairing_service import (
             PairingResponse,
             PairingService,
-            _canonical_bytes,
             _cache_nonce,
+            _canonical_bytes,
         )
 
         reset_federation_identity_for_tests()

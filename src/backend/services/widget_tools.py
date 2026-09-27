@@ -276,7 +276,7 @@ async def weather_widget(parameters: dict, *, mcp_manager) -> dict:
             "mcp.weather.get_weather",
             {"location": location, "days": days, "temperature_unit": "celsius"},
         )
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"weather_widget: MCP call failed: {e}")
         return _reject(f"Could not fetch the weather: {e}")
 

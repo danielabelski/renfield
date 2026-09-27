@@ -22,7 +22,6 @@ from __future__ import annotations
 import os
 import re
 import shutil
-import tempfile
 import time
 import uuid
 
@@ -34,7 +33,6 @@ from tests.e2e.helpers.asserts import (
     assert_no_critical_console_errors,
 )
 from tests.e2e.helpers.page import BASE_URL, capture_console_errors
-
 
 pytestmark = pytest.mark.e2e
 

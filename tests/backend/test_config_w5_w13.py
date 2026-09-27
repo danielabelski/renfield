@@ -20,7 +20,6 @@ import io
 import pytest
 from loguru import logger
 
-
 # --- W5 — timeout settings exist with the right defaults + ranges ---
 
 @pytest.mark.unit
@@ -217,8 +216,9 @@ def test_w13_changeme_fields_match_settings_defaults():
     future commit renames the field or replaces the placeholder default
     without updating `_CHANGEME_FIELDS`, this test catches it.
     """
-    from utils.config import _CHANGEME_FIELDS, Settings
     from pydantic import SecretStr
+
+    from utils.config import _CHANGEME_FIELDS, Settings
 
     fields = Settings.model_fields
     for name in _CHANGEME_FIELDS:

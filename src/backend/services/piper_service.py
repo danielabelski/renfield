@@ -42,12 +42,12 @@ class PiperService:
         # Cache loaded PiperVoice instances by voice name. Each voice is ~50-100 MB
         # in memory (ONNX session + tokenizer); for the typical de/en pair we hold
         # ~200 MB total which is fine.
-        self._voice_cache: dict[str, "PiperVoice"] = {}
+        self._voice_cache: dict[str, PiperVoice] = {}
 
         # LRU cache for synthesized WAV bytes. Keyed on (voice_name, text). Only
         # the deterministic synthesis path hits this — anything that takes per-
         # request audio params (e.g., speaker styling) must bypass.
-        self._wav_cache: "OrderedDict[tuple[str, str], bytes]" = OrderedDict()
+        self._wav_cache: OrderedDict[tuple[str, str], bytes] = OrderedDict()
         self._wav_cache_max = max(0, int(settings.tts_cache_size))
         self._wav_cache_lock = Lock()
         self._wav_cache_hits = 0
@@ -271,7 +271,8 @@ class PiperService:
     async def _synthesize_via_voice_server(self, text: str, *, language: str | None = None) -> bytes:
         """Delegate TTS to the voice-server pod (B.4.c thin-client)."""
         from services.auth_service import create_access_token
-        from services.voice_server_client import VoiceServerError, tts as vs_tts
+        from services.voice_server_client import VoiceServerError
+        from services.voice_server_client import tts as vs_tts
 
         # Service-account token signed with the platform SECRET_KEY, which the
         # voice-server validates in local mode. "" when voice_server_auth_enabled

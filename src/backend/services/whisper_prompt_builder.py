@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Optional
 
 from loguru import logger
 
@@ -226,7 +225,7 @@ async def whisper_prompt_household_changed(
 
 async def resolve_first_speaker_from_room(
     *, room_id: int | None
-) -> Optional[int]:
+) -> int | None:
     """Return the first known user_id currently in `room_id`, or None.
 
     Uses the `resolve_room_occupants` hook (ha_glue's BLE-presence handler).

@@ -9,7 +9,6 @@ import os
 from unittest.mock import patch
 
 import pytest
-
 from renfield_satellite.config import ServerConfig, load_config
 from renfield_satellite.network.websocket_client import WebSocketClient
 

@@ -193,7 +193,7 @@ async def broadcast_turn_activity(
                 "at": datetime.now(UTC).isoformat(),
             }
         )
-    except Exception as e:  # noqa: BLE001 — never break a turn on a kiosk push
+    except Exception as e:
         logger.debug(f"kiosk turn_activity broadcast failed: {e}")
 
 
@@ -275,7 +275,7 @@ async def _knowledge_health() -> "InternalSubsystemHealth":
         from services.kb_maintenance_tool import ingest_worker_and_backlog
 
         worker_alive, backlog = await ingest_worker_and_backlog()
-    except Exception as e:  # noqa: BLE001 — a failed probe IS a degraded signal
+    except Exception as e:
         logger.debug(f"kiosk internal health: knowledge probe failed: {e}")
         return InternalSubsystemHealth(
             id="knowledge", health="degraded", impaired_code="knowledge_worker_down"
@@ -311,7 +311,7 @@ async def compute_internal_subsystem_health() -> list[dict]:
     for compute in (_presence_health, _knowledge_health, _media_health):
         try:
             out.append((await compute()).model_dump())
-        except Exception as e:  # noqa: BLE001 — never abort the whole readout
+        except Exception as e:
             logger.debug(f"kiosk internal health: {compute.__name__} failed: {e}")
     return out
 
@@ -524,7 +524,7 @@ async def compute_kiosk_weather(mcp_manager, force: bool = False) -> "KioskWeath
             high=today.get("temp_max"),
             low=today.get("temp_min"),
         )
-    except Exception as e:  # noqa: BLE001 — a flaky MCP must never break the tile
+    except Exception as e:
         logger.warning(f"kiosk_weather: {e}")
         return _weather_cache["value"]
 

@@ -24,8 +24,8 @@ from uuid import uuid4
 
 from sqlalchemy import Float, and_, cast, func, or_, select
 
-from utils.config import settings
 from ha_glue.utils.config import ha_glue_settings
+from utils.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -569,7 +569,7 @@ class PaperlessAuditService:
                 await self._mcp.execute_tool("mcp.paperless.list_storage_paths", {})
             )
             return [p["path"] for p in (sp.get("paths") or []) if p.get("path")]
-        except Exception:  # noqa: BLE001 — best-effort; storage_path lookup is optional
+        except Exception:
             return []
 
     async def get_taxonomy(self) -> dict:
@@ -580,7 +580,7 @@ class PaperlessAuditService:
         for a kind yields [] rather than failing the whole call."""
         try:
             tax = await self._fetch_full_taxonomy()
-        except Exception:  # noqa: BLE001 — best-effort; degrade to empty lists
+        except Exception:
             tax = {}
         return {
             "correspondents": tax.get("correspondents") or [],
@@ -980,7 +980,7 @@ class PaperlessAuditService:
             if applied:
                 logger.info(f"re-OCR: re-derived + applied metadata for doc {doc_id}")
             return applied
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"re-OCR metadata re-derive failed for doc {doc_id}: {e}")
             return False
 
@@ -1126,7 +1126,7 @@ class PaperlessAuditService:
                     f"re-OCR→KB: enqueued reindex for renfield doc {doc.id} "
                     f"(paperless {paperless_doc_id})"
                 )
-        except Exception as e:  # noqa: BLE001 — never break re-OCR on a reindex hiccup
+        except Exception as e:
             logger.warning(
                 f"re-OCR→KB reindex enqueue failed for paperless {paperless_doc_id}: {e}"
             )

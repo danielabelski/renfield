@@ -153,7 +153,7 @@ async def _self_heal(mcp_manager, problem_names: list[str]) -> set[str]:
                 f"mcp_health: self-heal probe for '{name}' exceeded "
                 f"{probe_guard_s:.0f}s hang-guard — aborted"
             )
-        except Exception as e:  # noqa: BLE001 — a probe failure must not break the tick
+        except Exception as e:
             logger.warning(f"mcp_health: self-heal probe failed for '{name}': {e}")
     if attempted:
         logger.info(
@@ -201,7 +201,7 @@ def _probe_detail(mcp_manager, name: str) -> str | None:
     try:
         state = getattr(mcp_manager, "_servers", {}).get(name)
         return getattr(state, "last_probe_detail", None) if state else None
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
 
 
@@ -223,7 +223,7 @@ async def _run_probes(mcp_manager) -> list[str]:
         return []
     try:
         due = due_fn()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"mcp_health: probe due-check failed: {e}")
         return []
     if not isinstance(due, list):
@@ -290,7 +290,7 @@ async def _run_probes(mcp_manager) -> list[str]:
                 f"{settings.mcp_health_probe_guard_timeout:.0f}s hang-guard — aborted"
             )
             continue
-        except Exception as e:  # noqa: BLE001 — a probe must never break the tick
+        except Exception as e:
             # Same cadence argument as the timeout branch: no recorded outcome means
             # no advanced due-time, so this would retry every tick.
             if callable(record_fn):
@@ -372,7 +372,7 @@ async def _monitor_tick_body(mcp_manager) -> None:
     _last_tick_problem_count = None
     try:
         status = mcp_manager.get_status()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"mcp_health: get_status failed: {e}")
         return
 
@@ -392,7 +392,7 @@ async def _monitor_tick_body(mcp_manager) -> None:
         if healed_attempted:
             try:
                 status = mcp_manager.get_status()  # post-heal health
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.warning(f"mcp_health: post-heal get_status failed: {e}")
 
     # Functional probes (A1) run AFTER the self-heal so they judge the SERVICE on a
@@ -402,7 +402,7 @@ async def _monitor_tick_body(mcp_manager) -> None:
     if probed:
         try:
             status = mcp_manager.get_status()  # post-probe health
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"mcp_health: post-probe get_status failed: {e}")
 
     current_problems: set[str] = set()

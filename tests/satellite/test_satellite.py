@@ -8,10 +8,9 @@ Tests for the main satellite functionality:
 - Backend communication
 """
 
-import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
-import asyncio
+from unittest.mock import AsyncMock
 
+import pytest
 
 # ============================================================================
 # State Machine Tests

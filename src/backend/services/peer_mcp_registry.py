@@ -47,7 +47,6 @@ from services.mcp_client import (
     MCPTransportType,
 )
 
-
 # Namespace prefix for federation server entries. Using `peer_{id}` keeps
 # the name stable across display-name changes — the agent loop references
 # tools by namespace, not by display_name.

@@ -40,7 +40,6 @@ from __future__ import annotations
 
 from loguru import logger
 
-
 # German HA action keywords (verbs that indicate a smart-home command)
 _HA_ACTION_KEYWORDS = (
     "schalte", "mach", "stelle", "ist", "zeige", "öffne", "schließe",

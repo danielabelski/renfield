@@ -5,12 +5,10 @@ hashes. The satellite verifies it against pinned public keys AFTER extract,
 BEFORE install. Requires `cryptography` (already a satellite dep for IRK).
 """
 import base64
-import json
 import tempfile
 from pathlib import Path
 
 import pytest
-
 from renfield_satellite.update.release_manifest import (
     build_manifest,
     canonical_bytes,
@@ -18,9 +16,9 @@ from renfield_satellite.update.release_manifest import (
     verify_signature,
 )
 from renfield_satellite.update.update_manager import (
+    UpdateError,
     UpdateManager,
     UpdateRequest,
-    UpdateError,
 )
 
 ed25519 = pytest.importorskip(

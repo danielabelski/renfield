@@ -171,7 +171,7 @@ async def _extract_and_finalize(
     error_message = None
     try:
         extracted_text = await _get_processor().extract_text_only(file_path)
-    except Exception as e:  # noqa: BLE001 — failure recorded on the row, not raised
+    except Exception as e:
         logger.error(f"Chat upload {upload_id}: Text-Extraktion fehlgeschlagen: {e}")
         status = UPLOAD_STATUS_FAILED
         error_message = str(e)
@@ -186,7 +186,7 @@ async def _extract_and_finalize(
             upload.status = status
             upload.error_message = error_message
             await db.commit()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error(f"Chat upload {upload_id}: status persist failed: {e}")
         return
 
@@ -203,7 +203,7 @@ async def _extract_and_finalize(
                 "text_preview": extracted_text[:500] if extracted_text else None,
                 "error": error_message,
             })
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"Chat upload {upload_id}: notify_session failed: {e}")
 
     if status != UPLOAD_STATUS_COMPLETED:
@@ -219,7 +219,7 @@ async def _extract_and_finalize(
                 document_id=None,
                 user_id=user_id,
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"Chat upload {upload_id}: KG hook failed: {e}")
 
     if settings.chat_upload_auto_index:

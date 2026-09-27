@@ -810,7 +810,7 @@ def _is_session_dead(exc: BaseException) -> bool:
         return True
     try:
         from mcp.shared.exceptions import McpError
-    except Exception:  # noqa: BLE001 - SDK shape guard
+    except Exception:
         return False
     if not isinstance(exc, McpError):
         return False
@@ -1838,9 +1838,9 @@ class MCPManager:
             t0 = time.monotonic()
             try:
                 await asyncio.wait_for(state.session.list_tools(), timeout=2.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return False, None, "timeout >2s"
-            except Exception as exc:  # noqa: BLE001 - surface the type
+            except Exception as exc:
                 return False, None, f"{type(exc).__name__}: {exc}"[:200]
             latency_ms = (time.monotonic() - t0) * 1000
             return True, round(latency_ms, 1), None
@@ -1978,7 +1978,7 @@ class MCPManager:
                 user_id=None,
                 call_timeout=probe["timeout"],
             )
-        except Exception as e:  # noqa: BLE001 — a probe never breaks its caller
+        except Exception as e:
             state.record_probe_outcome(False, f"{type(e).__name__}: {e}"[:200])
             logger.warning(f"mcp_health: probe '{namespaced}' raised: {e}")
             return {"ok": False, "detail": state.last_probe_detail, "skipped": False}
@@ -2510,7 +2510,7 @@ class MCPManager:
                 per_user_headers = await _resolve_user_auth_headers(
                     state.config.name, user_id
                 )
-            except Exception as e:  # noqa: BLE001 — resolver must never wedge a call
+            except Exception as e:
                 logger.error(
                     f"per-user MCP: auth resolver failed for "
                     f"{state.config.name}/user={user_id}: {e}"
@@ -2561,7 +2561,7 @@ class MCPManager:
                 break
             except TimeoutError:
                 return self._call_timed_out(state, namespaced_name)
-            except Exception as e:  # noqa: BLE001 - bubble in last_exc
+            except Exception as e:
                 last_exc = e
                 if not _is_session_dead(e):
                     # Application-level error (McpError, schema, etc.). The
@@ -2731,10 +2731,11 @@ class MCPManager:
         documentation-only (single `query: str` param). If query_brain
         grows fields in F3d/F5, wire validation here.
         """
+        from sqlalchemy import select
+
+        from models.database import PeerUser
         from services.database import AsyncSessionLocal
         from services.federation_query_asker import FederationQueryAsker
-        from models.database import PeerUser
-        from sqlalchemy import select
 
         peer_user_id = state.config.peer_user_id
         if peer_user_id is None:
@@ -2816,7 +2817,8 @@ class MCPManager:
 
         # F4d — snapshot peer identity at query time so later display-name
         # changes or peer deletion don't rewrite history.
-        from datetime import UTC, datetime as _dt
+        from datetime import UTC
+        from datetime import datetime as _dt
         initiated_at = _dt.now(UTC).replace(tzinfo=None)
         peer_pubkey_snapshot = peer.remote_pubkey
         peer_display_snapshot = peer.remote_display_name

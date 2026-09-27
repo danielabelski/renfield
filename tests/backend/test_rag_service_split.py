@@ -19,7 +19,6 @@ from models.database import (
     DOC_STATUS_COMPLETED,
     DOC_STATUS_FAILED,
     DOC_STATUS_PENDING,
-    Document,
     KnowledgeBase,
 )
 from services.progress import (
@@ -29,7 +28,6 @@ from services.progress import (
     _stage_key,
 )
 from services.rag_service import RAGService
-
 
 # ---------------------------------------------------------------------------
 # Shared fixtures

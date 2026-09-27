@@ -23,11 +23,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from models.database import (
-    AgentTrajectory,
     EMBEDDING_DIMENSION,
+    SKILL_SOURCE_AUTO_EXTRACTED,
+    AgentTrajectory,
     ProceduralSkill,
     Role,
-    SKILL_SOURCE_AUTO_EXTRACTED,
     ToolOutcomeStat,
     User,
 )

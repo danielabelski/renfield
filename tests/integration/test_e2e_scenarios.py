@@ -7,10 +7,8 @@ Tests complete user scenarios across all components:
 - Multi-device scenarios
 """
 
-import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
-import asyncio
 
+import pytest
 
 # ============================================================================
 # Voice Command Flow Tests

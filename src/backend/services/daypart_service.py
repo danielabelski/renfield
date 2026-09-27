@@ -13,7 +13,8 @@ Daypart windows are configurable HH:MM strings in the local timezone
 UTC.
 """
 
-from datetime import datetime, time as dt_time
+from datetime import datetime
+from datetime import time as dt_time
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -54,7 +55,7 @@ def _resolve_tz() -> ZoneInfo:
             from ha_glue.utils.config import ha_glue_settings
 
             name = (ha_glue_settings.presence_analytics_timezone or "").strip()
-        except Exception:  # noqa: BLE001 — ha_glue may be absent
+        except Exception:
             name = ""
     if not name:
         name = "UTC"
@@ -74,7 +75,7 @@ def _parse_hhmm(value: str, fallback: dt_time) -> dt_time:
         if not (0 <= hour <= 23 and 0 <= minute <= 59):
             raise ValueError(f"out of range: {value!r}")
         return dt_time(hour, minute)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"Invalid daypart time {value!r}; using fallback {fallback}: {e}")
         return fallback
 
@@ -177,6 +178,6 @@ def build_time_context(lang: str = "de") -> str:
             f"ZEITKONTEXT: Heute ist {weekday}, der {iso_date}. "
             f"Aktuelle Zeit: {hhmm} Uhr ({label})."
         )
-    except Exception as e:  # noqa: BLE001 — must never break the agent
+    except Exception as e:
         logger.warning(f"build_time_context failed, returning empty: {e}")
         return ""

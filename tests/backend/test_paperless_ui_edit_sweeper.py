@@ -16,20 +16,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from services.paperless_ui_edit_sweeper import (
-    _MIN_AGE_BEFORE_SWEEP,
-    _TRUNCATION_MARKER,
-    _TruncatedResponseError,
-    _detect_edit,
-    _normalise_field,
-    run_abandoned_confirm_sweep,
-    run_sweep_tick,
-)
-
 # Ensure the retriever module is loaded before tests patch into it —
 # same side-effect-import trick PR 2b needed, see there for context.
 import services.paperless_example_retriever  # noqa: F401
-
+from services.paperless_ui_edit_sweeper import (
+    _TRUNCATION_MARKER,
+    _detect_edit,
+    _normalise_field,
+    _TruncatedResponseError,
+    run_abandoned_confirm_sweep,
+    run_sweep_tick,
+)
 
 # ---------------------------------------------------------------------------
 # Field normalisation
@@ -518,7 +515,6 @@ class TestRunSweepTick:
         rows, double-MCP-fetch, and double-persist. The in-process
         lock must serialise them; the second call returns immediately
         with skipped=1 and without running the body."""
-        import asyncio as _asyncio
 
         from services import paperless_ui_edit_sweeper as sweeper_mod
 

@@ -97,7 +97,12 @@ class TestSatelliteManagerVersionTracking:
     @pytest.mark.unit
     def test_set_update_status(self):
         """set_update_status should update all update fields"""
-        from ha_glue.services.satellite_manager import SatelliteCapabilities, SatelliteInfo, SatelliteManager, UpdateStatus
+        from ha_glue.services.satellite_manager import (
+            SatelliteCapabilities,
+            SatelliteInfo,
+            SatelliteManager,
+            UpdateStatus,
+        )
 
         manager = SatelliteManager()
         mock_ws = MagicMock()
@@ -126,7 +131,12 @@ class TestSatelliteManagerVersionTracking:
     @pytest.mark.unit
     def test_clear_update_status(self):
         """clear_update_status should reset all update fields"""
-        from ha_glue.services.satellite_manager import SatelliteCapabilities, SatelliteInfo, SatelliteManager, UpdateStatus
+        from ha_glue.services.satellite_manager import (
+            SatelliteCapabilities,
+            SatelliteInfo,
+            SatelliteManager,
+            UpdateStatus,
+        )
 
         manager = SatelliteManager()
         mock_ws = MagicMock()
@@ -151,7 +161,12 @@ class TestSatelliteManagerVersionTracking:
     @pytest.mark.unit
     def test_get_all_satellites_includes_version(self):
         """get_all_satellites should include version and update info"""
-        from ha_glue.services.satellite_manager import SatelliteCapabilities, SatelliteInfo, SatelliteManager, UpdateStatus
+        from ha_glue.services.satellite_manager import (
+            SatelliteCapabilities,
+            SatelliteInfo,
+            SatelliteManager,
+            UpdateStatus,
+        )
 
         manager = SatelliteManager()
         mock_ws = MagicMock()

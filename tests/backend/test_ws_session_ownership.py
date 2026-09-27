@@ -24,7 +24,6 @@ import pytest
 
 import api.websocket.chat_handler as ch
 
-
 # Sentinel telling "there is no conversation row" apart from "there is one and
 # it has no owner" — the whole point of the change.
 NO_ROW = object()

@@ -131,7 +131,7 @@ class KgConflationMonitor:
         for uid in uids:
             try:
                 pairs = await self.scan_for_user(uid)
-            except Exception as e:  # noqa: BLE001 — one user's bad data must not stop the scan
+            except Exception as e:
                 logger.warning("conflation scan failed for user %d: %s", uid, e)
                 # All users share this session: a DB error leaves the txn in an
                 # aborted state and every subsequent user would fail too, silently
@@ -139,7 +139,7 @@ class KgConflationMonitor:
                 # so the scan continues cleanly (no-op on a read-only session).
                 try:
                     await self.db.rollback()
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
                 continue
             for p in pairs:
@@ -154,7 +154,7 @@ class KgConflationMonitor:
         try:
             from utils.metrics import set_kg_conflation_candidates
             set_kg_conflation_candidates(len(rep.pairs))
-        except Exception:  # noqa: BLE001 — metrics are best-effort
+        except Exception:
             pass
 
         if rep.pairs:

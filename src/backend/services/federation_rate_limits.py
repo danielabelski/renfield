@@ -41,7 +41,6 @@ import asyncio
 from services.mcp_client import TokenBucketRateLimiter
 from utils.config import settings
 
-
 # Keyed by `peer.remote_pubkey` (hex string). One limiter per remote peer.
 _asker_outbound: dict[str, TokenBucketRateLimiter] = {}
 # Keyed by `asker_pubkey` (hex string from the incoming envelope).

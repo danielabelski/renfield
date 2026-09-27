@@ -71,7 +71,7 @@ async def _name_candidates(
                 f"ORDER BY ts_rank(d.search_vector, ({tsq})) DESC LIMIT :n"
             )
             fts_ids = [r[0] for r in (await db.execute(sql, params)).fetchall()]
-        except Exception as e:  # noqa: BLE001 — a signal never fails the search
+        except Exception as e:
             logger.warning(f"document_search: name FTS failed: {e}")
             fts_ids = []
     ilike_ids = await _name_ilike(db, q, kb_id, status)
@@ -108,7 +108,7 @@ async def _fact_candidates(
             q, asker_id=asker_id, top_k=_CANDIDATES, enforce_circles=enforce_circles
         )
         return _dedup_doc_ids(hits)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"document_search: fact signal failed: {e}")
         return []
 
@@ -123,7 +123,7 @@ async def _chunk_candidates(
             q, top_k=_CANDIDATES, knowledge_base_id=kb_id, user_id=asker_id
         )
         return _dedup_doc_ids(hits)  # best-first by similarity; first hit per doc
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"document_search: chunk signal failed: {e}")
         return []
 

@@ -9,10 +9,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-import workers.pdf_split_worker as w
 
 import services.pdf_split_detector as det
 import services.pdf_split_slow_lane as lane
+import workers.pdf_split_worker as w
 from models.database import (
     DOC_STATUS_PENDING,
     DOC_STATUS_SPLIT_ARCHIVED,

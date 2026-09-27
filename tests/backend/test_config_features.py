@@ -11,7 +11,6 @@ from httpx import ASGITransport, AsyncClient
 
 from utils.config import settings
 
-
 pytestmark = [pytest.mark.asyncio]
 
 

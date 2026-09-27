@@ -74,7 +74,7 @@ def _parse_volume(res: dict) -> int | None:
 
 
 class _Ducked:
-    __slots__ = ("renderer", "original", "task")
+    __slots__ = ("original", "renderer", "task")
 
     def __init__(self, renderer: str, original: int, task: asyncio.Task | None):
         self.renderer = renderer

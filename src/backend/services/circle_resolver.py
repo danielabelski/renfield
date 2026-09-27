@@ -43,13 +43,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
     Atom as AtomModel,
+)
+from models.database import (
     AtomExplicitGrant,
     Circle,
     CircleMembership,
     User,
 )
-from services.atom_types import AccessContext, Atom, DimensionSpec
-
+from services.atom_types import Atom, DimensionSpec
 
 # Sentinel for "asker is not in any of this owner's circles".
 # Stored in the cache to differentiate from "cache miss".

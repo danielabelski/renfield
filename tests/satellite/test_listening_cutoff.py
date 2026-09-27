@@ -22,7 +22,6 @@ import pathlib
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from renfield_satellite.satellite import Satellite, SatelliteState
 
 CHUNK_SIZE = 1280

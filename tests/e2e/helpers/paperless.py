@@ -41,7 +41,7 @@ def _client() -> httpx.Client:
         base_url=URL,
         headers={"Authorization": f"Token {TOKEN}"},
         timeout=30.0,
-        verify=False,     # noqa: S501 — may be http:// or self-signed
+        verify=False,
     )
 
 

@@ -108,7 +108,7 @@ async def rename_processed_to_title(
             f"folder-ingest: requested processed rename {filename!r} → {new_base!r}"
         )
         return True
-    except Exception as exc:  # noqa: BLE001 — archive rename is non-essential
+    except Exception as exc:
         logger.warning(
             f"folder-ingest: processed rename failed for {filename!r} "
             f"(best-effort, ingest unaffected): {exc}"

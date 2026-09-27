@@ -701,7 +701,6 @@ class TestBatchBCHandlers:
         """The real seed list resolves (every settings.*_interval exists), every
         seed's handler is registered, and no seed is below the engine-tick floor."""
         from services.scheduled_tasks import builtins, engine, registry
-        from utils.config import settings
 
         registry.clear_handlers()
         builtins.register_builtin_handlers()
@@ -786,8 +785,8 @@ class TestRunHistory:
         assert "unknown handler_key" in (runs[0].detail or "")
 
     async def test_retention_prunes_to_limit(self, session_factory, monkeypatch):
-        from utils.config import settings
         from services.scheduled_tasks import engine, registry
+        from utils.config import settings
 
         monkeypatch.setattr(settings, "scheduled_tasks_run_history_limit", 3)
 

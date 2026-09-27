@@ -9,7 +9,6 @@ notice.
 
 Same sqlite harness + AsyncSessionLocal rebinding as test_scheduled_tasks_engine.
 """
-import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest

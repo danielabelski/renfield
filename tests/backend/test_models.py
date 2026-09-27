@@ -653,7 +653,7 @@ class TestHomeAssistantEntityModel:
 # PDF-Split Model Tests (documents lineage columns + pdf_split_proposals)
 # ============================================================================
 
-from models.database import (  # noqa: E402 - section-local (PDF-split additions)
+from models.database import (
     DOC_STATUS_SPLIT_ARCHIVED,
     PDF_SPLIT_PROPOSAL_APPROVED,
     PDF_SPLIT_PROPOSAL_PENDING,

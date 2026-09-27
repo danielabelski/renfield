@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.database import ChatUpload, Conversation, KnowledgeBase, Message
 from models.websocket_messages import WSChatMessage
 
+
 async def _real_document(db, filename: str = "d.txt") -> int:
     """`chat_uploads.document_id` is a foreign key — the document has to exist."""
     from models.database import Document as _Doc
@@ -191,8 +192,8 @@ class TestExtractAndFinalize:
     """The background worker that the async upload schedules."""
 
     async def _seed(self, db_session, *, text="hi", file_hash="h"):
-        from pathlib import Path as _P
         import tempfile
+        from pathlib import Path as _P
         f = _P(tempfile.gettempdir()) / f"renfield-bg-{file_hash}.txt"
         f.write_text(text)
         upload = ChatUpload(
@@ -209,6 +210,7 @@ class TestExtractAndFinalize:
         """Patch the bg worker's collaborators. Returns (module, notify_mock,
         auto_index_mock) so tests can assert the WS push + auto-index calls."""
         from contextlib import asynccontextmanager
+
         from api.routes import chat_upload as cu
 
         @asynccontextmanager
@@ -377,7 +379,8 @@ class TestDocumentContextInjection:
         up. Committed rows are visible across sessions on the StaticPool
         in-memory engine.
         """
-        from sqlalchemy.ext.asyncio import AsyncSession as _AS, async_sessionmaker
+        from sqlalchemy.ext.asyncio import AsyncSession as _AS
+        from sqlalchemy.ext.asyncio import async_sessionmaker
 
         test_maker = async_sessionmaker(
             async_engine, class_=_AS, expire_on_commit=False
@@ -1297,6 +1300,7 @@ class TestChatUploadOwnership:
 
             # No dep override → get_optional_user returns None by default in tests
             import json
+
             from main import app
             mcp_result = {
                 "success": True,

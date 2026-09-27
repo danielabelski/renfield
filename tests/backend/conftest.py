@@ -8,14 +8,13 @@ Bietet:
 - Async Support
 """
 
+import os as _os
 from collections.abc import AsyncGenerator
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import os as _os
 import pytest
 from httpx import ASGITransport, AsyncClient
-
 from sqlalchemy import text as _sa_text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -23,7 +22,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 # BigInteger→INTEGER, a Python `to_tsvector` UDF) are GONE: the test
 # database is real Postgres, so the production column types compile as
 # themselves and the real functions run.
-
 # Renfield Imports
 from models.database import (
     DEFAULT_CAPABILITIES,
@@ -442,7 +440,7 @@ def pytest_collection_modifyitems(config, items):
 def pytest_configure(config):
     config.addinivalue_line(
         "markers",
-        "postgres: Tests requiring real PostgreSQL + pgvector (skipped on sqlite test harness)",  # noqa: E501 — kept verbatim to match pyproject.toml; the harness itself is Postgres now
+        "postgres: Tests requiring real PostgreSQL + pgvector (skipped on sqlite test harness)",
     )
 
 
@@ -698,7 +696,8 @@ async def make_user(db_session: AsyncSession):
 
         u = await make_user(7)        # -> User with id 7
     """
-    from models.database import Role, User as _User
+    from models.database import Role
+    from models.database import User as _User
 
     role = Role(name="rolle-fixture", permissions=["chat.own"], is_system=False)
     db_session.add(role)
@@ -1006,7 +1005,7 @@ def _ensure_ha_glue_routes(app):
         try:
             module = importlib.import_module(module_path)
             router = module.router
-        except Exception:  # noqa: BLE001 — platform-only deploy / broken module
+        except Exception:
             continue
         # For routers with no easily-probed sentinel path, fall back to a
         # router-identity check so they're still mounted only once.

@@ -30,7 +30,7 @@ async def _clean_startup_tasks():
     for t in added:
         try:
             await t
-        except BaseException:  # noqa: BLE001 — best-effort teardown
+        except BaseException:
             pass
     lifecycle._startup_tasks[:] = before
 
@@ -120,7 +120,7 @@ async def test_cancel_during_boot_run_terminates_cleanly():
 # The audit REST router is mounted here, not inside the HA-only ha_glue plugin, so
 # it reaches HA-less deploys (business/xidra) instead of 404'ing.
 
-from unittest.mock import MagicMock  # noqa: E402
+from unittest.mock import MagicMock
 
 
 async def test_init_paperless_audit_mounts_when_enabled(monkeypatch):

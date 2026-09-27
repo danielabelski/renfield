@@ -8,7 +8,6 @@ the address 70:81:94:0D:FB:AA.
 from types import SimpleNamespace
 
 import pytest
-
 from renfield_satellite.ble import rpa
 from renfield_satellite.ble.scanner import BLEScanner
 

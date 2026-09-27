@@ -15,9 +15,9 @@ import types
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-import workers.document_processor_worker as worker
 
 import services.pdf_splitter as pdf_splitter
+import workers.document_processor_worker as worker
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 

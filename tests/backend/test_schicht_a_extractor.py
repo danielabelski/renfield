@@ -20,15 +20,16 @@ _missing_stubs = [
     "openwakeword", "openwakeword.model",
 ]
 import importlib as _importlib
+
 for _mod in _missing_stubs:
     if _mod in sys.modules:
         continue
     try:
         _importlib.import_module(_mod)
-    except Exception:  # noqa: BLE001
+    except Exception:
         sys.modules[_mod] = MagicMock()
 
-from services.schicht_a_extractor import (  # noqa: E402
+from services.schicht_a_extractor import (
     _MAX_OPEN_FACTS,
     SchichtAExtractor,
     _clean_currency,

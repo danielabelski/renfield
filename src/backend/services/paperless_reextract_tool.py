@@ -236,7 +236,7 @@ async def reextract_paperless_metadata(
             "action_taken": fixed > 0,
             "data": {"fixed": fixed, "already": already, "skipped": skipped, "unmatched": unmatched},
         }
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"reextract_paperless_metadata failed: {e}")
         return {
             "success": False,

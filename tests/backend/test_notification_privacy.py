@@ -18,7 +18,6 @@ import pytest
 
 from ha_glue.services.notification_privacy import ha_should_play_tts_for_notification
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

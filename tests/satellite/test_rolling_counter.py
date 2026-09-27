@@ -7,7 +7,6 @@ with different uptimes.
 """
 
 import pytest
-
 from renfield_satellite.metrics import METRICS_WINDOW_SECONDS, RollingCounter
 
 

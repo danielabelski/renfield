@@ -195,9 +195,9 @@ class TestWebsocketStrategy:
         # Pin the call sites: only satellite_handler passes allow_satellite_psk=True.
         import inspect
 
+        import main
         from api.websocket import chat_handler, kg_live_handler, kiosk_handler, user_events_handler
         from ha_glue.api.websocket import device_handler, satellite_handler
-        import main
 
         for mod in (chat_handler, kg_live_handler, kiosk_handler, user_events_handler, device_handler, main):
             src = inspect.getsource(mod)

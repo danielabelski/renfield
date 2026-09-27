@@ -1,6 +1,5 @@
 """Tests for WhisperPromptBuilder (Phase B-3)."""
 import sys
-import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Pre-mock optional native deps so module import doesn't drag in faster_whisper.
@@ -11,6 +10,7 @@ _missing_stubs = [
     "piper", "piper.voice",
 ]
 import importlib as _importlib
+
 for _mod in _missing_stubs:
     # Stub ONLY when genuinely unimportable — unconditional stubbing
     # poisons sys.modules for the rest of the session, breaking later
@@ -19,7 +19,7 @@ for _mod in _missing_stubs:
         continue
     try:
         _importlib.import_module(_mod)
-    except Exception:  # noqa: BLE001
+    except Exception:
         sys.modules[_mod] = MagicMock()
 
 import pytest

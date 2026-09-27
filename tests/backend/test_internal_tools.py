@@ -1024,8 +1024,9 @@ class TestGetUserLocation:
     @pytest.mark.unit
     async def test_user_found_in_room(self, internal_tools):
         """User with active presence returns room info."""
-        from ha_glue.services.presence_service import UserPresence
         import time
+
+        from ha_glue.services.presence_service import UserPresence
 
         mock_presence_service = MagicMock()
         mock_presence_service.find_user_by_name.return_value = 1
@@ -1099,8 +1100,9 @@ class TestGetAllPresence:
     @pytest.mark.unit
     async def test_users_present(self, internal_tools):
         """Returns all currently present users."""
-        from ha_glue.services.presence_service import UserPresence
         import time
+
+        from ha_glue.services.presence_service import UserPresence
 
         now = time.time()
         mock_presence_service = MagicMock()
@@ -3474,6 +3476,7 @@ class TestAnnounceInRoom:
                     camera_sat=False, snapshot=None, people=None, fail_closed=False):
         import sys
         from types import ModuleType
+
         from ha_glue.utils.config import ha_glue_settings
 
         mock_db = AsyncMock()
@@ -4228,6 +4231,7 @@ class TestRegisterMediaFollowPresenceFallback:
     @pytest.mark.unit
     def test_presence_room_user_single_vs_ambiguous(self, internal_tools, monkeypatch):
         from types import SimpleNamespace
+
         import ha_glue.services.presence_service as ps
 
         class _PS:
@@ -4245,8 +4249,8 @@ class TestRegisterMediaFollowPresenceFallback:
         assert internal_tools._presence_room_user(2) is None
 
     def _wire(self, internal_tools, monkeypatch, presence_user, captured):
-        from ha_glue.utils.config import ha_glue_settings
         import ha_glue.services.media_follow_service as mfs
+        from ha_glue.utils.config import ha_glue_settings
         monkeypatch.setattr(ha_glue_settings, "media_follow_enabled", True)
         monkeypatch.setattr(internal_tools, "_get_room_id", AsyncMock(return_value=2))
         monkeypatch.setattr(internal_tools, "_presence_room_user", lambda rid: presence_user)

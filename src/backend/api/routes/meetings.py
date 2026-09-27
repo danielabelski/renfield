@@ -25,8 +25,8 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import Meeting, User
-from services.circle_sql import meetings_circles_filter
 from services.auth_service import get_optional_user
+from services.circle_sql import meetings_circles_filter
 from services.database import get_db
 from services.redis_client import get_redis
 from services.task_queue import MeetingTaskQueue
@@ -63,7 +63,7 @@ async def _meeting_worker_is_alive() -> bool:
     redis = get_redis()
     try:
         value = await redis.get(_MEETING_WORKER_HEARTBEAT_KEY)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"meeting worker heartbeat check failed: {e}; treating as unavailable")
         return False
     return value is not None
@@ -136,7 +136,7 @@ async def _ensure_meeting_atom(db: AsyncSession, meeting: Meeting) -> None:
                 tier=int(meeting.circle_tier or 0),
                 source_id=meeting.id,
             )
-    except Exception as e:  # noqa: BLE001 — a recording must not die over an atom
+    except Exception as e:
         meeting.atom_id = None
         logger.warning(f"⚠️ Meeting ohne Atom angelegt (id={meeting.id}): {e}")
 
@@ -255,7 +255,7 @@ async def transcribe_meeting(
         meeting.error = "audio exceeds size limit"
         await db.commit()
         raise HTTPException(status_code=413, detail="audio file too large")
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         _safe_unlink(audio_path)
         meeting.status = "failed"
         meeting.error = f"upload failed: {e}"
@@ -276,7 +276,7 @@ async def transcribe_meeting(
     try:
         queue = MeetingTaskQueue(redis_client=get_redis())
         await queue.enqueue({"meeting_id": meeting.id, "audio_path": audio_path})
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         _safe_unlink(audio_path)
         meeting.status = "failed"
         meeting.error = f"enqueue failed: {e}"
@@ -474,7 +474,7 @@ async def relabel_speaker(
                 db, meeting, data.speaker_key, data.label
             )
             cross_meeting_applied = len(affected)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"meeting {meeting_id}: merge-on-enroll propagation failed: {e}")
 
     return RelabelResponse(**_to_response(meeting).model_dump(),

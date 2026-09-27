@@ -8,7 +8,7 @@ Covers:
 """
 
 from dataclasses import dataclass
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import select

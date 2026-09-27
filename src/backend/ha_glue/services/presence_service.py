@@ -13,9 +13,8 @@ from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from utils.config import settings
 from ha_glue.utils.config import ha_glue_settings
-
+from utils.config import settings
 
 # Security (review H1): IRKs permanently de-anonymize a resident's rotating BLE
 # address. Only push them to allowlisted satellites. Track which satellites we've

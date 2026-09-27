@@ -45,7 +45,7 @@ territory (services.intent_feedback_service.IntentFeedbackService).
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 
 from loguru import logger
 from sqlalchemy import desc, select
@@ -253,7 +253,7 @@ class ToolOutcomeService:
                 user_id=user_id, tool_name=tool_name,
                 success=success, failure_summary=failure_summary,
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(
                 f"⚠️ ToolOutcomeService.record failed for {tool_name!r}: {e}"
             )

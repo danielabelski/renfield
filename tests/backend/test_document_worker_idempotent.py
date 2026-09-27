@@ -18,7 +18,6 @@ import pytest
 import workers.document_processor_worker as worker
 from services.document_processing_history import ProcessingStatus
 
-
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
 

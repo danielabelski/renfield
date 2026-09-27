@@ -5,9 +5,8 @@ Tests that verify the API responses match what the frontend expects.
 These tests ensure backend changes don't break the frontend.
 """
 
-import pytest
-from unittest.mock import patch, AsyncMock
 
+import pytest
 
 # ============================================================================
 # Rooms API Contract Tests

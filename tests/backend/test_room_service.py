@@ -12,8 +12,8 @@ Testet:
 
 import pytest
 
-from models.database import DEVICE_TYPE_SATELLITE, DEVICE_TYPE_WEB_BROWSER, DEVICE_TYPE_WEB_PANEL, Room, RoomDevice
 from ha_glue.services.room_service import RoomService, generate_device_id, normalize_room_name
+from models.database import DEVICE_TYPE_SATELLITE, DEVICE_TYPE_WEB_BROWSER, DEVICE_TYPE_WEB_PANEL, Room, RoomDevice
 
 # ============================================================================
 # normalize_room_name Tests

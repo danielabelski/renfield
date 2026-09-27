@@ -51,7 +51,7 @@ def register_document_ingest_hooks() -> None:
             from services.knowledge_graph_service import kg_post_document_ingest_hook
 
             _maybe_register("knowledge_graph", kg_post_document_ingest_hook)
-        except Exception:  # noqa: BLE001 — fail-open, never block ingestion
+        except Exception:
             logger.opt(exception=True).warning(
                 "Failed to register KG post_document_ingest hook — KG extraction "
                 "disabled for this process; ingestion continues."
@@ -64,7 +64,7 @@ def register_document_ingest_hooks() -> None:
             )
 
             _maybe_register("schicht_a", schicht_a_post_document_ingest_hook)
-        except Exception:  # noqa: BLE001 — fail-open, never block ingestion
+        except Exception:
             logger.opt(exception=True).warning(
                 "Failed to register Schicht A post_document_ingest hook — field "
                 "extraction disabled for this process; ingestion continues."
@@ -80,7 +80,7 @@ def register_document_ingest_hooks() -> None:
             )
 
             _maybe_register("paperless_filing", paperless_filing_post_ingest_hook)
-        except Exception:  # noqa: BLE001 — fail-open, never block ingestion
+        except Exception:
             logger.opt(exception=True).warning(
                 "Failed to register Paperless filing post_document_ingest hook — "
                 "Paperless filing disabled for this process; ingestion continues."
@@ -94,7 +94,7 @@ def register_document_ingest_hooks() -> None:
             from services.simba_ingest_review import simba_ingest_post_hook
 
             _maybe_register("simba_ingest", simba_ingest_post_hook)
-        except Exception:  # noqa: BLE001 — fail-open, never block ingestion
+        except Exception:
             logger.opt(exception=True).warning(
                 "Failed to register Simba-ingest post_document_ingest hook — "
                 "Simba review disabled for this process; ingestion continues."
