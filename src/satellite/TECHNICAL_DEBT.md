@@ -84,7 +84,7 @@ curl -L -o /opt/renfield-satellite/models/silero_vad.onnx \
     - Aus pcap eindeutig sehen: TCP-SYN ohne SYN-ACK? TLS-ClientHello ohne ServerHello? mDNS-Anfragen ohne Antwort?
     - Erst dann Symptom-Hardening (z. B. `open_timeout=30s` in `WebSocketClient` + kürzerer Initial-Backoff) oder echten Root-Cause-Fix entscheiden.
   - **Workaround heute:** `systemctl restart renfield-satellite` nach Boot reicht aus.
-  - Quelle/Kontext der Untersuchung: Session vom 2026-05-03; Pfade: `src/satellite/renfield_satellite/network/websocket_client.py:240-241` (ping_interval/timeout), `:535-566` (heartbeat fire-and-forget — separate Härtung möglich), `satellite.py:411-446` (`_reconnect_with_discovery`).
+  - Quelle/Kontext der Untersuchung: Session vom 2026-05-03. Pfade **neu gemessen am 2026-09-27** (die Verweise von 2026-05-03 waren um Hunderte Zeilen verrutscht — ein Verweis, der ins Leere zeigt, kostet beim nächsten Auftreten genau die Zeit, die er sparen sollte): `src/satellite/renfield_satellite/network/websocket_client.py:105-106` (`ping_interval`/`ping_timeout` als Vorgabewerte), `:136-137` (Zuweisung), `:345-346` (Übergabe an `connect`), `:818-849` (`_heartbeat_loop`, fire-and-forget — separate Härtung möglich), `satellite.py:626` (`_reconnect_with_discovery`, aufgerufen über den Wrapper bei `:505-508`).
 
 - [x] **Sprechererkennung** ✅ (Bereits im Backend implementiert)
   - SpeechBrain ECAPA-TDNN auf Backend

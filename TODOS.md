@@ -31,12 +31,12 @@ Last reviewed: 2026-05-03 (post-release sweep). Voice pipeline Phase A (v2.3.0) 
 
 **Vollständige Auflistung: [`docs/BACKLOG_INVENTORY.md`](docs/BACKLOG_INVENTORY.md)** — diese
 Sicht hier nennt nur die Spitzenposten je Stufe, nicht den gesamten Bestand (über 150
-Posten). Erfasst aus **beiden** Quellen — 41 offene GitHub-Issues und die
+Posten). Erfasst aus **beiden** Quellen — 40 offene GitHub-Issues (gemessen 2026-09-27; die 41 stammten von vor dem Aufräumen) und die
 Dokumentation (dieser Index, `docs/design/*`, `CLAUDE.md`, Funktionsschalter,
 `TECHNICAL_DEBT.md`). Die Einzelposten stehen unverändert in den Tier-Abschnitten
 unten; diese Sicht ordnet sie nur. **Nicht erfasst:** `tasks/*.md` (33 Planungsdateien).
 
-**Lagebild:** 28 der 41 Issues sind seit über 90 Tagen unberührt. 33 fertig gebaute
+**Lagebild (gemessen 2026-09-27):** 19 der 40 Issues sind seit über 90 Tagen unberührt — vorher 28 von 41; die Issue-Aktionen vom 2026-09-27 (#11, #13, #23, #127, #1113, #1116, #1277 geschlossen, #1343/#1344/#1345 angelegt) haben genau die ältesten getroffen. Ältestes offenes Issue: 2026-01-24. 33 fertig gebaute
 Funktionen sind auf **keiner** Instanz je eingeschaltet worden. Kein P0.
 
 ### S1 — Kaputt oder blind, jetzt

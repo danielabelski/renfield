@@ -79,7 +79,7 @@ For architecture questions use the `architecture-guide` agent; it reads `.claude
 
 ## Testing
 
-Tests live in `tests/` at the project root (backend 3,400+). Markers: `@pytest.mark.unit`, `database`, `integration`, `e2e`, `backend`, `frontend`, `satellite`, `postgres`.
+Tests live in `tests/` at the project root (Zahlen: `docs/TECHNICAL_DEBT.md` → Test-Coverage; hier KEINE zweite Zahl, sie driftet). Markers: `@pytest.mark.unit`, `database`, `integration`, `e2e`, `backend`, `frontend`, `satellite`, `postgres`.
 
 **There is no local Python test environment and GitHub CI does not run.** Reality:
 
