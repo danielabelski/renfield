@@ -121,7 +121,7 @@ class _Op:
     def add_column(self, table, column):
         from sqlalchemy.schema import CreateColumn
 
-        ddl = str(CreateColumn(column).compile(self._conn.engine.dialect))
+        ddl = str(CreateColumn(column).compile(dialect=self._conn.engine.dialect))
         self._conn.exec_driver_sql(f'ALTER TABLE "{table}" ADD COLUMN {ddl}')
 
     def drop_column(self, table, column_name):

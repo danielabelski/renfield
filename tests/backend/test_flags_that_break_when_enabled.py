@@ -626,6 +626,23 @@ class TestLoginWithholdsTokensForSecondFactor:
     die Anmeldung dann einfach normal anfühlt.
     """
 
+    @pytest.fixture(autouse=True)
+    def _own_session(self, monkeypatch, db_session):
+        """🛑 `DBProvider` oeffnet eine EIGENE Sitzung (`auth/providers/db.py:40`,
+        `AsyncSessionLocal`) — der Vertrag der Anbieter traegt kein `db`. Ohne
+        diese Umlenkung sieht der Anbieter-Walk den Testnutzer nicht und die
+        Anmeldung endet in 401 „Incorrect username or password", was wie ein
+        Testfehler aussieht und keiner ist. Dasselbe Muster wie
+        `test_auth_cookies.py::ws_session_factory`.
+        """
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+        import services.database as db_mod
+
+        monkeypatch.setattr(db_mod, "AsyncSessionLocal", async_sessionmaker(
+            db_session.bind, class_=AsyncSession, expire_on_commit=False,
+        ))
+
     @staticmethod
     def _request():
         from starlette.requests import Request
@@ -648,14 +665,25 @@ class TestLoginWithholdsTokensForSecondFactor:
         return f
 
     async def _user(self, db, *, second_factor: bool):
+        """🛑 EINDEUTIGE Namen je Lauf, und das ist kein Stilpunkt.
+
+        Die Testbank ist echtes, geteiltes Postgres, und die Anmeldesperre liegt
+        in echtem Redis. Mit festen Namen nimmt ein Lauf den Zustand des vorigen
+        mit: meine eigenen fehlgeschlagenen Versuche haben `anna2fa` gesperrt, und
+        danach schlugen ALLE Tests dieser Klasse mit 401 fehl — ein Fehlerbild, das
+        wie ein Produktfehler aussieht und keiner ist. Dieselbe Falle wie in
+        `test_pc20260423_migration.py`; dort mit demselben Mittel gelöst.
+        """
+        import uuid
+
         from models.database import Role, User
         from services.auth_service import get_password_hash
 
-        role = Role(name=f"L2F{'A' if second_factor else 'B'}", description="",
-                    permissions=["chat.own"])
+        tag = uuid.uuid4().hex[:8]
+        role = Role(name=f"L2F-{tag}", description="", permissions=["chat.own"])
         db.add(role)
         await db.flush()
-        user = User(username="anna2fa" if second_factor else "anna1fa",
+        user = User(username=f"anna-{tag}",
                     password_hash=get_password_hash("pw"), role_id=role.id,
                     is_active=True, token_epoch=0,
                     voice_second_factor_enabled=second_factor)

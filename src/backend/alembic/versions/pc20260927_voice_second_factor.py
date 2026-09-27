@@ -32,9 +32,17 @@ _COLUMN = "voice_second_factor_enabled"
 
 
 def _has_column(conn) -> bool:
+    # 🛑 `table_schema = current_schema()` ist NICHT Zierrat. Ohne den Filter sieht
+    # die Abfrage JEDE `users`-Tabelle der Datenbank — in einer Installation mit
+    # mehreren Schemata also auch eine fremde, und die Migration kehrte
+    # stillschweigend zurueck, ohne etwas zu tun. Genau das ist im Migrationstest
+    # passiert (Wegwerf-Schema neben `public`), und in der Produktion faellt es
+    # nur deshalb nicht auf, weil es dort ein Schema gibt. Eine Pruefung, die vom
+    # Zufall der Schema-Anzahl lebt, ist keine.
     return bool(conn.execute(sa.text("""
         SELECT 1 FROM information_schema.columns
-        WHERE table_name = :t AND column_name = :c
+        WHERE table_schema = current_schema()
+          AND table_name = :t AND column_name = :c
     """), {"t": _TABLE, "c": _COLUMN}).scalar())
 
 
