@@ -712,7 +712,7 @@ class QueryOrchestrator:
         # reaches the user. Without this, the UI would render 1 + N
         # answers each with their own greeting.
         sub_results: list[dict] = sub_results_out if sub_results_out is not None else []
-        for sq, result in zip(sub_queries, raw_results):
+        for sq, result in zip(sub_queries, raw_results, strict=True):
             if isinstance(result, BaseException):
                 # Defensive: _run_sub_agent shouldn't raise. If it ever does,
                 # fall back to a canonical-shape failure record so post_orchestration

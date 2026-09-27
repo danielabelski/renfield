@@ -134,8 +134,8 @@ class SystemMonitor:
                     "--no-stream",
                     "--format",
                     '{"name":"{{.Name}}","cpu":"{{.CPUPerc}}","mem":"{{.MemUsage}}","mem_perc":"{{.MemPerc}}"}',
-                ]
-                + DOCKER_CONTAINERS,
+                    *DOCKER_CONTAINERS,
+                ],
                 capture_output=True,
                 text=True,
                 timeout=15,

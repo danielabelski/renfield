@@ -238,7 +238,7 @@ class ToolOutcomeService:
 
         # Loop ended with an unresolved pending call → treat as failure.
         if pending is not None:
-            tool, idx = pending
+            tool, _idx = pending
             summary = self._summary_for_orphan(steps, n)
             await self._safe_record(
                 user_id=user_id, tool_name=tool,

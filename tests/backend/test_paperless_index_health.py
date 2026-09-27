@@ -175,7 +175,7 @@ class TestCallShape:
         redis.kv[pih.CURSOR_KEY] = "3"
         mcp = _MCP(_result())
         await pih.run_index_health_check(mcp)
-        tool, params, kw = mcp.calls[0]
+        _tool, params, kw = mcp.calls[0]
         assert params == {
             "sample_size": 40, "page": 3, "heal": False, "max_touch": 7,
             "min_age_seconds": 600, "probe_proven": False, "exclude_ids": [],
@@ -301,7 +301,7 @@ class TestWorkflowBlock:
     async def test_active_workflows_block_raises(self, flags, redis, monkeypatch):
         monkeypatch.setattr(flags, "paperless_index_heal_enabled", True)
         redis.kv[pih.CURSOR_KEY] = "4"
-        with pytest.raises(RuntimeError, match="blockiert.*2 aktive"):
+        with pytest.raises(RuntimeError, match=r"blockiert.*2 aktive"):
             await pih.run_index_health_check(_MCP(_result(
                 verdict="degraded", missing=3, found=47, heal_blocked="workflows",
                 blocking_workflows=2, next_page=5,

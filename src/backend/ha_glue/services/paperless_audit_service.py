@@ -750,7 +750,7 @@ class PaperlessAuditService:
         selection = result.field_selection if isinstance(result.field_selection, list) else None
 
         def _eff(field, suggested):
-            return overrides[field] if field in overrides else suggested
+            return overrides.get(field, suggested)
 
         def _sel(field):
             # A manual override IS an explicit intent to apply that field, so it

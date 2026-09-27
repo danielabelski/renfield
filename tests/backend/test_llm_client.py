@@ -107,7 +107,7 @@ class TestCreateLLMClient:
         result = create_llm_client("http://localhost:11434")
 
         # Client is created with host + explicit httpx.Timeout kwargs
-        args, kwargs = mock_cls.call_args
+        _args, kwargs = mock_cls.call_args
         assert kwargs.get("host") == "http://localhost:11434"
         assert "timeout" in kwargs
         assert result is sentinel
@@ -191,7 +191,7 @@ class TestGetDefaultClient:
 
         result = get_default_client()
 
-        args, kwargs = mock_cls.call_args
+        _args, kwargs = mock_cls.call_args
         assert kwargs.get("host") == "http://my-ollama:11434"
         assert result is sentinel
 
@@ -262,7 +262,7 @@ class TestGetEmbedClient:
 
         result = get_embed_client()
 
-        args, kwargs = mock_cls.call_args
+        _args, kwargs = mock_cls.call_args
         assert kwargs.get("host") == "http://embed-host:11434"
         assert result.inner is sentinel
 
@@ -283,7 +283,7 @@ class TestGetEmbedClient:
 
         result = get_embed_client()
 
-        args, kwargs = mock_cls.call_args
+        _args, kwargs = mock_cls.call_args
         assert kwargs.get("host") == "http://default:11434"
         assert result.inner is sentinel
 
@@ -321,9 +321,9 @@ class TestGetEmbedClient:
         sentinel = MagicMock()
         mock_cls.return_value = sentinel
 
-        result = get_embed_client()
+        _result = get_embed_client()
 
-        args, kwargs = mock_cls.call_args
+        _args, kwargs = mock_cls.call_args
         assert kwargs.get("host") == "http://default:11434"
 
 
@@ -1220,7 +1220,7 @@ class TestGetDedicatedClient:
 
         result = get_dedicated_client("http://router-ollama:11434")
 
-        args, kwargs = mock_cls.call_args
+        _args, kwargs = mock_cls.call_args
         assert kwargs.get("host") == "http://router-ollama:11434"
         assert result is sentinel
 

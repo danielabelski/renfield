@@ -9,6 +9,7 @@ Lane F1 of the second-brain-circles federation plan.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import FrozenInstanceError
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -54,7 +55,7 @@ class TestProgressChunk:
     @pytest.mark.unit
     def test_frozen_dataclass(self):
         chunk = ProgressChunk(label=PROGRESS_LABEL_COMPLETE)
-        with pytest.raises(Exception):  # FrozenInstanceError under dataclass
+        with pytest.raises(FrozenInstanceError):
             chunk.label = PROGRESS_LABEL_WAKING_UP  # type: ignore[misc]
 
     @pytest.mark.unit

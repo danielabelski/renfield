@@ -88,7 +88,7 @@ async def test_routes_404_when_flag_off(async_client: AsyncClient):
 
 
 async def test_list_and_detail(async_client: AsyncClient, db_session, _enabled):
-    doc, row = await _seed(db_session)
+    _doc, row = await _seed(db_session)
 
     resp = await async_client.get("/api/pdf-split/proposals")
     assert resp.status_code == 200
@@ -127,7 +127,7 @@ async def test_approve_as_is_enqueues_worker_execution(
 
 
 async def test_approve_with_edited_ranges(async_client: AsyncClient, db_session, _enabled):
-    doc, row = await _seed(db_session)
+    _doc, row = await _seed(db_session)
 
     resp = await async_client.post(
         f"/api/pdf-split/proposals/{row.id}/approve",
@@ -143,7 +143,7 @@ async def test_approve_with_edited_ranges(async_client: AsyncClient, db_session,
 async def test_approve_non_covering_ranges_is_422(
     async_client: AsyncClient, db_session, _enabled
 ):
-    doc, row = await _seed(db_session)
+    _doc, row = await _seed(db_session)
 
     resp = await async_client.post(
         f"/api/pdf-split/proposals/{row.id}/approve",
@@ -177,7 +177,7 @@ async def test_cross_resolution_conflicts_409(
 ):
     """Approving a REJECTED proposal (or rejecting an APPROVED one) is a
     genuine conflict — the MATCHING action instead retries idempotently."""
-    doc, row = await _seed(db_session)
+    _doc, row = await _seed(db_session)
     row.status = PDF_SPLIT_PROPOSAL_REJECTED
     await db_session.commit()
 
@@ -206,7 +206,7 @@ async def test_approve_retry_is_idempotent_re_enqueue(
 async def test_reject_retry_is_idempotent_re_enqueue(
     async_client: AsyncClient, db_session, _enabled
 ):
-    doc, row = await _seed(db_session, status=DOC_STATUS_PENDING)
+    _doc, row = await _seed(db_session, status=DOC_STATUS_PENDING)
     row.status = PDF_SPLIT_PROPOSAL_REJECTED
     await db_session.commit()
 
@@ -218,7 +218,7 @@ async def test_reject_retry_is_idempotent_re_enqueue(
 
 
 async def test_worker_dead_is_503(async_client: AsyncClient, db_session, _enabled, monkeypatch):
-    doc, row = await _seed(db_session)
+    _doc, row = await _seed(db_session)
     monkeypatch.setattr(
         "api.routes.pdf_split.document_worker_is_alive", AsyncMock(return_value=False)
     )
@@ -232,7 +232,7 @@ async def test_worker_dead_is_503(async_client: AsyncClient, db_session, _enable
 async def test_page_render_missing_file_is_404(
     async_client: AsyncClient, db_session, _enabled
 ):
-    doc, row = await _seed(db_session)  # file_path doesn't exist on disk
+    _doc, row = await _seed(db_session)  # file_path doesn't exist on disk
     resp = await async_client.get(f"/api/pdf-split/proposals/{row.id}/pages/1")
     assert resp.status_code == 404
 
@@ -346,7 +346,7 @@ async def test_ownerless_proposal_visible_to_admin_only(db_session, monkeypatch)
     from api.routes.pdf_split import _owned_proposal
     from utils.config import settings as cfg
 
-    doc, row = await _seed(db_session)
+    _doc, row = await _seed(db_session)
     row.user_id = None
     await db_session.commit()
     monkeypatch.setattr(cfg, "auth_enabled", True)

@@ -12,6 +12,7 @@ from datetime import datetime
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
@@ -645,7 +646,7 @@ class TestHomeAssistantEntityModel:
 
         db_session.add(entity2)
 
-        with pytest.raises(Exception):  # IntegrityError
+        with pytest.raises(IntegrityError):
             await db_session.commit()
 
 

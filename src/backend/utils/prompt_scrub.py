@@ -87,7 +87,8 @@ _ZERO_WIDTH_RE = re.compile(r"[​‌‍‎‏﻿]")
 # parametrize tests over the scrub list. New code should not rely on this
 # being exhaustive — the regex patterns above are the source of truth.
 # Each entry here SHOULD produce a match when fed through scrub_for_prompt.
-SCRUB_PATTERNS: tuple[tuple[str, str], ...] = _LITERAL_PATTERNS + (
+SCRUB_PATTERNS: tuple[tuple[str, str], ...] = (
+    *_LITERAL_PATTERNS,
     ("system:", "[sys]"),
     ("System:", "[sys]"),
     ("SYSTEM:", "[sys]"),

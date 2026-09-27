@@ -263,7 +263,8 @@ async def test_dense_and_fts_branches_apply_identical_circle_filter(monkeypatch)
 
     (fts_sql, fts_params), (dense_sql, dense_params) = captured[0], captured[1]
     branch_only = {"limit", "or_query", "qemb"}
-    circle = lambda p: {k: v for k, v in p.items() if k not in branch_only}
+    def circle(p):
+        return {k: v for k, v in p.items() if k not in branch_only}
     assert circle(fts_params) == circle(dense_params) and circle(fts_params)  # non-empty + equal
     assert "circle_tier" in fts_sql and "circle_tier" in dense_sql
 

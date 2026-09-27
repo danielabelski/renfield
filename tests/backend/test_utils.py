@@ -70,7 +70,7 @@ class TestConfigSettings:
         with patch.dict(os.environ, {"OLLAMA_MODEL": "custom-model"}):
             from utils.config import Settings
 
-            settings = Settings()
+            _settings = Settings()
             # Note: May need to reload module for this to work
             # This test demonstrates the pattern
 

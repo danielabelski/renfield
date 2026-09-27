@@ -343,7 +343,7 @@ def _devperroom_prose(room_labels: list[str], counts_for_rooms: list[int],
         )
     # A compact "Raum (n)" legend so the bar order is self-describing.
     legend = ", ".join(
-        f"{r} ({c})" for r, c in zip(room_labels, counts_for_rooms)
+        f"{r} ({c})" for r, c in zip(room_labels, counts_for_rooms, strict=True)
     )
     if is_de:
         base = f"Geräte pro Raum (von links nach rechts): {legend}."

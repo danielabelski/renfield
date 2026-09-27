@@ -155,7 +155,7 @@ async def test_event_lands_in_the_requesting_conversation(conversation, monkeypa
     assert kwargs["session_id"] == "session-1" and kwargs["user_id"] == 7
     assert kwargs["role"] == "assistant" and kwargs["enforce_ownership"] is True
     assert "613" in kwargs["content"] and "Paperless" in kwargs["content"]
-    channel, payload = redis.published[0]
+    _channel, payload = redis.published[0]
     assert json.loads(payload) == {"target": 7, "type": "scan_job_finished", "reason": "done",
                                    "session_id": "session-1"}
 

@@ -463,7 +463,7 @@ class RAGRetrieval:
                         timeout=settings.rag_embedding_timeout,
                     )
                 c_emb = c_resp.embedding
-                dot = sum(a * b for a, b in zip(q_emb, c_emb))
+                dot = sum(a * b for a, b in zip(q_emb, c_emb, strict=True))
                 norm_q = sum(a * a for a in q_emb) ** 0.5
                 norm_c = sum(a * a for a in c_emb) ** 0.5
                 sim = dot / (norm_q * norm_c) if norm_q and norm_c else 0

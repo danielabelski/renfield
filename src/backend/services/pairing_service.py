@@ -143,9 +143,7 @@ def _pop_cached_nonce(nonce: str, initiator_user_id: int) -> bool:
         return False
     if cached.initiator_user_id != initiator_user_id:
         return False
-    if cached.expires_at < int(time.time()):
-        return False
-    return True
+    return cached.expires_at >= int(time.time())
 
 
 def _clear_nonce_cache_for_tests() -> None:

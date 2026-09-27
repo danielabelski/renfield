@@ -594,27 +594,27 @@ class RadioFavorite(Base):
 
 
 __all__ = [
+    "DEFAULT_CAPABILITIES",
+    "DEVICE_TYPES",
+    # Device type constants
+    "DEVICE_TYPE_SATELLITE",
+    "DEVICE_TYPE_WEB_BROWSER",
+    "DEVICE_TYPE_WEB_KIOSK",
+    "DEVICE_TYPE_WEB_PANEL",
+    "DEVICE_TYPE_WEB_TABLET",
+    "OUTPUT_TYPES",
+    # Output type constants
+    "OUTPUT_TYPE_AUDIO",
+    "OUTPUT_TYPE_VISUAL",
     # Tables
     "CameraEvent",
     "HomeAssistantEntity",
+    "PaperlessAuditResult",
+    "PresenceEvent",
+    "RadioFavorite",
     "Room",
     "RoomDevice",
     "RoomOutputDevice",
     "RoomSatellite",
     "UserBleDevice",
-    "PresenceEvent",
-    "PaperlessAuditResult",
-    "RadioFavorite",
-    # Device type constants
-    "DEVICE_TYPE_SATELLITE",
-    "DEVICE_TYPE_WEB_PANEL",
-    "DEVICE_TYPE_WEB_TABLET",
-    "DEVICE_TYPE_WEB_BROWSER",
-    "DEVICE_TYPE_WEB_KIOSK",
-    "DEVICE_TYPES",
-    "DEFAULT_CAPABILITIES",
-    # Output type constants
-    "OUTPUT_TYPE_AUDIO",
-    "OUTPUT_TYPE_VISUAL",
-    "OUTPUT_TYPES",
 ]

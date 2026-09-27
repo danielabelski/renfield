@@ -139,7 +139,7 @@ class TestUpdateManagerVerify:
     def test_signed_but_no_pinned_keys_rejected(self):
         root = Path(tempfile.mkdtemp())
         _make_source(root)
-        manifest, sig, pub = self._signed(root)
+        manifest, sig, _pub = self._signed(root)
         m = self._mgr([], require=False)  # signature present → must verify anyway
         req = UpdateRequest("9.9.9", "u", "sha256:x", 1, manifest=manifest, signature=sig)
         with pytest.raises(UpdateError):

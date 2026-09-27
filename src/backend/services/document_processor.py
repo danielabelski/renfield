@@ -122,7 +122,10 @@ class DocumentProcessor:
         try:
             from docling.chunking import HybridChunker
             from docling.datamodel.base_models import InputFormat
-            from docling.datamodel.pipeline_options import OcrAutoOptions, PdfPipelineOptions
+            from docling.datamodel.pipeline_options import (  # noqa: F401 — Verfuegbarkeitstest, s. except darunter
+                OcrAutoOptions,
+                PdfPipelineOptions,
+            )
             from docling.document_converter import DocumentConverter, PdfFormatOption
 
             logger.info("Initialisiere Docling DocumentConverter (Standard)...")

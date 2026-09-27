@@ -227,7 +227,7 @@ def test_build_chart_well_formed():
     # Ohne Raum: sensor.flur_motion = 1
     labels = art["_room_labels"]
     ys = [int(p["y"]) for p in points]
-    by_room = dict(zip(labels, ys))
+    by_room = dict(zip(labels, ys, strict=True))
     assert by_room["Wohnzimmer"] == 4
     assert by_room["Küche"] == 2
     assert by_room["Bad"] == 3

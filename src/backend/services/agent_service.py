@@ -1988,7 +1988,7 @@ class AgentService:
                     # summarise (which drops the per-field choices).
                     parallel_preview: tuple[str, Any] | None = None
                     parallel_confirm_data: dict | None = None
-                    for act, res in zip(valid_actions, exec_results):
+                    for act, res in zip(valid_actions, exec_results, strict=True):
                         if isinstance(res, Exception):
                             logger.error(f"❌ Parallel tool '{act['action']}' failed: {res}")
                             res = {"success": False, "message": str(res), "action_taken": False}

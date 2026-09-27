@@ -383,7 +383,7 @@ class TestSafetyHelpers:
         # infra name is hardcoded in this public test.
         monkeypatch.setattr(
             runner, "PROD_URL_PATTERNS",
-            tuple(runner.PROD_URL_PATTERNS) + ("sentinel-prod-host",),
+            (*runner.PROD_URL_PATTERNS, "sentinel-prod-host"),
         )
         refusal = runner.check_database_url_safety(
             "postgresql://u@sentinel-prod-host/db", allow_prod=False

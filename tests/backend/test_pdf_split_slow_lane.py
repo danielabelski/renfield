@@ -92,7 +92,7 @@ class TestVlmFillSignals:
         svc = MagicMock()
         svc.extract_text_from_image = AsyncMock()
 
-        out, filled, *_ = await det.vlm_fill_signals(
+        _out, filled, *_ = await det.vlm_fill_signals(
             "/x.pdf", [_sig(1, ok=False)], ollama_service=svc
         )
 
@@ -151,7 +151,7 @@ class TestVlmFillSignals:
         svc = MagicMock()
         svc.extract_text_from_image = AsyncMock(return_value=None)
 
-        out, filled, *_ = await det.vlm_fill_signals(
+        _out, filled, *_ = await det.vlm_fill_signals(
             "/x.pdf", [_sig(1, ok=False)], ollama_service=svc
         )
 
@@ -250,7 +250,7 @@ async def test_slow_split_blank_backs_reach_boundary_detection(monkeypatch):
     garbage page is a blank back the VLM answers with "" — the lane must go on to
     boundary detection instead of raising the outage SplitTransientError."""
     signals = [_sig(1, ok=False), _sig(2), _sig(3), _sig(4, ok=False)]
-    db, act, execute, queue = _wire_lane(
+    _db, _act, _execute, _queue = _wire_lane(
         monkeypatch, doc=_doc(), signals=signals, outcome="split"
     )
     monkeypatch.setattr(lane, "vlm_fill_signals", det.vlm_fill_signals)
@@ -412,7 +412,7 @@ def _wire_lane(
 @pytest.mark.asyncio
 async def test_slow_split_skips_resolved_docs(monkeypatch):
     for status in (DOC_STATUS_SPLIT_ARCHIVED, DOC_STATUS_SPLIT_REVIEW):
-        db, act, execute, _ = _wire_lane(monkeypatch, doc=_doc(status=status))
+        _db, act, execute, _ = _wire_lane(monkeypatch, doc=_doc(status=status))
         assert await lane.process_slow_split(7, None) == "skip"
         act.assert_not_called()
         execute.assert_not_called()
@@ -421,7 +421,7 @@ async def test_slow_split_skips_resolved_docs(monkeypatch):
 @pytest.mark.asyncio
 async def test_slow_split_replays_stored_plan(monkeypatch):
     plan = [_piece(1, 2), _piece(3, 5)]
-    db, act, execute, _ = _wire_lane(monkeypatch, doc=_doc(), stored=plan)
+    _db, act, execute, _ = _wire_lane(monkeypatch, doc=_doc(), stored=plan)
 
     assert await lane.process_slow_split(7, 5) == "split"
 
@@ -433,7 +433,7 @@ async def test_slow_split_replays_stored_plan(monkeypatch):
 @pytest.mark.asyncio
 async def test_slow_split_honors_rejection(monkeypatch):
     doc = _doc()
-    db, act, execute, queue = _wire_lane(monkeypatch, doc=doc, rejected=True)
+    _db, act, _execute, queue = _wire_lane(monkeypatch, doc=doc, rejected=True)
 
     assert await lane.process_slow_split(7, 5) == "single"
 
@@ -446,7 +446,7 @@ async def test_slow_split_honors_rejection(monkeypatch):
 @pytest.mark.asyncio
 async def test_slow_split_no_signals_hands_back_single(monkeypatch):
     doc = _doc()
-    db, act, execute, queue = _wire_lane(monkeypatch, doc=doc, signals=[])
+    _db, _act, _execute, queue = _wire_lane(monkeypatch, doc=doc, signals=[])
 
     assert await lane.process_slow_split(7, None) == "single"
 
@@ -457,7 +457,7 @@ async def test_slow_split_no_signals_hands_back_single(monkeypatch):
 @pytest.mark.asyncio
 async def test_slow_split_single_verdict_hands_back(monkeypatch):
     doc = _doc()
-    db, act, execute, queue = _wire_lane(
+    _db, _act, _execute, queue = _wire_lane(
         monkeypatch, doc=doc, signals=[_sig(1), _sig(2)], outcome="single"
     )
 
@@ -471,7 +471,7 @@ async def test_slow_split_single_verdict_hands_back(monkeypatch):
 async def test_slow_split_confident_and_review_outcomes(monkeypatch):
     for outcome in ("split", "review"):
         doc = _doc()
-        db, act, execute, queue = _wire_lane(
+        _db, _act, _execute, queue = _wire_lane(
             monkeypatch, doc=doc, signals=[_sig(1), _sig(2)], outcome=outcome
         )
         assert await lane.process_slow_split(7, None) == outcome
@@ -626,7 +626,7 @@ async def test_worker_flag_off_parks_entry(monkeypatch):
 @pytest.mark.asyncio
 async def test_worker_hand_back_passes_user_id(monkeypatch):
     doc = _doc()
-    _, proc, hand_back, queue, redis = _wire_worker(monkeypatch, doc=doc)
+    _, _proc, hand_back, queue, redis = _wire_worker(monkeypatch, doc=doc)
     monkeypatch.setattr(w.settings, "worker_max_deliveries", 1)
     entry = SimpleNamespace(
         entry_id="1-0", params={"document_id": 7, "user_id": 42}, delivery_count=5

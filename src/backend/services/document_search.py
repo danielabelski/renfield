@@ -62,9 +62,11 @@ async def _name_candidates(
             params: dict[str, Any] = {"q": q, "n": _CANDIDATES}
             where = [f"d.search_vector @@ ({tsq})"]
             if kb_id is not None:
-                where.append("d.knowledge_base_id = :kb"); params["kb"] = kb_id
+                where.append("d.knowledge_base_id = :kb")
+                params["kb"] = kb_id
             if status:
-                where.append("d.status = :status"); params["status"] = status
+                where.append("d.status = :status")
+                params["status"] = status
             sql = text(
                 "SELECT d.id FROM documents d "
                 f"WHERE {' AND '.join(where)} "
@@ -134,7 +136,8 @@ def _dedup_doc_ids(hits: list[dict[str, Any]]) -> list[int]:
     for h in hits:
         did = h.get("document_id")
         if isinstance(did, int) and did not in seen:
-            seen.add(did); out.append(did)
+            seen.add(did)
+            out.append(did)
     return out
 
 

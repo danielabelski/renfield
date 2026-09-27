@@ -72,7 +72,7 @@ async def _seed(session):
 
 
 async def test_dry_run_writes_nothing(db_session):
-    ok, future, past_wrong, cleared = await _seed(db_session)
+    _ok, future, past_wrong, cleared = await _seed(db_session)
     report = await rb.rederive_document_dates(_factory(db_session), scope=rb.SCOPE_ALL)
     assert report.commit is False
     for doc, stored in ((future, date(2026, 9, 30)), (past_wrong, date(2026, 3, 5)),
@@ -82,7 +82,7 @@ async def test_dry_run_writes_nothing(db_session):
 
 
 async def test_future_scope_only_touches_dates_after_import(db_session):
-    ok, future, past_wrong, cleared = await _seed(db_session)
+    _ok, future, past_wrong, cleared = await _seed(db_session)
     report = await rb.rederive_document_dates(_factory(db_session), scope=rb.SCOPE_FUTURE)
     assert report.scanned == 2  # the future deadline + the validity end
     assert report.changed_earlier == [future.id]
@@ -129,7 +129,7 @@ async def test_second_commit_run_is_a_no_op(db_session):
 
 
 async def test_paperless_ids_exclude_cleared_documents(db_session):
-    ok, future, past_wrong, cleared = await _seed(db_session)
+    _ok, _future, _past_wrong, _cleared = await _seed(db_session)
     report = await rb.rederive_document_dates(_factory(db_session), scope=rb.SCOPE_ALL)
     assert report.paperless_ids == [12, 13]
     assert report.cleared_paperless_ids == [14]

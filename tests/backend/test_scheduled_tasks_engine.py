@@ -320,9 +320,9 @@ class TestTick:
 
         registry.register_handler("h", _h)
         now = _naive_now()
-        due = await _mk(session_factory, name="due", handler_key="h", next_run_at=now - timedelta(seconds=1), params={"id": "due"})
-        future = await _mk(session_factory, name="future", handler_key="h", next_run_at=now + timedelta(hours=1), params={"id": "future"})
-        null_next = await _mk(session_factory, name="null", handler_key="h", next_run_at=None, params={"id": "null"})
+        _due = await _mk(session_factory, name="due", handler_key="h", next_run_at=now - timedelta(seconds=1), params={"id": "due"})
+        _future = await _mk(session_factory, name="future", handler_key="h", next_run_at=now + timedelta(hours=1), params={"id": "future"})
+        _null_next = await _mk(session_factory, name="null", handler_key="h", next_run_at=None, params={"id": "null"})
 
         await engine.run_engine_tick(SimpleNamespace(state=SimpleNamespace()))
         await _drain()

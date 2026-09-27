@@ -322,7 +322,7 @@ class TestDepthAndCycleDetection:
         # Sign with a path that omits the asker's own pubkey.
         req = _sign_initiate(asker_identity, path=["c" * 64])
 
-        with pytest.raises(FederationQueryError, match="path|asker_pubkey"):
+        with pytest.raises(FederationQueryError, match=r"path|asker_pubkey"):
             await responder.handle_initiate(req)
 
     @pytest.mark.asyncio
@@ -482,7 +482,7 @@ class TestBackgroundTaskSession:
         from services import federation_query_responder as fqr
 
         factory_calls = 0
-        real_factory = fqr.AsyncSessionLocal
+        _real_factory = fqr.AsyncSessionLocal
 
         class _TrackedSession:
             """Minimal async-ctx-mgr stand-in for AsyncSession."""
@@ -578,7 +578,7 @@ class TestProgressRateLimit:
             initiated_at=time.time(),
         )
         await get_pending_store().put(pending)
-        for i in range(10):
+        for _i in range(10):
             await FederationQueryResponder._emit_progress(pending, PROGRESS_LABEL_SYNTHESIZING)
         assert pending.progress_count == MAX_PROGRESS_UPDATES
 

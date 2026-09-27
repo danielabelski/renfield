@@ -248,7 +248,7 @@ class TestResolveRoomPlayer:
         mock_scalars_result = MagicMock()
         mock_scalars_result.scalar_one_or_none.return_value = mock_busy_device
 
-        with _patch_resolve_deps(mock_room_service, mock_routing_service) as ctx:
+        with _patch_resolve_deps(mock_room_service, mock_routing_service) as _ctx:
             # The mock_db from _patch_resolve_deps is an AsyncMock.
             # We need db.execute() to return our mock result for the busy device query.
             # _patch_resolve_deps uses mock_session() which yields mock_db.
@@ -985,7 +985,7 @@ class TestInternalToolServiceExecute:
         with patch.object(internal_tools, "_play_in_room", new_callable=AsyncMock) as mock:
             mock.return_value = {"success": True}
             params = {"media_url": "http://x", "room_name": "Test"}
-            result = await internal_tools.execute("internal.play_in_room", params)
+            _result = await internal_tools.execute("internal.play_in_room", params)
             mock.assert_called_once_with(params)
 
 

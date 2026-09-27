@@ -722,7 +722,7 @@ class TestWakeWordSettingsAPI:
         try:
             # First get current settings
             get_response = await async_client.get("/api/settings/wakeword")
-            original_threshold = get_response.json()["threshold"]
+            _original_threshold = get_response.json()["threshold"]
 
             # Update only keyword
             response = await async_client.put(

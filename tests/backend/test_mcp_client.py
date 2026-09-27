@@ -1493,7 +1493,7 @@ class TestExponentialBackoff:
     @pytest.mark.unit
     def test_jitter_adds_randomness(self):
         """Jitter should add randomness to delays."""
-        backoff = ExponentialBackoff(
+        _backoff = ExponentialBackoff(
             initial_delay=10.0,
             jitter=0.5,  # 50% jitter
             max_delay=1000.0,

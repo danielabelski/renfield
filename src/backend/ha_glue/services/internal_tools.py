@@ -544,7 +544,7 @@ class InternalToolService:
             # --- continuous-value actions ---
             if action == "set_brightness":
                 try:
-                    pct = int(round(float(value)))
+                    pct = round(float(value))
                 except (ValueError, TypeError):
                     return {"success": False, "message": "Helligkeit erfordert einen Zahlenwert 0-100", "action_taken": False}
                 pct = max(0, min(100, pct))
@@ -565,7 +565,8 @@ class InternalToolService:
                     return {"success": False, "message": "Temperatur erfordert einen Zahlenwert", "action_taken": False}
                 # Clamp to the entity's own bounds when known (defaults are a sane
                 # household range so a missing min/max can't push an extreme value).
-                lo = attrs.get("min_temp"); hi = attrs.get("max_temp")
+                lo = attrs.get("min_temp")
+                hi = attrs.get("max_temp")
                 lo = lo if isinstance(lo, (int, float)) else 5.0
                 hi = hi if isinstance(hi, (int, float)) else 35.0
                 temp = max(lo, min(hi, temp))

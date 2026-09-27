@@ -80,7 +80,10 @@ def _parse_followups(raw: str, count: int) -> list[str]:
     # Fallback: line-based (strip bullets / numbering / quotes).
     if not candidates:
         for line in text.splitlines():
-            s = line.strip().lstrip("-*•0123456789.)• ").strip().strip('"').strip()
+            # Bewusst ein ZEICHENSATZ, kein Praefix: fuehrende Aufzaehlungs-
+            # und Nummerierungszeichen sollen einzeln fallen. (`•` stand hier
+            # doppelt im Satz — wirkungslos, aber irritierend.)
+            s = line.strip().lstrip("-*•0123456789.) ").strip().strip('"').strip()
             if s:
                 candidates.append(s)
 

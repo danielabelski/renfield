@@ -187,7 +187,7 @@ class UserEventRegistry:
             *(self._send_one(ws, event) for ws in recipients), return_exceptions=True
         )
         delivered = 0
-        for ws, result in zip(recipients, results):
+        for ws, result in zip(recipients, results, strict=True):
             if isinstance(result, Exception):
                 self.unregister(ws)  # backpressured/closed → drop from all keys
             else:

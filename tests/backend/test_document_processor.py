@@ -575,7 +575,7 @@ def test_ocr_engine_tesseract_falls_back_to_binding_without_cli():
 @pytest.mark.unit
 def test_ocr_engine_tesseract_cli_missing_langs_fails_safe():
     # CLI binary present but deu/eng traineddata missing AND no binding -> EasyOcr.
-    label, kwargs = _build_ocr_opts(
+    label, _kwargs = _build_ocr_opts(
         "tesseract", cli_present=True, cli_langs_ok=False, tesserocr_present=False
     )
     assert label == "easyocr"

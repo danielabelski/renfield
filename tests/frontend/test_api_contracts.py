@@ -145,7 +145,7 @@ class TestWebSocketMessageContract:
     @pytest.mark.frontend
     def test_state_values(self, mock_websocket_messages):
         """Test: state values are valid"""
-        valid_states = ["idle", "listening", "processing", "speaking"]
+        _valid_states = ["idle", "listening", "processing", "speaking"]
 
         assert mock_websocket_messages["state_idle"]["state"] == "idle"
         assert mock_websocket_messages["state_listening"]["state"] == "listening"

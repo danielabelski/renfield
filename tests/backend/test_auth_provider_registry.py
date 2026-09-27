@@ -20,6 +20,7 @@ here.
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from dataclasses import FrozenInstanceError
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -88,8 +89,11 @@ class TestContract:
     @pytest.mark.unit
     def test_provider_result_frozen(self):
         r = _result()
-        with pytest.raises(Exception):
-            r.subject = "mutated"  # frozen dataclass
+        # BENANNT, nicht `Exception`: ein blankes `raises(Exception)` besteht auch
+        # bei einem Tippfehler im Attributnamen — es belegte die Unveraenderlichkeit
+        # also nicht.
+        with pytest.raises(FrozenInstanceError):
+            r.subject = "mutated"
 
     @pytest.mark.unit
     def test_make_result_stamps_v_and_normalizes_email(self):

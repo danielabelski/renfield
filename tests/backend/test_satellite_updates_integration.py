@@ -335,13 +335,11 @@ class TestVersionComparisonIntegration:
         )
 
         try:
-            with patch('ha_glue.api.routes.satellites.ha_glue_settings') as mock_route_settings, \
-                 patch('ha_glue.services.satellite_update_service.ha_glue_settings') as mock_svc_settings, \
+            with patch('ha_glue.services.satellite_update_service.ha_glue_settings') as mock_svc_settings, \
                  patch(
                      'ha_glue.services.satellite_update_service.SatelliteUpdateService._read_source_version',
                      return_value=None,
                  ):
-                mock_route_settings.satellite_latest_version = "2.0.0"
                 mock_svc_settings.satellite_latest_version = "2.0.0"
 
                 response = await async_client.get("/api/satellites")

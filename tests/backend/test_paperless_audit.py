@@ -97,7 +97,7 @@ class TestCheckOcrQuality:
     @pytest.mark.unit
     def test_none_text(self):
         """None content should get quality 1."""
-        score, issues = PaperlessAuditService._check_ocr_quality(None)
+        score, _issues = PaperlessAuditService._check_ocr_quality(None)
         assert score == 1
 
     @pytest.mark.unit
@@ -167,7 +167,7 @@ class TestCheckOcrQuality:
     def test_normal_space_ratio(self):
         """Text with normal space ratio should not trigger garbled warning."""
         text = "Dies ist ein ganz normaler deutscher Text mit Leerzeichen."
-        score, issues = PaperlessAuditService._check_ocr_quality(text)
+        _score, issues = PaperlessAuditService._check_ocr_quality(text)
         assert "garbled" not in issues.lower()
 
 
@@ -288,7 +288,7 @@ class TestParseMcpResult:
     def test_none_message(self):
         """None message should return None."""
         result = {"success": True, "message": None}
-        parsed = PaperlessAuditService._parse_mcp_result(result)
+        _parsed = PaperlessAuditService._parse_mcp_result(result)
 
     @pytest.mark.unit
     def test_truncated_response_with_suffix(self):
@@ -1112,7 +1112,7 @@ class TestRunAudit:
             mock_meta.return_value = {"types": [], "correspondents": [], "tags": []}
 
             results = []
-            for i, needs_changes in enumerate([True, False, True]):
+            for _i, needs_changes in enumerate([True, False, True]):
                 r = MagicMock()
                 r.changes_needed = needs_changes
                 r.confidence = 0.9
@@ -1229,7 +1229,7 @@ class TestRunAudit:
     async def test_running_flag_reset_on_error(self, service):
         """_running should be reset even if an exception occurs."""
         with patch.object(service, "_fetch_all_doc_ids", new_callable=AsyncMock) as mock_fetch, \
-             patch.object(service, "_fetch_available_metadata", new_callable=AsyncMock) as mock_meta, \
+             patch.object(service, "_fetch_available_metadata", new_callable=AsyncMock) as _mock_meta, \
              patch("ha_glue.services.paperless_audit_service.settings") as mock_settings:
 
             mock_settings.paperless_audit_fix_mode = "review"
@@ -2159,7 +2159,7 @@ class TestCheckContentCompleteness:
     @pytest.mark.unit
     def test_empty_content(self):
         """Empty content should get score 1."""
-        score, issues = PaperlessAuditService._check_content_completeness("", 1)
+        score, _issues = PaperlessAuditService._check_content_completeness("", 1)
         assert score == 1
 
     @pytest.mark.unit
@@ -2183,21 +2183,21 @@ class TestCheckContentCompleteness:
     def test_no_page_count(self):
         """Should work without page_count."""
         content = "Some reasonable content that is long enough to not be minimal." * 5
-        score, issues = PaperlessAuditService._check_content_completeness(content, None)
+        score, _issues = PaperlessAuditService._check_content_completeness(content, None)
         assert score == 5
 
     @pytest.mark.unit
     def test_page_marker_gaps(self):
         """Missing page markers should be flagged."""
         content = "Seite 1 text here. Seite 3 more text here."
-        score, issues = PaperlessAuditService._check_content_completeness(content, 3)
+        _score, issues = PaperlessAuditService._check_content_completeness(content, 3)
         assert "missing pages" in issues.lower()
 
     @pytest.mark.unit
     def test_consecutive_page_markers_ok(self):
         """Consecutive page markers should not be flagged."""
         content = "Page 1 here. Page 2 here. Page 3 here."
-        score, issues = PaperlessAuditService._check_content_completeness(content, 3)
+        _score, issues = PaperlessAuditService._check_content_completeness(content, 3)
         assert "missing pages" not in issues.lower()
 
 

@@ -290,7 +290,7 @@ class TestUserQueries:
     ):
         """Testet Filterung nach Aktivstatus"""
         result = await db_session.execute(
-            select(User).where(User.is_active == True)
+            select(User).where(User.is_active)
         )
         users = result.scalars().all()
 

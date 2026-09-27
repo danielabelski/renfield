@@ -74,7 +74,7 @@ async def test_a_call_past_its_timeout_shields_nothing():
 async def test_probe_skips_under_a_running_call_and_says_so():
     session = AsyncMock()
     session.list_tools = AsyncMock(side_effect=TimeoutError())
-    manager, state = _manager(session, _running())
+    manager, _state = _manager(session, _running())
     manager._reconnect_server = AsyncMock()
 
     result = await manager.probe_server("scanner")
@@ -87,7 +87,7 @@ async def test_probe_skips_under_a_running_call_and_says_so():
 async def test_probe_checks_normally_once_the_call_is_overdue():
     session = AsyncMock()
     session.list_tools = AsyncMock(side_effect=TimeoutError())
-    manager, state = _manager(session, _overdue())
+    manager, _state = _manager(session, _overdue())
     manager._reconnect_server = AsyncMock(return_value=False)
 
     result = await manager.probe_server("scanner")

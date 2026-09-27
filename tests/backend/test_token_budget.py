@@ -85,7 +85,7 @@ class TestEnforceTokenBudget:
                 short_prompt, ctx, "test", None,
                 memory_context="", document_context="", lang="de",
             )
-            prompt, mem, doc, hist = result
+            prompt, mem, doc, _hist = result
             assert prompt == short_prompt
             assert mem == ""
             assert doc == ""
@@ -130,7 +130,7 @@ class TestEnforceTokenBudget:
                 document_context="big doc " * 1000,
                 lang="de",
             )
-            prompt, mem, doc, hist = result
+            prompt, _mem, _doc, _hist = result
             # Memory or document context should have been dropped
             assert len(prompt) < len(large_prompt)
 

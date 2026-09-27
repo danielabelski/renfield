@@ -271,7 +271,7 @@ class TestExtractAndFinalize:
         assert upload.status == "failed"
         assert upload.error_message and "Docling" in upload.error_message
 
-        sess_arg, payload = notify.await_args.args
+        _sess_arg, payload = notify.await_args.args
         assert payload["status"] == "failed"
         assert payload["text_preview"] is None
         assert "Docling" in (payload["error"] or "")
@@ -282,7 +282,7 @@ class TestExtractAndFinalize:
         raise): a None result is persisted as completed-with-null-text — the
         current behavior — and the push reflects that. Documents the known
         limitation that a silent OCR failure looks like an empty doc."""
-        cu, notify, auto = self._wire(monkeypatch, db_session, auto_index=True)
+        cu, notify, _auto = self._wire(monkeypatch, db_session, auto_index=True)
         upload, fpath = await self._seed(db_session, file_hash="none")
         proc = AsyncMock()
         proc.extract_text_only = AsyncMock(return_value=None)

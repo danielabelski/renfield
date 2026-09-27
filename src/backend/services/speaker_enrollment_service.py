@@ -191,7 +191,7 @@ async def enroll_speaker_controlled(
         db.add(speaker)
     await db.flush()
 
-    for emb, dur in zip(embeddings, durations):
+    for emb, dur in zip(embeddings, durations, strict=True):
         db.add(SpeakerEmbedding(
             speaker_id=speaker.id,
             embedding=svc.embedding_to_base64(emb),

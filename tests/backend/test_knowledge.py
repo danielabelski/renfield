@@ -317,7 +317,7 @@ class TestKnowledgeBaseQueries:
         await db_session.commit()
 
         result = await db_session.execute(
-            select(KnowledgeBase).where(KnowledgeBase.is_public == True)
+            select(KnowledgeBase).where(KnowledgeBase.is_public)
         )
         bases = result.scalars().all()
 
@@ -450,9 +450,7 @@ class TestKnowledgeBaseAPI:
             # Reject KB_ALL so the code reaches the batched grant lookup;
             # reject KB_NONE so it doesn't early-return empty. Anything else
             # (KB_SHARED, KB_OWN) — allow.
-            if perm in (perms_mod.Permission.KB_ALL, perms_mod.Permission.KB_NONE):
-                return False
-            return True
+            return perm not in (perms_mod.Permission.KB_ALL, perms_mod.Permission.KB_NONE)
 
         monkeypatch.setattr(route_mod, "has_permission", grant_all)
 

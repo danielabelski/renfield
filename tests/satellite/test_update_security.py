@@ -7,6 +7,7 @@ in the satellite OTA update manager.
 
 import io
 import shutil
+import ssl
 import tarfile
 import tempfile
 from pathlib import Path

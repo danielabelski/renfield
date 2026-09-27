@@ -1131,7 +1131,7 @@ async def refile_to_paperless(
         except (ValueError, TypeError):
             pass
     query = (params.get("query") or "").strip()
-    display_name = func.coalesce(
+    _display_name = func.coalesce(
         Document.generated_title, Document.title, Document.filename
     )
 

@@ -1443,7 +1443,7 @@ async def websocket_endpoint(
                     validate_artifacts,
                 )
                 for art in validate_artifacts(raw_artifacts):
-                    turn_artifacts.append(art)
+                    turn_artifacts.append(art)  # noqa: B023 — lebt nur in dieser Runde, s. 1427/2404
                     await websocket.send_json(build_artifact_frame(art))
 
             media_shortcut_handled = False
@@ -2152,7 +2152,7 @@ async def websocket_endpoint(
                     _fed_sink_lock = asyncio.Lock()
 
                     async def _federation_progress_sink(payload: dict) -> None:
-                        async with _fed_sink_lock:
+                        async with _fed_sink_lock:  # noqa: B023 — Schloss dieser Runde, s. 2147/2183
                             try:
                                 await websocket.send_json({
                                     "type": "agent_federation_progress",

@@ -138,7 +138,7 @@ class BtScanService:
         # MAC -> aggregate record.
         agg: dict[str, dict] = {}
         responded = 0
-        for sat, result in zip(sats, results):
+        for sat, result in zip(sats, results, strict=True):
             if isinstance(result, Exception) or result is None:
                 # Timed out / raised / unknown satellite => not responded.
                 continue
