@@ -2380,13 +2380,27 @@ DEFAULT_ADMIN_PASSWORD=changeme
 # Voice Authentication
 VOICE_AUTH_ENABLED=false
 VOICE_AUTH_MIN_CONFIDENCE=0.7
-# 🛑 `VOICE_AUTH_ENABLED` bleibt aus. Eine Tonaufnahme der Stimme reicht für
-# Zugriffs- UND Erneuerungstoken; keine Lebendigkeitsprüfung, kein zweiter
-# Faktor. Die Route war bis 2026-09-27 ohnehin unbenutzbar (falsche
-# Aufrufsignatur → `TypeError` bei jedem Versuch). Sie funktioniert jetzt,
-# prüft `SPEAKER_RECOGNITION_ENABLED` vor jeder Einbettung, schreibt kein
-# Profil und setzt dieselben HttpOnly-Cookies wie die anderen Anmeldewege —
-# tragbar wäre sie trotzdem nur als ZUSATZfaktor.
+VOICE_SECOND_FACTOR_TTL_SECONDS=180
+# 🛑 Die Stimme ist seit dem 2026-09-27 ein ZUSATZfaktor, kein eigener
+# Anmeldeweg. `/auth/login` gibt für ein Konto mit `users.voice_second_factor_enabled`
+# keine Token, sondern ein Einmalticket; `/auth/voice` löst es ein, prüft 1:1 gegen
+# das verknüpfte Profil und prägt erst dann die Token. Zwei Dinge sind dafür nötig:
+# dieses Flag UND die Einwilligung je Person in der Spalte.
+#
+# `VOICE_AUTH_ENABLED=false` lässt die Hürde RUHEN — auch für Konten mit gesetzter
+# Spalte. Das ist Absicht: ohne Sprachweg könnte niemand das Ticket einlösen, und
+# das Konto wäre ausgesperrt.
+#
+# `VOICE_SECOND_FACTOR_TTL_SECONDS` ist die Lebensdauer des Tickets. Kurz halten: es
+# überbrückt nur die Sekunden zwischen Passworteingabe und Aufnahme, und ein
+# längeres Fenster macht ein abgefangenes Ticket wertvoller.
+#
+# Was bleibt: eine Tonaufnahme kann den Faktor täuschen, es gibt keine
+# Lebendigkeitsprüfung. Als erster Faktor war das die ganze Tür (und die Route war
+# bis 2026-09-27 ohnehin unbenutzbar — falsche Aufrufsignatur, `TypeError` bei
+# jedem Versuch). Als zweiter braucht ein Angreifer zusätzlich das Passwort.
+# Es gibt KEINEN Rückfall auf Passwort allein; Wiederherstellung ist ein
+# Administrator, der die Spalte abschaltet.
 
 # === Pluggable auth provider registry (ebongard/renfield#591) ===
 # Per-provider credential-walk timeout; a provider exceeding this is
@@ -2460,7 +2474,7 @@ VITE_SSO_LEGACY_FRAGMENT=true
 - `DEFAULT_ADMIN_USERNAME`: `admin`
 - `DEFAULT_ADMIN_PASSWORD`: `changeme`
 - `VOICE_AUTH_ENABLED`: `false`
-- `VOICE_AUTH_MIN_CONFIDENCE`: `0.7`
+- `VOICE_AUTH_MIN_CONFIDENCE`: `0.7` · `VOICE_SECOND_FACTOR_TTL_SECONDS`: `180` (Zusatzfaktor, s. oben)
 - `AUTH_PROVIDER_TIMEOUT_SECONDS`: `10.0`
 - `LDAP_AUTH_ENABLED`: `false` · `LDAP_AUTH_USER_FILTER`: `(uid={username})` · `LDAP_CONNECT_TIMEOUT`: `5` · `LDAP_RECEIVE_TIMEOUT`: `10`
 - `OAUTH_{GOOGLE,GITHUB,APPLE}_ENABLED`: `false` (all social providers disabled by default — enabling is a config-only change)

@@ -1509,6 +1509,9 @@ class Settings(BaseSettings):
 
     # Voice authentication
     voice_auth_enabled: bool = False
+    # Lebensdauer des Einmaltickets zwischen Passwort und Stimme. Kurz: es
+    # ueberbrueckt nur die Sekunden zwischen den beiden Schritten.
+    voice_second_factor_ttl_seconds: int = 180
     voice_auth_min_confidence: float = 0.7
 
     # Default admin credentials (only used on first startup)

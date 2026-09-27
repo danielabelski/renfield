@@ -372,18 +372,43 @@ Voice Authentication ermöglicht Login per Stimmerkennung:
 
 ### Aktivierung
 
-🛑 **Nicht empfohlen.** Eine Tonaufnahme der Stimme reicht für Zugriffs- UND
-Erneuerungstoken; es gibt keine Lebendigkeitsprüfung und keinen zweiten Faktor.
-Die Route setzt seit 2026-09-27 dieselben HttpOnly-Cookies wie die anderen
-Anmeldewege und meldet `must_change_password`, sie prüft `SPEAKER_RECOGNITION_ENABLED`
-(ein ECAPA-Stimmabdruck ist biometrisches Datum, Art. 9 DSGVO) und sie schreibt
-**nichts** — ein Fehlversuch legt kein Profil an. Vorher stürzte sie bei jedem
-Versuch ab. Funktionsfähig ist sie damit, tragbar nur als Zusatzfaktor.
+Seit dem 2026-09-27 ist die Stimme ein **Zusatzfaktor**, nicht mehr ein eigener
+Anmeldeweg. Eine Tonaufnahme allein genügt nicht mehr — sie bestätigt eine bereits
+mit Passwort bestandene Anmeldung.
+
+**Ablauf:**
+
+1. `POST /api/auth/login` mit Benutzername und Passwort. Für ein Konto mit
+   gesetztem `voice_second_factor_enabled` kommen **keine Token** zurück, sondern
+   `second_factor: "voice"` und ein `second_factor_ticket`.
+2. `POST /api/auth/voice` mit diesem Ticket und einer Aufnahme. Geprüft wird
+   **1:1** gegen das verknüpfte Sprecherprofil.
+3. Erst hier entstehen Zugriffs- und Erneuerungstoken samt HttpOnly-Cookies.
+
+**Einschalten** braucht deshalb zwei Dinge — den Sprachweg und die Einwilligung
+der betroffenen Person:
 
 ```bash
-VOICE_AUTH_ENABLED=true          # Standard und Empfehlung: false
-VOICE_AUTH_MIN_CONFIDENCE=0.7    # Minimum Confidence (0-1)
+VOICE_AUTH_ENABLED=true            # Standard false; ohne das ruht die Hürde
+VOICE_AUTH_MIN_CONFIDENCE=0.7      # Minimum Confidence (0-1)
+VOICE_SECOND_FACTOR_TTL_SECONDS=180  # Lebensdauer des Zwischentickets
 ```
+
+Die Einwilligung ist eine Spalte je Person (`users.voice_second_factor_enabled`,
+Standard `false`), **kein** Flag: ein ECAPA-Stimmabdruck ist biometrisches Datum
+(Art. 9 DSGVO), und dass eine Anmeldung ihn verlangt, kann niemand für jemand
+anderen entscheiden. `speaker_id` taugt dafür nicht — die Verknüpfung entstand für
+die Sprecherkennung, nicht als Zustimmung zur Anmeldung.
+
+🛑 **Es gibt keinen Rückfall auf Passwort allein.** Ein Rückfall, den ein Angreifer
+selbst auslösen kann (indem er die Stimmprüfung wiederholt scheitern lässt), hebt
+den zweiten Faktor auf. Wiederherstellung bei defektem Mikrofon oder Erkältung:
+ein Administrator schaltet `voice_second_factor_enabled` für diese Person ab.
+
+🛑 **Was die Stimme weiterhin nicht kann:** eine Aufnahme kann sie täuschen, es gibt
+keine Lebendigkeitsprüfung. Als *erster* Faktor war das die ganze Tür; als
+*zweiter* braucht ein Angreifer zusätzlich das Passwort. Genau darin liegt der
+Gewinn — und darin die Grenze.
 
 ### Sprecher mit User verknüpfen
 
@@ -739,44 +764,25 @@ UPDATE knowledge_bases SET is_public = true;
 401 Unauthorized: Invalid authentication token
 ```
 
-**Lösung:** Refresh-Token verwenden um neuen Access-Token zu erhalten.
-
-### Permission denied
-
-```
-403 Forbidden: Permission required: ha.control
-```
-
-**Lösung:** Benutzer-Rolle anpassen oder entsprechende Berechtigung hinzufügen.
-
-### Selbst nicht deaktivieren
-
-```
-400 Bad Request: Cannot deactivate your own account
-```
-
-**Lösung:** Ein anderer Admin muss den Account deaktivieren.
-
-### Voice Auth Confidence zu niedrig
-
-```
-{"success": false, "message": "Confidence too low (0.65 < 0.70)"}
-```
-
 **Lösung:**
 
-🛑 **Vorbemerkung (2026-09-27):** Dieser Abschnitt beschrieb Antworten, die die
-Route nie erzeugt hat — `/auth/voice` starb bis 2026-09-27 an einer falschen
-Aufrufsignatur, bevor überhaupt eine Konfidenz berechnet wurde. Die Route
-funktioniert jetzt, aber `VOICE_AUTH_ENABLED` gehört aus (Wiedereinspielung
-einer Tonaufnahme genügt für beide Token, keine Lebendigkeitsprüfung, kein
-zweiter Faktor). Die Schritte unten gelten nur, wenn Sie das Flag bewusst und
-in einer Umgebung einschalten, in der das tragbar ist.
+Alle Fehlschläge des zweiten Faktors antworten absichtlich **identisch**
+(`{"success": false, "message": "Voice authentication failed"}`) — kein Feld und
+kein Text unterscheidet „Ticket abgelaufen" von „Stimme passt nicht" von „Konto
+gesperrt". Das ist derselbe Grundsatz, nach dem der Passwortpfad „Nutzer
+unbekannt" und „Passwort falsch" nicht trennt: sonst wäre die Route eine
+Auskunftsstelle. **Die Diagnose steht im Server-Protokoll**, dort mit Grund und
+Messwert.
 
-1. Mehr Voice-Samples zum Sprecher hinzufügen
-2. Ruhigere Umgebung für Aufnahme
-3. `VOICE_AUTH_MIN_CONFIDENCE` senken — **senkt die Sicherheit** und ist bei
-   einem Faktor, der ohnehin wiedereinspielbar ist, der falsche Hebel
+Zur Fehlersuche also ins Backend-Log sehen, nicht in die Antwort. Dann:
+
+1. Mehr Voice-Samples zum Sprecher hinzufügen (`/speakers`)
+2. Ruhigere Umgebung für die Aufnahme
+3. `VOICE_AUTH_MIN_CONFIDENCE` senken — **senkt die Sicherheit**; bei einem Faktor,
+   den eine Aufnahme ohnehin täuschen kann, ist das der falsche Hebel
+4. Kommt jemand dauerhaft nicht durch (defektes Mikrofon, Erkältung):
+   `voice_second_factor_enabled` für diese Person abschalten. Das ist der
+   vorgesehene Wiederherstellungsweg, nicht ein Notbehelf.
 
 ---
 

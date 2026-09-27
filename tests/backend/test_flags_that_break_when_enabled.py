@@ -24,7 +24,14 @@ pytestmark = [pytest.mark.unit]
 # 1. VOICE_AUTH_ENABLED — Signatur und Rueckgabetyp
 # ---------------------------------------------------------------------------
 class TestVoiceAuthCallShape:
-    """Die Route rief `identify_speaker(audio_bytes)` auf — EIN Wert, wo zwei
+    """Der VERTRAG, an dem die Route einst scheiterte — und der weiter gilt.
+
+    `identify_speaker` lebt weiter: der Resolver und `/api/speakers/identify`
+    brauchen die 1:N-Zuordnung. Die ANMELDUNG benutzt sie seit dem Umbau zum
+    Zusatzfaktor nicht mehr. Diese Vertragspruefungen bleiben, weil eine Aenderung
+    an der Signatur die beiden verbliebenen Aufrufer mitnehmen muss.
+
+    Historisch: die Route rief `identify_speaker(audio_bytes)` auf — EIN Wert, wo zwei
     Pflichtargumente stehen — und las das Ergebnis als `dict`, obwohl ein
     `tuple` kommt. `VOICE_AUTH_ENABLED=true` war damit ein `TypeError` bei jedem
     Anmeldeversuch.
@@ -70,7 +77,10 @@ class TestVoiceAuthCallShape:
         assert "resolve_speaker_from_embedding" not in body, (
             "die Sprachanmeldung darf nur LESEN, nicht einschreiben"
         )
-        assert "build_known_speaker_centroids" in body
+        # `build_known_speaker_centroids` stand hier bis zum Umbau zum
+        # Zusatzfaktor. Seit dem 2026-09-27 verifiziert die Route 1:1 gegen EIN
+        # Profil und baut gar keine Schwerpunkte mehr — das prueft
+        # `TestTheRouteIsNoLongerAnIdentifier`.
 
     def test_the_route_sets_cookies_and_reports_the_password_gate(self):
         """Die anderen vier Anmeldewege tun beides — dieser tat keins von beidem.
@@ -215,18 +225,17 @@ def _speaker(sid, name, *, enrolled, values=(1.0,)):
 
 
 # ---------------------------------------------------------------------------
-# 1b. VOICE_AUTH_ENABLED — die Route WIRKLICH fahren, nicht ihren Quelltext lesen
+# 1b. Der ZWEITE Faktor — Verhalten, nicht Quelltext
 # ---------------------------------------------------------------------------
 @pytest.mark.database
-class TestVoiceAuthBehaviour:
-    """🛑 Die Tests oben pruefen Quelltext-Textstellen. Das war zu wenig.
+class TestVoiceSecondFactor:
+    """Die Route nach dem Umbau vom 2026-09-27: Stimme bestaetigt, sie oeffnet nicht.
 
-    Ein Test, der `inspect.getsource` durchsucht, belegt, dass ein Aufruf DASTEHT
-    — nicht, dass er wirkt. Er haette jede der vier Bruecken dieser Route
-    ueberlebt, solange nur die richtigen Zeichenketten im Koerper stehen. Dieser
-    Block fuehrt die Funktion aus und behauptet ueber das ERGEBNIS: gesetzte
-    Cookies, gemeldeter Passwortzwang, verweigerte Anmeldung ohne Erkennung, und
-    kein geschriebenes Profil.
+    🛑 Diese Klasse FAEHRT die beiden Routen, statt ihren Quelltext zu lesen. Die
+    erste Fassung dieser Datei pruefte `inspect.getsource`-Textstellen; das haette
+    jede der Bruecken ueberlebt, solange die richtigen Zeichenketten im Koerper
+    stehen. Geprueft wird hier ueber Ergebnisse: gesetzte Cookies, ausgegebene
+    Token, die ABWESENHEIT von Token, und dass es keinen Weg ohne Stimme gibt.
     """
 
     @staticmethod
@@ -241,59 +250,49 @@ class TestVoiceAuthBehaviour:
 
     @staticmethod
     def _request():
-        r"""Eine ECHTE starlette-Anfrage aus einem minimalen ASGI-Scope.
-
-        Nachgebaut ging es nicht: der Ratenbegrenzer-Dekorator prueft den Typ und
-        wirft `parameter \`request\` must be an instance of
-        starlette.requests.Request`. Ein Attrappen-Objekt haette den Test an
-        einer Stelle scheitern lassen, die mit der Route nichts zu tun hat.
-        """
+        """Eine ECHTE starlette-Anfrage: der Ratenbegrenzer prueft den Typ."""
         from starlette.requests import Request
 
         return Request({
-            "type": "http",
-            "method": "POST",
-            "path": "/api/auth/voice",
-            "raw_path": b"/api/auth/voice",
-            "root_path": "",
-            "scheme": "http",
-            "query_string": b"",
-            "headers": [],
-            "client": ("127.0.0.1", 12345),
-            "server": ("test", 80),
-            "app": None,
+            "type": "http", "method": "POST", "path": "/api/auth/voice",
+            "raw_path": b"/api/auth/voice", "root_path": "", "scheme": "http",
+            "query_string": b"", "headers": [], "client": ("127.0.0.1", 12345),
+            "server": ("test", 80), "app": None,
         })
 
-    async def _linked_user(self, db, *, must_change=False):
-        """Ein Sprecher mit einer Einbettung, verknuepft mit einem Nutzer."""
+    async def _user(self, db, *, second_factor=True, with_speaker=True,
+                    must_change=False, active=True):
         import numpy as np
 
         from models.database import Role, Speaker, SpeakerEmbedding, User
         from services.speaker_service import SpeakerService
 
-        role = Role(name="VA", description="", permissions=["chat.own"])
+        role = Role(name=f"V2F{id(self) % 100000}", description="", permissions=["chat.own"])
         db.add(role)
         await db.flush()
-        sp = Speaker(name="Anna", enrolled=True)
-        db.add(sp)
-        await db.flush()
-        db.add(SpeakerEmbedding(
-            speaker_id=sp.id,
-            embedding=SpeakerService.embedding_to_base64(
-                np.array([1.0, 0.0], dtype=np.float32)),
-        ))
-        user = User(username="anna", password_hash="x", role_id=role.id,
-                    is_active=True, token_epoch=0, speaker_id=sp.id,
-                    must_change_password=must_change)
+        sid = None
+        if with_speaker:
+            sp = Speaker(name="Anna", enrolled=True)
+            db.add(sp)
+            await db.flush()
+            db.add(SpeakerEmbedding(
+                speaker_id=sp.id,
+                embedding=SpeakerService.embedding_to_base64(
+                    np.array([1.0, 0.0], dtype=np.float32)),
+            ))
+            sid = sp.id
+        user = User(username=f"anna{id(self) % 100000}", password_hash="x",
+                    role_id=role.id, is_active=active, token_epoch=0,
+                    speaker_id=sid, must_change_password=must_change,
+                    voice_second_factor_enabled=second_factor)
         db.add(user)
         await db.commit()
-        await db.refresh(sp)
         await db.refresh(user)
-        return sp, user
+        return user
 
     @staticmethod
-    def _stub_service(monkeypatch, *, match):
-        """Die ML-Haelfte ersetzen: Einbettung und Zuordnung. Alles andere echt."""
+    def _stub_voice(monkeypatch, *, verified, score):
+        """Nur die ML-Haelfte ersetzen. Der Rest der Route laeuft echt."""
         import numpy as np
 
         from services import speaker_service as ss
@@ -302,74 +301,212 @@ class TestVoiceAuthBehaviour:
             def extract_embedding_from_bytes(self, _b, _n):
                 return np.array([1.0, 0.0], dtype=np.float32)
 
-            def identify_speaker(self, _q, _known):
-                return match
+            def verify_speaker(self, _q, _claimed):
+                return (verified, score)
 
             @staticmethod
             def embedding_from_base64(enc):
                 return ss.SpeakerService.embedding_from_base64(enc)
 
         monkeypatch.setattr(ss, "get_speaker_service", lambda: _Svc())
-        monkeypatch.setattr("services.speaker_resolver.get_speaker_service", lambda: _Svc())
 
-    async def test_success_sets_the_httponly_cookies(self, db_session, monkeypatch):
-        """🛑 Der Kern. Ohne `_set_auth_cookies` richtete eine erfolgreiche
-        Sprachanmeldung ueberhaupt keine Sitzung ein — die Oberflaeche arbeitet
-        seit #1125 auf dem HttpOnly-Cookie. Der Quelltext-Test sah nur, dass der
-        Aufruf DASTEHT."""
+    @staticmethod
+    def _stub_ticket(monkeypatch, *, user_id):
+        """Redis-freies Ticket. Der Speicher hat seine eigenen Tests."""
+        from services import voice_second_factor_store as store
+
+        async def _consume(_t, _ip):
+            return store.PendingVoiceFactor(user_id=user_id, client_ip=None)
+
+        monkeypatch.setattr(store, "consume_ticket", _consume)
+
+    @staticmethod
+    def _on(monkeypatch, **over):
+        from utils.config import settings
+
+        base = {"voice_auth_enabled": True, "speaker_recognition_enabled": True,
+                "auth_cookie_enabled": True, "voice_auth_min_confidence": 0.7}
+        base.update(over)
+        for k, v in base.items():
+            monkeypatch.setattr(settings, k, v)
+
+    # --- der gute Fall ---------------------------------------------------
+
+    async def test_both_factors_pass_then_tokens_and_cookies(self, db_session, monkeypatch):
         from fastapi import Response
 
         from api.routes import auth as auth_routes
         from utils.config import settings
 
-        sp, _user2 = await self._linked_user(db_session)
-        monkeypatch.setattr(settings, "voice_auth_enabled", True)
-        monkeypatch.setattr(settings, "speaker_recognition_enabled", True)
-        monkeypatch.setattr(settings, "auth_cookie_enabled", True)
-        monkeypatch.setattr(settings, "voice_auth_min_confidence", 0.5)
-        self._stub_service(monkeypatch, match=(sp.id, sp.name, 0.99))
+        user = await self._user(db_session)
+        self._on(monkeypatch)
+        self._stub_ticket(monkeypatch, user_id=user.id)
+        self._stub_voice(monkeypatch, verified=True, score=0.92)
 
         resp = Response()
         out = await auth_routes.voice_authenticate(
-            self._request(), resp, audio_file=self._upload(), db=db_session)
+            self._request(), resp, ticket="t", audio_file=self._upload(), db=db_session)
 
         assert out.success is True
-        assert out.username == "anna"
+        assert out.access_token and out.refresh_token
         cookies = resp.headers.getlist("set-cookie")
-        names = {c.split("=", 1)[0] for c in cookies}
-        assert settings.auth_cookie_name in names, f"kein Zugriffs-Cookie: {names}"
-        assert any("httponly" in c.lower() for c in cookies), "Cookie nicht HttpOnly"
+        assert settings.auth_cookie_name in {c.split("=", 1)[0] for c in cookies}
+        assert any("httponly" in c.lower() for c in cookies)
 
     async def test_it_reports_the_password_gate(self, db_session, monkeypatch):
-        """Sonst kaeme ein Konto mit Passwortzwang per Stimme daran vorbei."""
         from fastapi import Response
 
         from api.routes import auth as auth_routes
-        from utils.config import settings
 
-        sp, _user = await self._linked_user(db_session, must_change=True)
-        monkeypatch.setattr(settings, "voice_auth_enabled", True)
-        monkeypatch.setattr(settings, "speaker_recognition_enabled", True)
-        monkeypatch.setattr(settings, "voice_auth_min_confidence", 0.5)
-        self._stub_service(monkeypatch, match=(sp.id, sp.name, 0.99))
+        user = await self._user(db_session, must_change=True)
+        self._on(monkeypatch)
+        self._stub_ticket(monkeypatch, user_id=user.id)
+        self._stub_voice(monkeypatch, verified=True, score=0.92)
 
         out = await auth_routes.voice_authenticate(
-            self._request(), Response(), audio_file=self._upload(), db=db_session)
+            self._request(), Response(), ticket="t", audio_file=self._upload(), db=db_session)
         assert out.success is True
         assert out.must_change_password is True
 
-    async def test_recognition_off_refuses_before_any_embedding(self, db_session, monkeypatch):
-        """Ein ECAPA-Stimmabdruck ist biometrisches Datum (Art. 9 DSGVO). Ist die
-        Erkennung aus, darf hier auch keiner BERECHNET werden."""
+    # --- die Wege, die ES NICHT GEBEN DARF -------------------------------
+
+    _FORBIDDEN = ("access_token", "refresh_token")
+
+    def _assert_opaque(self, out, resp=None):
+        assert out.success is False
+        assert out.message == "Voice authentication failed", (
+            "der Text verraet, WELCHE Bedingung fehlschlug"
+        )
+        for f in self._FORBIDDEN:
+            assert getattr(out, f) is None, f"{f} auf einem Fehlschlag gesetzt"
+        # 🛑 Und die Felder, die das Orakel trugen, existieren im Modell nicht mehr.
+        for gone in ("speaker_id", "speaker_name", "confidence", "user_id", "username"):
+            assert not hasattr(out, gone), (
+                f"{gone} ist zurueck im Antwortmodell — das war das Orakel"
+            )
+        if resp is not None:
+            assert resp.headers.getlist("set-cookie") == []
+
+    async def test_no_ticket_means_no_check_at_all(self, db_session, monkeypatch):
+        """🛑 Der Kern des Zusatzfaktors: ohne bestandenen ersten Faktor kommt man
+        nicht einmal bis zur Stimmpruefung. Damit ist die Namensaufzaehlung des
+        alten Orakels nicht mehr erreichbar."""
         from fastapi import Response
 
         from api.routes import auth as auth_routes
-        from utils.config import settings
+        from services import voice_second_factor_store as store
 
-        monkeypatch.setattr(settings, "voice_auth_enabled", True)
-        monkeypatch.setattr(settings, "speaker_recognition_enabled", False)
+        await self._user(db_session)
+        self._on(monkeypatch)
+
+        async def _no(_t, _ip):
+            return None
+
+        monkeypatch.setattr(store, "consume_ticket", _no)
         extracted = []
+        import numpy as np
 
+        from services import speaker_service as ss
+
+        class _Svc:
+            def extract_embedding_from_bytes(self, _b, _n):
+                extracted.append(1)
+                return np.array([1.0, 0.0], dtype=np.float32)
+
+        monkeypatch.setattr(ss, "get_speaker_service", lambda: _Svc())
+
+        resp = Response()
+        out = await auth_routes.voice_authenticate(
+            self._request(), resp, ticket="bogus", audio_file=self._upload(), db=db_session)
+        self._assert_opaque(out, resp)
+        assert not extracted, "ohne Ticket darf keine Einbettung berechnet werden"
+
+    async def test_a_wrong_voice_is_refused_and_mints_nothing(self, db_session, monkeypatch):
+        from fastapi import Response
+
+        from api.routes import auth as auth_routes
+
+        user = await self._user(db_session)
+        self._on(monkeypatch)
+        self._stub_ticket(monkeypatch, user_id=user.id)
+        self._stub_voice(monkeypatch, verified=False, score=0.31)
+
+        resp = Response()
+        out = await auth_routes.voice_authenticate(
+            self._request(), resp, ticket="t", audio_file=self._upload(), db=db_session)
+        self._assert_opaque(out, resp)
+
+    async def test_a_verified_but_weak_score_is_refused(self, db_session, monkeypatch):
+        """Die eigene Schwelle der Route gilt zusaetzlich zu `verify_speaker`."""
+        from fastapi import Response
+
+        from api.routes import auth as auth_routes
+
+        user = await self._user(db_session)
+        self._on(monkeypatch, voice_auth_min_confidence=0.9)
+        self._stub_ticket(monkeypatch, user_id=user.id)
+        self._stub_voice(monkeypatch, verified=True, score=0.75)
+
+        out = await auth_routes.voice_authenticate(
+            self._request(), Response(), ticket="t", audio_file=self._upload(), db=db_session)
+        self._assert_opaque(out)
+
+    async def test_consent_revoked_between_factors_is_refused(self, db_session, monkeypatch):
+        """Dem Ticket wird nicht geglaubt: zwischen erstem und zweitem Faktor kann
+        die Einwilligung widerrufen worden sein."""
+        from fastapi import Response
+
+        from api.routes import auth as auth_routes
+
+        user = await self._user(db_session, second_factor=False)
+        self._on(monkeypatch)
+        self._stub_ticket(monkeypatch, user_id=user.id)
+        self._stub_voice(monkeypatch, verified=True, score=0.99)
+
+        out = await auth_routes.voice_authenticate(
+            self._request(), Response(), ticket="t", audio_file=self._upload(), db=db_session)
+        self._assert_opaque(out)
+
+    async def test_a_deactivated_account_is_refused(self, db_session, monkeypatch):
+        from fastapi import Response
+
+        from api.routes import auth as auth_routes
+
+        user = await self._user(db_session, active=False)
+        self._on(monkeypatch)
+        self._stub_ticket(monkeypatch, user_id=user.id)
+        self._stub_voice(monkeypatch, verified=True, score=0.99)
+
+        out = await auth_routes.voice_authenticate(
+            self._request(), Response(), ticket="t", audio_file=self._upload(), db=db_session)
+        self._assert_opaque(out)
+
+    async def test_consent_without_a_profile_fails_closed(self, db_session, monkeypatch):
+        """Einwilligung ohne verknuepftes Profil: nichts, wogegen geprueft werden
+        koennte. Nicht durchlassen."""
+        from fastapi import Response
+
+        from api.routes import auth as auth_routes
+
+        user = await self._user(db_session, with_speaker=False)
+        self._on(monkeypatch)
+        self._stub_ticket(monkeypatch, user_id=user.id)
+        self._stub_voice(monkeypatch, verified=True, score=0.99)
+
+        out = await auth_routes.voice_authenticate(
+            self._request(), Response(), ticket="t", audio_file=self._upload(), db=db_session)
+        self._assert_opaque(out)
+
+    async def test_recognition_off_computes_no_embedding(self, db_session, monkeypatch):
+        """Ein ECAPA-Stimmabdruck ist biometrisches Datum (Art. 9 DSGVO)."""
+        from fastapi import Response
+
+        from api.routes import auth as auth_routes
+
+        user = await self._user(db_session)
+        self._on(monkeypatch, speaker_recognition_enabled=False)
+        self._stub_ticket(monkeypatch, user_id=user.id)
+        extracted = []
         import numpy as np
 
         from services import speaker_service as ss
@@ -382,175 +519,66 @@ class TestVoiceAuthBehaviour:
         monkeypatch.setattr(ss, "get_speaker_service", lambda: _Svc())
 
         out = await auth_routes.voice_authenticate(
-            self._request(), Response(), audio_file=self._upload(), db=db_session)
+            self._request(), Response(), ticket="t", audio_file=self._upload(), db=db_session)
         assert out.success is False
-        assert not extracted, "ohne Erkennung darf keine Einbettung berechnet werden"
-
-    async def test_an_unknown_voice_creates_no_speaker(self, db_session, monkeypatch):
-        """🛑 Ein ANMELDEVERSUCH darf niemals ein Profil anlegen — sonst legte
-        jeder Fehlversuch einen Stimmabdruck ohne Einwilligung an, und ein
-        Fremder koennte ein Profil auf seine Stimme ziehen."""
-        from fastapi import Response
-        from sqlalchemy import func, select
-
-        from api.routes import auth as auth_routes
-        from models.database import Speaker
-        from utils.config import settings
-
-        _sp, _user = await self._linked_user(db_session)
-        before = (await db_session.execute(select(func.count()).select_from(Speaker))).scalar()
-
-        monkeypatch.setattr(settings, "voice_auth_enabled", True)
-        monkeypatch.setattr(settings, "speaker_recognition_enabled", True)
-        self._stub_service(monkeypatch, match=None)   # keine Zuordnung
-
-        out = await auth_routes.voice_authenticate(
-            self._request(), Response(), audio_file=self._upload(), db=db_session)
-        assert out.success is False
-        after = (await db_session.execute(select(func.count()).select_from(Speaker))).scalar()
-        assert after == before, "ein Fehlversuch hat ein Sprecherprofil angelegt"
-
-    async def test_low_confidence_is_refused(self, db_session, monkeypatch):
-        from fastapi import Response
-
-        from api.routes import auth as auth_routes
-        from utils.config import settings
-
-        sp, _user = await self._linked_user(db_session)
-        monkeypatch.setattr(settings, "voice_auth_enabled", True)
-        monkeypatch.setattr(settings, "speaker_recognition_enabled", True)
-        monkeypatch.setattr(settings, "voice_auth_min_confidence", 0.9)
-        self._stub_service(monkeypatch, match=(sp.id, sp.name, 0.60))
-
-        resp = Response()
-        out = await auth_routes.voice_authenticate(
-            self._request(), resp, audio_file=self._upload(), db=db_session)
-        assert out.success is False
-        assert out.access_token is None
-        assert resp.headers.getlist("set-cookie") == [], "abgelehnt, aber Cookie gesetzt"
+        assert not extracted
 
 
-@pytest.mark.database
-class TestVoiceAuthLeaksNothing:
-    """🛑 Das Orakel. Gefunden vom Sicherheits- UND vom adversarialen Durchgang.
+class TestTheRouteIsNoLongerAnIdentifier:
+    """🛑 Der Riegel gegen das Zurueckrutschen.
 
-    Bis zum /review gab JEDER Fehlschlag `speaker_id`, `speaker_name`,
-    `confidence`, und bei einem deaktivierten Konto auch `user_id` und
-    `username` an einen UNANGEMELDETEN Aufrufer zurueck. Das ist zweierlei
-    Angriff in einem:
-
-    * eine Namensliste des Haushalts ohne Zugangsdaten;
-    * ein GRADIENT — `match_known_speaker` trifft ab
-      `speaker_recognition_threshold` (0,25), die Route verlangt
-      `voice_auth_min_confidence` (0,7). Das Band [0,25 – 0,70) lieferte also
-      Name plus zweistelligen Kosinuswert: Audio aendern, Zahl steigen sehen,
-      bei 0,70 aufhoeren. Bei einem Faktor ohne Lebendigkeitspruefung ist genau
-      das die fehlende Rueckkopplung fuer einen Wiedereinspielungs-Angriff.
-
-    Diese Tests pruefen die ABWESENHEIT von Feldern. Ohne sie kommt das Orakel
-    beim naechsten „gib doch eine hilfreichere Fehlermeldung" zurueck.
+    Drei Befunde des Reviews vom 2026-09-27 verschwinden NICHT durch eine Pruefung,
+    sondern durch die Form: die Route identifiziert nicht mehr, sie verifiziert.
+    Faellt sie auf 1:N zurueck, sind Namensorakel und Muenzwurf sofort wieder da.
+    Deshalb pruefen diese drei Behauptungen den Routenkoerper — ergaenzend zu den
+    Verhaltenstests oben, nicht an deren Stelle.
     """
 
-    _FORBIDDEN = ("speaker_id", "speaker_name", "confidence", "user_id", "username")
+    pytestmark = [pytest.mark.unit]
 
-    def _assert_opaque(self, out):
-        assert out.success is False
-        assert out.message == "Voice authentication failed", (
-            "der Text verraet, WELCHE Bedingung fehlschlug"
+    def test_it_verifies_instead_of_identifying(self):
+        from api.routes import auth
+
+        body = _function_body(auth.voice_authenticate)
+        assert "verify_speaker" in body, "1:1-Pruefung fehlt"
+        assert "identify_speaker" not in body, "zurueck auf Argmax ueber alle Profile"
+        assert "build_known_speaker_centroids" not in body, (
+            "die Route baut wieder alle Schwerpunkte — das ist 1:N"
         )
-        for field in self._FORBIDDEN:
-            value = getattr(out, field)
-            assert value in (None, 0.0), f"{field} wird an einen Unangemeldeten verraten: {value!r}"
 
-    async def test_a_match_below_the_auth_bar_reveals_nothing(self, db_session, monkeypatch):
-        """Der Gradient: 0,25 <= score < 0,70 — erkannt, aber nicht gut genug."""
-        from fastapi import Response
+    def test_it_requires_a_ticket(self):
+        import inspect
 
-        from api.routes import auth as auth_routes
-        from utils.config import settings
+        from api.routes import auth
 
-        b = TestVoiceAuthBehaviour()
-        sp, _u = await b._linked_user(db_session)
-        monkeypatch.setattr(settings, "voice_auth_enabled", True)
-        monkeypatch.setattr(settings, "speaker_recognition_enabled", True)
-        monkeypatch.setattr(settings, "speaker_recognition_threshold", 0.25)
-        monkeypatch.setattr(settings, "voice_auth_min_confidence", 0.7)
-        monkeypatch.setattr(settings, "speaker_controlled_enrollment_enabled", False)
-        b._stub_service(monkeypatch, match=(sp.id, sp.name, 0.55))
+        sig = inspect.signature(auth.voice_authenticate)
+        assert "ticket" in sig.parameters, (
+            "ohne Ticket waere die Stimme wieder der ERSTE Faktor"
+        )
 
-        resp = Response()
-        out = await auth_routes.voice_authenticate(
-            b._request(), resp, audio_file=b._upload(), db=db_session)
-        self._assert_opaque(out)
-        assert resp.headers.getlist("set-cookie") == []
+    def test_the_response_model_carries_no_identity(self):
+        from api.routes.auth import VoiceAuthResponse
 
-    async def test_an_unlinked_speaker_reveals_nothing(self, db_session, monkeypatch):
-        """Erkannt, aber kein Konto daran — das waere eine Aussage ueber den
-        Haushalt und darf nicht nach draussen."""
-        import numpy as np
-        from fastapi import Response
+        for gone in ("speaker_id", "speaker_name", "confidence", "user_id", "username"):
+            assert gone not in VoiceAuthResponse.model_fields, (
+                f"{gone} ist zurueck — genau diese Felder waren das Orakel"
+            )
 
-        from api.routes import auth as auth_routes
-        from models.database import Speaker, SpeakerEmbedding
-        from services.speaker_service import SpeakerService
-        from utils.config import settings
+    def test_login_can_withhold_tokens(self):
+        """Der Anmeldepfad MUSS Token zurueckhalten koennen, sonst ist der zweite
+        Faktor Zierrat."""
+        from api.routes.auth import TokenResponse
 
-        sp = Speaker(name="Gast", enrolled=True)
-        db_session.add(sp)
-        await db_session.flush()
-        db_session.add(SpeakerEmbedding(
-            speaker_id=sp.id,
-            embedding=SpeakerService.embedding_to_base64(np.array([1.0, 0.0], dtype=np.float32)),
-        ))
-        await db_session.commit()
-        await db_session.refresh(sp)
-
-        b = TestVoiceAuthBehaviour()
-        monkeypatch.setattr(settings, "voice_auth_enabled", True)
-        monkeypatch.setattr(settings, "speaker_recognition_enabled", True)
-        monkeypatch.setattr(settings, "voice_auth_min_confidence", 0.5)
-        monkeypatch.setattr(settings, "speaker_controlled_enrollment_enabled", False)
-        b._stub_service(monkeypatch, match=(sp.id, sp.name, 0.99))
-
-        out = await auth_routes.voice_authenticate(
-            b._request(), Response(), audio_file=b._upload(), db=db_session)
-        self._assert_opaque(out)
-
-    async def test_a_disabled_account_reveals_no_username(self, db_session, monkeypatch):
-        from fastapi import Response
-
-        from api.routes import auth as auth_routes
-        from utils.config import settings
-
-        b = TestVoiceAuthBehaviour()
-        sp, user = await b._linked_user(db_session)
-        user.is_active = False
-        await db_session.commit()
-
-        monkeypatch.setattr(settings, "voice_auth_enabled", True)
-        monkeypatch.setattr(settings, "speaker_recognition_enabled", True)
-        monkeypatch.setattr(settings, "voice_auth_min_confidence", 0.5)
-        monkeypatch.setattr(settings, "speaker_controlled_enrollment_enabled", False)
-        b._stub_service(monkeypatch, match=(sp.id, sp.name, 0.99))
-
-        out = await auth_routes.voice_authenticate(
-            b._request(), Response(), audio_file=b._upload(), db=db_session)
-        self._assert_opaque(out)
+        assert TokenResponse.model_fields["access_token"].default is None
+        assert "second_factor_ticket" in TokenResponse.model_fields
 
 
 class TestTheMarginGateIsShared:
-    """🛑 Geteilt wurde erst nur der Schwerpunkt-BAUER, nicht die ENTSCHEIDUNG.
+    """`match_known_speaker` bleibt — fuer die Erkennung und `/api/speakers/identify`.
 
-    `SpeakerService.identify_speaker` ist reines Argmax ueber einer Schwelle.
-    Der Resolver verlangt unter der kontrollierten Erkennung zusaetzlich einen
-    Abstand zum Zweitplatzierten. Solange die Anmeldung `identify_speaker`
-    benutzte, galt: Audio, das 0,72 gegen ZWEI Haushaltsmitglieder erreicht,
-    wird von der Erkennung als Muenzwurf abgelehnt — und haette sich an der
-    Anmeldung als das naechstliegende Profil ANGEMELDET. Eines dieser Profile
-    kann das Administratorkonto sein.
-
-    Der Test vergleicht die beiden Entscheidungen direkt, damit die Halbierung
-    nicht zurueckkommt.
+    Die Anmeldung benutzt es nach dem Umbau NICHT mehr (sie verifiziert 1:1), aber
+    die beiden 1:N-Pfade tun es, und dort war die fehlende Laeufer-Marge der
+    Muenzwurf-Befund.
     """
 
     pytestmark = [pytest.mark.unit]
@@ -559,7 +587,6 @@ class TestTheMarginGateIsShared:
     def _two_close_profiles():
         import numpy as np
 
-        # Zwei Profile, beide nah an der Anfrage und nah aneinander.
         q = np.array([1.0, 0.0], dtype=np.float32)
         a = np.array([1.0, 0.05], dtype=np.float32)
         b = np.array([1.0, 0.10], dtype=np.float32)
@@ -573,29 +600,164 @@ class TestTheMarginGateIsShared:
         q, known = self._two_close_profiles()
 
         mid, best, runner = match_known_speaker(q, known, controlled=True)
-        assert best >= 0.25, "Voraussetzung: beide liegen ueber der Schwelle"
-        assert (best - runner) < 0.1, "Voraussetzung: sie liegen zu nah beieinander"
-        assert mid is None, "ein Muenzwurf zwischen zwei Profilen darf NICHT zuordnen"
+        assert best >= 0.25, "Voraussetzung: beide ueber der Schwelle"
+        assert (best - runner) < 0.1, "Voraussetzung: zu nah beieinander"
+        assert mid is None, "ein Muenzwurf darf NICHT zuordnen"
 
     def test_without_controlled_it_is_plain_argmax(self, monkeypatch):
-        """Die Gegenrichtung — sonst wuerde der Test auch bei einer Marge
-        bestehen, die IMMER greift."""
         from services.speaker_resolver import match_known_speaker
 
         monkeypatch.setattr("utils.config.settings.speaker_recognition_threshold", 0.25)
         monkeypatch.setattr("utils.config.settings.speaker_match_min_margin", 0.1)
         q, known = self._two_close_profiles()
 
-        mid, _best, _runner = match_known_speaker(q, known, controlled=False)
+        mid, _b, _r = match_known_speaker(q, known, controlled=False)
         assert mid is not None, "ohne kontrollierte Erkennung gilt die Marge nicht"
 
-    def test_the_route_uses_the_shared_decision_not_argmax(self):
-        """Der Riegel gegen das Zurueckrutschen: die Route darf
-        `identify_speaker` nicht wieder direkt aufrufen."""
-        from api.routes import auth
 
-        body = _function_body(auth.voice_authenticate)
-        assert "match_known_speaker" in body
-        assert "identify_speaker" not in body, (
-            "die Anmeldung waere wieder reines Argmax ohne Laeufer-Marge"
+@pytest.mark.database
+class TestLoginWithholdsTokensForSecondFactor:
+    """🛑 Der Kern des Zusatzfaktors, und die Stelle, an der er scheitern würde.
+
+    Ein zweiter Faktor, nach dem der erste schon Zugriff gewährt hat, ist keiner.
+    `/auth/login` muss für ein Konto mit `voice_second_factor_enabled` deshalb
+    KEINE Token und KEINE Cookies ausgeben, sondern nur ein Ticket. Fällt diese
+    Verzweigung weg, ist die Stimme Dekoration — und man merkt es nicht, weil sich
+    die Anmeldung dann einfach normal anfühlt.
+    """
+
+    @staticmethod
+    def _request():
+        from starlette.requests import Request
+
+        return Request({
+            "type": "http", "method": "POST", "path": "/api/auth/login",
+            "raw_path": b"/api/auth/login", "root_path": "", "scheme": "http",
+            "query_string": b"", "headers": [], "client": ("127.0.0.1", 12345),
+            "server": ("test", 80), "app": None,
+        })
+
+    @staticmethod
+    def _form(username="anna2fa", password="pw"):
+        class _F:
+            pass
+
+        f = _F()
+        f.username = username
+        f.password = password
+        return f
+
+    async def _user(self, db, *, second_factor: bool):
+        from models.database import Role, User
+        from services.auth_service import get_password_hash
+
+        role = Role(name=f"L2F{'A' if second_factor else 'B'}", description="",
+                    permissions=["chat.own"])
+        db.add(role)
+        await db.flush()
+        user = User(username="anna2fa" if second_factor else "anna1fa",
+                    password_hash=get_password_hash("pw"), role_id=role.id,
+                    is_active=True, token_epoch=0,
+                    voice_second_factor_enabled=second_factor)
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+        return user
+
+    @staticmethod
+    def _stub_ticket(monkeypatch, *, ticket="TICKET"):
+        from services import voice_second_factor_store as store
+
+        async def _issue(_uid, _ip):
+            return ticket
+
+        monkeypatch.setattr(store, "issue_ticket", _issue)
+
+    async def test_it_returns_a_ticket_and_no_tokens(self, db_session, monkeypatch):
+        from fastapi import Response
+
+        from api.routes import auth as auth_routes
+        from utils.config import settings
+
+        user = await self._user(db_session, second_factor=True)
+        monkeypatch.setattr(settings, "voice_auth_enabled", True)
+        monkeypatch.setattr(settings, "auth_cookie_enabled", True)
+        self._stub_ticket(monkeypatch)
+
+        resp = Response()
+        out = await auth_routes.login(
+            self._request(), form_data=self._form(user.username), db=db_session,
+            response=resp)
+
+        assert out.second_factor == "voice"
+        assert out.second_factor_ticket == "TICKET"
+        assert out.access_token is None, "der erste Faktor hat Token ausgegeben"
+        assert out.refresh_token is None
+        assert resp.headers.getlist("set-cookie") == [], (
+            "der erste Faktor hat eine Sitzung eingerichtet — dann sperrt die "
+            "Stimme nichts mehr"
+        )
+
+    async def test_a_normal_account_is_untouched(self, db_session, monkeypatch):
+        """Der Flag-off-Pfad muss byte-identisch bleiben."""
+        from fastapi import Response
+
+        from api.routes import auth as auth_routes
+        from utils.config import settings
+
+        user = await self._user(db_session, second_factor=False)
+        monkeypatch.setattr(settings, "voice_auth_enabled", True)
+        monkeypatch.setattr(settings, "auth_cookie_enabled", True)
+
+        resp = Response()
+        out = await auth_routes.login(
+            self._request(), form_data=self._form(user.username), db=db_session,
+            response=resp)
+        assert out.access_token and out.refresh_token
+        assert out.second_factor is None
+        assert resp.headers.getlist("set-cookie") != []
+
+    async def test_with_the_voice_route_off_the_hurdle_rests(self, db_session, monkeypatch):
+        """🛑 Sonst wäre das Konto ausgesperrt: die Hürde greift nur, wenn es auch
+        eine Tür gibt. Ist `VOICE_AUTH_ENABLED` aus, könnte niemand das Ticket
+        einlösen — dann läuft der Passwortpfad normal weiter und die Einwilligung
+        ruht."""
+        from fastapi import Response
+
+        from api.routes import auth as auth_routes
+        from utils.config import settings
+
+        user = await self._user(db_session, second_factor=True)
+        monkeypatch.setattr(settings, "voice_auth_enabled", False)
+        monkeypatch.setattr(settings, "auth_cookie_enabled", True)
+
+        out = await auth_routes.login(
+            self._request(), form_data=self._form(user.username), db=db_session,
+            response=Response())
+        assert out.access_token, "ohne Sprachweg muss der Passwortpfad durchlassen"
+        assert out.second_factor is None
+
+    async def test_no_ticket_means_no_login_at_all(self, db_session, monkeypatch):
+        """🛑 Fail-closed. Ein Redis-Ausfall darf den zweiten Faktor nicht
+        stillschweigend entfernen — er muss die Anmeldung verweigern."""
+        from fastapi import HTTPException, Response
+
+        from api.routes import auth as auth_routes
+        from services import voice_second_factor_store as store
+        from utils.config import settings
+
+        user = await self._user(db_session, second_factor=True)
+        monkeypatch.setattr(settings, "voice_auth_enabled", True)
+
+        async def _none(_uid, _ip):
+            return None
+
+        monkeypatch.setattr(store, "issue_ticket", _none)
+
+        with pytest.raises(HTTPException) as ei:
+            await auth_routes.login(
+                self._request(), form_data=self._form(user.username),
+                db=db_session, response=Response())
+        assert ei.value.status_code == 503, (
+            "ohne Ticket darf es weder Token noch eine stille Umgehung geben"
         )

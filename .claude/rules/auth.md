@@ -66,15 +66,20 @@ no token ever in Redis or a URL. 404 when the flag is off. Redirects carry only 
 - Frontend cookie mode: `AuthContext.setTokens` persists NEITHER token to localStorage; "logged in?" comes from `/me`.
 
 ## Voice token + voiceprint privacy gate
-- **`POST /auth/voice` (`VOICE_AUTH_ENABLED`, aus auf beiden Instanzen) liest biometrische Daten und stellt Token aus.**
-  Sie prüft `speaker_recognition_enabled` VOR der Einbettung, vergleicht gegen dieselben Referenzprofile wie die
-  Erkennung (`speaker_resolver.build_known_speaker_centroids`) und schreibt NICHTS — bewusst nicht über
-  `resolve_speaker_from_embedding`, der einen unbekannten Sprecher anlegen würde: ein Anmeldeversuch darf kein Profil
-  erzeugen. Sie setzt `_set_auth_cookies` und meldet `must_change_password` wie die vier anderen Anmeldewege.
-  🛑 Das Flag bleibt aus: eine Tonaufnahme genügt für Zugriffs- UND Erneuerungstoken, ohne Lebendigkeitsprüfung und
-  ohne zweiten Faktor. Bis 2026-09-27 war die Route eine `TypeError`-Falle (falsche Aufrufsignatur).
-- `/api/ws/token?purpose=voice` mints a short-lived `scope:"voice"` token for the external voice-server only; its verify
-  path (`/api/internal/auth/verify`) accepts any non-`ws` scope. **REST and renfield's own `/ws/*` REJECT `scope:voice`.**
+- **`POST /auth/voice` ist der ZWEITE Faktor, nicht der erste** (`VOICE_AUTH_ENABLED`, aus auf beiden Instanzen).
+  Ablauf: `/auth/login` gibt für ein Konto mit `users.voice_second_factor_enabled` **keine Token und keine Cookies**,
+  sondern `second_factor="voice"` + ein Einmalticket (`services/voice_second_factor_store`: 256 Bit, Redis-`GETDEL`,
+  TTL `VOICE_SECOND_FACTOR_TTL_SECONDS`, an die Adresse gebunden **nur** wenn sie fälschungsresistent ist).
+  `/auth/voice` löst Ticket + Aufnahme ein, prüft **1:1** gegen das verknüpfte Profil (`verify_speaker`), und prägt
+  erst dann die Token. Die Einwilligung ist eine Spalte je Person (Art. 9 DSGVO), kein ConfigMap-Flag.
+  🛑 **KEIN Rückfall** auf Passwort allein — ein Rückfall, den der Angreifer selbst auslöst, hebt den Faktor auf.
+  Wiederherstellung = Administrator schaltet `voice_second_factor_enabled` ab. Die Hürde greift nur bei
+  `VOICE_AUTH_ENABLED=true`, sonst wäre das Konto ausgesperrt.
+  🛑 **Jeder Fehlschlag antwortet identisch** (`{"success": false, "message": "Voice authentication failed"}`) und das
+  Antwortmodell trägt **keine** `speaker_id`/`speaker_name`/`confidence`/`user_id`/`username`. Bis zum 2026-09-27 tat
+  es das, und war damit ein unangemeldetes Namensorakel plus Gradient für eine Wiedereinspielung. Sperre auf
+  `voice2fa:<user_id>` (nach dem Ticket ist der Nutzer bekannt, also kann ein Fremder niemanden aussperren);
+  `speaker_recognition_enabled` wird VOR jeder Einbettung geprüft; ECAPA läuft in `asyncio.to_thread`.
 - **With `SPEAKER_RECOGNITION_ENABLED=false` NO voiceprint is persisted on ANY path (Art. 9 GDPR):**
   `chat_handler._resolve_wire_speaker` + `speaker_resolver.resolve_speaker_from_embedding` (refuse before DB access),
   enrollment routes/service (409), `Meeting.segments` (`meeting_pipeline.strip_biometric_fields`, always), fingerprints.

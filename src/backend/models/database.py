@@ -1253,6 +1253,20 @@ class User(Base):
     # presence booking, and a recognised speaker replaces it inside the turn.
     # Nothing keys on the username — the flag is the contract.
     is_device_account = Column(Boolean, default=False, nullable=False, server_default="false")
+    # 🛑 Einwilligung je Person, nicht Konfiguration. Ein ECAPA-Stimmabdruck ist
+    # biometrisches Datum (Art. 9 DSGVO); dass eine ANMELDUNG ihn verlangt, kann
+    # niemand fuer jemanden anderen entscheiden. Standard `false`, einzeln
+    # widerrufbar. `speaker_id` taugt dafuer NICHT: die Verknuepfung entstand fuer
+    # die Sprecherkennung, nicht als Zustimmung zur Anmeldung.
+    #
+    # Ist das Flag an, gibt `/auth/login` KEINE Token, sondern ein Einmalticket
+    # (`services/voice_second_factor_store`), und erst `/auth/voice` prueft die
+    # Stimme 1:1 gegen das verknuepfte Profil und praegt die Token. Es gibt
+    # KEINEN Rueckfall auf Passwort allein — die Wiederherstellung ist ein
+    # Administrator, der dieses Flag abschaltet.
+    voice_second_factor_enabled = Column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
 
     # Session-revocation epoch (security audit H3/H4). Access + refresh JWTs carry
     # the user's token_epoch as an `epoch` claim; get_current_user / the refresh

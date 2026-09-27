@@ -5,6 +5,7 @@ import { server } from '../mocks/server';
 import { BASE_URL } from '../mocks/handlers';
 import { AuthProvider, useAuth } from '../../../../src/frontend/src/context/AuthContext';
 import { PASSWORD_CHANGE_REQUIRED_EVENT } from '../../../../src/frontend/src/utils/axios';
+import { SecondFactorRequired } from '../../../../src/frontend/src/types/api';
 
 // Shape of /api/auth/me used by these tests. Mirrors the JSON the real
 // backend returns and what AuthContext drops verbatim into `user` state via
@@ -126,6 +127,47 @@ describe('AuthContext', () => {
 
       expect(localStorage.getItem('renfield_access_token')).toBe('a');
       expect(localStorage.getItem('renfield_refresh_token')).toBe('r');
+    });
+
+    // 🛑 Seit die Stimme ein ZUSATZfaktor ist, kann `/auth/login` absichtlich ohne
+    // Token antworten. Ohne die Verzweigung im AuthContext liefe hier
+    // `setTokens(undefined, undefined)`: die Oberfläche hielte sich für angemeldet,
+    // und jede Folgeanfrage käme unauthentifiziert zurück. Der Fehlermodus wäre
+    // „eingeloggt, aber alles leer" — der unangenehmste, weil er nicht nach einem
+    // Anmeldefehler aussieht.
+    it('login without tokens raises SecondFactorRequired and stores nothing', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/auth/status`, () =>
+          HttpResponse.json({ auth_enabled: true, allow_registration: false })
+        ),
+        http.post(`${BASE_URL}/api/auth/login`, () =>
+          HttpResponse.json({
+            token_type: 'bearer',
+            expires_in: 0,
+            second_factor: 'voice',
+            second_factor_ticket: 'TICKET-123',
+          })
+        )
+      );
+
+      const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      let caught: unknown;
+      await act(async () => {
+        try {
+          await result.current.login('u', 'pw');
+        } catch (e) {
+          caught = e;
+        }
+      });
+
+      expect(caught).toBeInstanceOf(SecondFactorRequired);
+      expect((caught as SecondFactorRequired).factor).toBe('voice');
+      expect((caught as SecondFactorRequired).ticket).toBe('TICKET-123');
+      expect(localStorage.getItem('renfield_access_token')).toBeNull();
+      expect(localStorage.getItem('renfield_refresh_token')).toBeNull();
+      expect(result.current.isAuthenticated).toBe(false);
     });
   });
 

@@ -163,10 +163,31 @@ export interface LoginRequest {
 }
 
 export interface LoginResponse {
-  access_token: string;
-  refresh_token: string;
+  // 🛑 Optional, seit die Stimme ein ZUSATZfaktor ist: für ein Konto mit
+  // `voice_second_factor_enabled` gibt `/auth/login` bewusst KEINE Token,
+  // sondern `second_factor` + `second_factor_ticket`. Wer hier `string`
+  // annimmt, ruft `setTokens(undefined, undefined)` und hält sich für
+  // angemeldet. Siehe `.claude/rules/auth.md`.
+  access_token?: string | null;
+  refresh_token?: string | null;
   token_type: 'bearer';
   user: User;
+  /** Gesetzt, wenn die Anmeldung noch einen zweiten Faktor braucht. Heute nur `'voice'`. */
+  second_factor?: 'voice' | null;
+  /** Einmalticket für den zweiten Faktor. Kurzlebig, adressgebunden. */
+  second_factor_ticket?: string | null;
+  must_change_password?: boolean;
+}
+
+/** Fehler, den `login()` wirft, wenn noch ein zweiter Faktor fehlt. */
+export class SecondFactorRequired extends Error {
+  constructor(
+    public readonly factor: 'voice',
+    public readonly ticket: string,
+  ) {
+    super(`second factor required: ${factor}`);
+    this.name = 'SecondFactorRequired';
+  }
 }
 
 export interface RefreshTokenRequest {
