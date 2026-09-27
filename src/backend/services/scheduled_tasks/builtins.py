@@ -497,6 +497,16 @@ async def _satellite_fleet_watchdog_handler(app: FastAPI, params: dict) -> str |
     # Lebenszeichen" — ein Waechter darauf haette am 2026-09-26 die drei
     # GESUNDEN gemeldet und die drei toten verschwiegen. Siehe
     # services/satellite_fleet_watchdog.py.
+    #
+    # 🛑 SELBSTTOR vor dem Import. Eine Plattform-Installation ohne `ha_glue`
+    # hat keine Satelliten; der Waechter wuerde dort `ha_glue.services.
+    # satellite_manager` importieren und die Architekturgrenze reissen. Gesaet
+    # wird die Aufgabe trotzdem (Muster wie `mcp_health_monitor`: gesaet
+    # aktiviert, Handler entscheidet zur Laufzeit), damit ein spaeter
+    # eingeschaltetes Satellitenmerkmal keine Migration der Saatzeile braucht.
+    if not settings.features.get("satellites"):
+        return None
+
     from services.satellite_fleet_watchdog import check_satellite_fleet
 
     return await check_satellite_fleet()

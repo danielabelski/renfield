@@ -138,6 +138,17 @@ async def check_satellite_fleet(
         return None
 
     if manager is None:
+        # 🛑 Der Import steht im FUNKTIONSRUMPF und hinter diesem Tor, damit eine
+        # Plattform-Installation ohne `ha_glue` ihn nie erreicht — dieselbe
+        # Bedingung prueft schon der Aufrufer in `scheduled_tasks/builtins.py`,
+        # hier nochmal fuer direkte Aufrufer. Das ist die Begruendung des
+        # Eintrags in `ALLOWED_IMPORTERS` von `test_ha_glue_boundary.py`.
+        from utils.config import settings as _platform_settings
+
+        if not _platform_settings.features.get("satellites"):
+            logger.debug("Flottenwache: Satellitenmerkmal aus, kein Urteil")
+            return None
+
         from ha_glue.services.satellite_manager import get_satellite_manager
 
         manager = get_satellite_manager()
