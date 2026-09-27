@@ -463,6 +463,31 @@ class RAGRetrieval:
                         timeout=settings.rag_embedding_timeout,
                     )
                 c_emb = c_resp.embedding
+                # 🛑 KEIN `strict=True` hier, und das ist der Unterschied zu den
+                # acht anderen zip-Stellen. Dort wird eine Liste mit dem
+                # `gather`-Ergebnis UEBER DERSELBEN Liste gepaart — gleich lang
+                # per Konstruktion. Hier sind `q_emb` und `c_emb` zwei GETRENNTE
+                # Ollama-Antworten (Zeilen 450 und 462): eine abweichende Laenge
+                # ist keine verletzte Annahme, sondern ein moeglicher Betriebsfall.
+                #
+                # Am 2026-09-27 stand hier kurz `strict=True`. Das war falsch
+                # verallgemeinert: der `ValueError` verlaesst `_score`, das
+                # `gather` bei Zeile 473 hat kein `return_exceptions`, und der
+                # `except Exception` unten faengt ihn — Rueckgabe ist dann die
+                # URSPRUNGSREIHENFOLGE. EIN schlechter Brocken haette also die
+                # Neuordnung der GANZEN Abfrage verworfen, wo vorher nur dieser
+                # eine Brocken einen kleinen `dot` und damit einen hinteren Platz
+                # bekam.
+                #
+                # Stumm abschneiden war aber auch nicht richtig. Also: pruefen,
+                # laut sein, und nur diesen Brocken abwerten.
+                if len(q_emb) != len(c_emb):
+                    logger.warning(
+                        f"Reranking: Einbettungslaengen weichen ab "
+                        f"(Anfrage {len(q_emb)}, Brocken {len(c_emb)}) — dieser "
+                        f"Brocken wird abgewertet, die Neuordnung laeuft weiter"
+                    )
+                    return (0.0, r)
                 dot = sum(a * b for a, b in zip(q_emb, c_emb, strict=True))
                 norm_q = sum(a * a for a in q_emb) ** 0.5
                 norm_c = sum(a * a for a in c_emb) ** 0.5

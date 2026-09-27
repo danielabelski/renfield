@@ -7,6 +7,7 @@ Provides endpoints for user authentication:
 - Refresh (get new access token using refresh token)
 - Me (get current user info)
 """
+import asyncio
 import hmac
 import secrets
 from datetime import UTC, datetime
@@ -923,6 +924,34 @@ async def voice_authenticate(
             message="Speaker recognition is disabled"
         )
 
+    # 🛑 Sperre, Metrik und Protokoll — wie der Passwortpfad (Zeilen 239-299).
+    # Ohne das war diese Tuer unbeobachtet: unbegrenzte Stimmversuche, nur
+    # durch `api_rate_limit_auth` (10/min je IP) gebremst, ein Erfolg
+    # schrieb eine `logger.info`-Zeile und ein Fehlversuch GAR NICHTS. Ein
+    # Angriff auf eine tokenpraegende Route waere nachtraeglich nicht
+    # feststellbar gewesen.
+    #
+    # Gesperrt wird auf `voice:<ip>` statt auf einen Nutzernamen: bei einer
+    # Stimmanmeldung ist der Nutzer erst NACH dem Vergleich bekannt, und ihn
+    # danach zu sperren waere ein Hebel, mit dem ein Fremder ein Konto
+    # aussperrt. Die Adresse zaehlt nur, wenn sie faelschungsresistent ist —
+    # sonst rotiert ein Angreifer den Kopf und umgeht die Sperre, oder er
+    # faelscht die Adresse des Eigentuemers und sperrt IHN aus.
+    from services.api_rate_limiter import client_ip_is_spoof_resistant, get_client_ip
+    from services.login_lockout import login_lockout
+    from utils.metrics import record_login_failure
+
+    client_ip = get_client_ip(request) if client_ip_is_spoof_resistant() else None
+    lock_key = f"voice:{client_ip}" if client_ip else "voice:untrusted-proxy"
+    if await login_lockout.is_locked(lock_key, client_ip):
+        record_login_failure("voice_locked_out")
+        logger.warning(f"Voice authentication rejected: locked out (ip={client_ip})")
+        # DERSELBE opake Rumpf wie jeder andere Fehlschlag — eine Sperre darf
+        # sich nicht von einer Nichterkennung unterscheiden.
+        return VoiceAuthResponse(
+            success=False, message="Voice authentication failed"
+        )
+
     # Read audio file
     audio_bytes = await audio_file.read()
 
@@ -945,8 +974,17 @@ async def voice_authenticate(
         # Gibt `None` zurueck, wenn In-Prozess-Einbettungen abgeschaltet sind —
         # der zentrale Riegel in `SpeakerService` nennt „voice-login" selbst als
         # abgedeckten Aufrufer, hier ist kein zweiter noetig.
-        query_embedding = speaker_service.extract_embedding_from_bytes(
-            audio_bytes, audio_file.filename or "voice-login"
+        # 🛑 `to_thread`, nicht nackt. `extract_embedding_from_bytes` ist ein
+        # schlichtes `def`: Tempdatei, `librosa.load`, torch-ECAPA-Inferenz, beim
+        # ersten Mal zusaetzlich das Modellladen. Nackt aus einem `async def`
+        # aufgerufen legt das die GESAMTE Ereignisschleife still — jeden
+        # WebSocket, jede Satelliten-Sprachrunde, jeden anderen Nutzer. Auf einer
+        # Route, die keine Anmeldung verlangt, ist das der billigste
+        # Dienstverweigerungs-Hebel, den das Backend zu bieten hat (die
+        # Rumpfgrenze ist 50 MB, `config/nginx.conf:7`, also viel Audio).
+        query_embedding = await asyncio.to_thread(
+            speaker_service.extract_embedding_from_bytes,
+            audio_bytes, audio_file.filename or "voice-login",
         )
         if query_embedding is None:
             return VoiceAuthResponse(
@@ -996,18 +1034,26 @@ async def voice_authenticate(
         # der nicht verraet, WELCHE Bedingung fehlschlug. Genau wie der
         # Passwortpfad nicht zwischen „Nutzer unbekannt" und „Passwort falsch"
         # unterscheidet. Die Diagnose steht im Protokoll, nicht in der Antwort.
-        def _refused(reason: str) -> VoiceAuthResponse:
+        async def _refused(reason: str) -> VoiceAuthResponse:
+            # Zaehlt in die Sperre UND in die Metrik. Ohne das Zaehlen waere die
+            # Pruefung oben Zierrat: gepruefte Sperre, die nie zuschlaegt.
             logger.info(f"Voice authentication refused: {reason}")
+            record_login_failure("voice_no_match")
+            tripped = await login_lockout.record_failure(lock_key, client_ip)
+            if tripped:
+                logger.warning(
+                    f"Voice authentication lockout tripped (ip={client_ip})"
+                )
             return VoiceAuthResponse(
                 success=False,
                 message="Voice authentication failed",
             )
 
         if matched_id is None:
-            return _refused(f"no match (best {best_score:.2f})")
+            return await _refused(f"no match (best {best_score:.2f})")
 
         if best_score < settings.voice_auth_min_confidence:
-            return _refused(
+            return await _refused(
                 f"below the voice-auth bar ({best_score:.2f} < "
                 f"{settings.voice_auth_min_confidence}) for speaker {matched_id}"
             )
@@ -1022,7 +1068,7 @@ async def voice_authenticate(
         speaker = speaker_result.scalar_one_or_none()
 
         if not speaker:
-            return _refused(f"speaker {speaker_id} vanished between match and lookup")
+            return await _refused(f"speaker {speaker_id} vanished between match and lookup")
 
         # Check if speaker is linked to a user
         user_result = await db.execute(
@@ -1036,10 +1082,10 @@ async def voice_authenticate(
             # Ein unangemeldeter Aufrufer darf NICHT erfahren, dass eine Stimme
             # erkannt wurde, aber kein Konto daran haengt — das waere eine
             # Aussage ueber den Haushalt.
-            return _refused(f"speaker {speaker_id} has no linked user account")
+            return await _refused(f"speaker {speaker_id} has no linked user account")
 
         if not user.is_active:
-            return _refused(f"user {user.id} is disabled")
+            return await _refused(f"user {user.id} is disabled")
 
         # Success! Generate tokens
         user.last_login = datetime.now(UTC).replace(tzinfo=None)
@@ -1054,6 +1100,9 @@ async def voice_authenticate(
         # Sprachanmeldung nur Token im Rumpf und richtete ueberhaupt keine
         # Sitzung ein — die Oberflaeche arbeitet auf dem HttpOnly-Cookie.
         _set_auth_cookies(response, access_token=access_token, refresh_token=refresh_token)
+        # Wie der Passwortpfad: ein Erfolg loescht die Fehlversuchsspur, sonst
+        # wirkt eine fremde Serie gegen den rechtmaessigen Nutzer weiter.
+        await login_lockout.clear(lock_key, client_ip)
 
         logger.info(f"Voice authentication successful: {user.username} (speaker {speaker.id}, confidence {confidence:.2f})")
 
