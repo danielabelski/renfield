@@ -624,19 +624,21 @@ Bereits gepinnte Images:
 
 | Bereich (gemessen 2026-09-27) | Test Files | Tests | Source Files |
 |---------|------------|-------|--------------|
-| Backend (`tests/backend`) | 385 | 7167 `def test_` | 323 `.py` (ohne alembic) |
+| Backend (`tests/backend`) | 385 | 7167 `def test_` → **7604 gesammelt** (Vollsuite 2026-09-27, 37:57, 30 übersprungen) | 323 `.py` (ohne alembic) |
 | Frontend (`tests/frontend/react`, Vitest/TS — keine `.jsx` mehr) | 120 | 977 `it()/test()` | 245 `.ts/.tsx` |
 | Satellite (`tests/satellite`) | 34 | – | 36 `.py` (Paket `renfield_satellite/`) |
 
 Zählung: `find tests/backend -name 'test_*.py' | wc -l`, `grep -rhc 'def test_' tests/backend --include='test_*.py' | awk '{s+=$1} END{print s}'`; Frontend mit `-not -path '*/node_modules/*'` bzw. `--exclude-dir=node_modules` (ohne den Ausschluss zählt man die Tests der Abhängigkeiten mit).
 
 🛑 **`def test_` ist eine UNTERGRENZE, nicht die Zahl der Testfälle.** Ein
-`@pytest.mark.parametrize` erzeugt aus einer Definition mehrere Fälle; die echte Zahl
-steht nur im Sammellauf (`pytest --collect-only -q`). Diese Tabelle nennt bewusst die
-Definitionen, weil sie ohne Testbank messbar sind — wer eine Fallzahl braucht, muss
-sammeln. Und sie ist die EINZIGE Stelle, die eine Testzahl führt: `CLAUDE.md` verwies
-bis 2026-09-27 auf „backend 3.400+", also auf weniger als die Hälfte, und zeigt jetzt
-hierher statt eine zweite Zahl zu pflegen.
+`@pytest.mark.parametrize` erzeugt aus einer Definition mehrere Fälle. Die Tabelle nennt
+deshalb beides: die Definitionen, weil sie ohne Testbank messbar sind, und die gesammelte
+Zahl aus dem letzten Vollauf (7604 gegen 7167 Definitionen — 437 Fälle kommen aus
+`parametrize`). Wer eine Fallzahl braucht, muss sammeln oder laufen lassen.
+
+Und dies ist die EINZIGE Stelle, die eine Testzahl führt: `CLAUDE.md` nannte bis
+2026-09-27 „backend 3.400+" — weniger als die Hälfte — und verweist jetzt hierher,
+statt eine zweite Zahl zu pflegen, die zwangsläufig auseinanderdriftet.
 
 ### Fehlende Tests
 
