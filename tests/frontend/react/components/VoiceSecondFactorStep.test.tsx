@@ -107,10 +107,26 @@ describe('VoiceSecondFactorStep', () => {
     fireEvent.click(screen.getByRole('button', { name: /bestätigen|confirm/i }));
 
     await waitFor(() => expect(apiClient.post).toHaveBeenCalled());
-    const [url, form] = vi.mocked(apiClient.post).mock.calls[0];
+    const [url, form, config] = vi.mocked(apiClient.post).mock.calls[0];
     expect(url).toBe('/api/auth/voice');
     expect((form as FormData).get('ticket')).toBe('TICKET-9');
     expect((form as FormData).get('audio_file')).toBeInstanceOf(Blob);
+
+    // 🛑 DIESE ZEILE FEHLTE, und sie hat den ersten echten Anmeldeversuch
+    // gekostet (2026-09-28): `POST /api/auth/voice` kam als **422** zurück, die
+    // Stimme wurde nie geprüft.
+    //
+    // `apiClient` trägt `Content-Type: application/json` als Voreinstellung
+    // (`utils/axios.ts`). Axios entfernt den bei FormData nur, wenn er NICHT
+    // explizit gesetzt ist — hier blieb er stehen: Körper multipart, Kopf
+    // behauptet JSON, FastAPI kann ihn nicht lesen.
+    //
+    // Der Test lief trotzdem grün, weil er nur `[url, form]` ansah und das
+    // dritte Argument — in dem die Köpfe stehen — nie prüfte. Alle vier
+    // anderen Uploads im Projekt setzen den Kopf; dieser war der Ausreißer.
+    expect((config as { headers?: Record<string, string> })?.headers?.['Content-Type'])
+      .toBe('multipart/form-data');
+
     await waitFor(() => expect(onVerified).toHaveBeenCalled());
   });
 
