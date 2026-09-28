@@ -83,8 +83,10 @@ Vollständige Begründung + Runbook: `docs/ACCESS_CONTROL.md`. Hier nur die Inva
   der falsche Vektorraum (gespeichert: ONNX). `verify_speaker` bleibt unberührt. Mindestdauer = die vom
   voice-server gemessene `audio_duration_s`; die 1,5 s der Maske sind Bedienführung, keine Prüfung.
 - 🛑 **`POST /users/{id}/voice-second-factor`, nicht `PATCH /users/{id}`** — die Richtungen haben verschiedene
-  Rechte: einschalten nur für sich selbst (403), ausschalten für sich mit `users.manage`, für ein FREMDES Konto nur
-  mit `admin` (der Rückweg ist auch ein Angriffsweg). Einschalten ohne einlösbares Profil → 409.
+  Rechte: für das EIGENE Konto genügt **angemeldet** (`get_user_or_default`, NICHT `users.manage` — sonst könnte
+  ausgerechnet die Person, um deren Stimme es geht, nicht einwilligen), ein FREMDES abschalten verlangt `admin`,
+  ein fremdes einschalten ist immer 403. Einschalten ohne einlösbares Profil → 409, Gerätekonto → 409.
+  Selbstbedienung unter `/settings/account`; `GET /auth/me` führt das Feld, damit die Person ihren Zustand sieht.
 - 🛑 **Ein-Admin-Instanz:** `users.manage` sitzt per Standard nur auf Admin → die einzige Administratorin mit
   scharfem Faktor und defektem Mikrofon befreit niemand. Notausgang `bin/voice_2fa_emergency.py` (nur abschalten).
 - 🛑 **Einschalten ≠ Wirken, und die Maske bildet das nach.** `GET /api/config/features` führt

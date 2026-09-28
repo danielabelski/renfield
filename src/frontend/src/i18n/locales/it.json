@@ -52,6 +52,7 @@
     "fristen": "Scadenze",
     "federationAudit": "Log di federazione",
     "circles": "Cerchie",
+    "account": "Il mio account",
     "intents": "Intenti",
     "routingDashboard": "Dashboard di routing",
     "maintenance": "Manutenzione",
@@ -2181,5 +2182,22 @@
     "preparing": "Preparazione proposta…",
     "successTitle": "Trasferito",
     "success": "\"{{filename}}\" è stato trasferito al commercialista."
+  },
+  "account": {
+    "title": "Il mio account",
+    "subtitle": "Impostazioni che appartengono a te",
+    "voiceTitle": "Voce come secondo fattore di accesso",
+    "voiceExplain": "Dopo l'accesso con la password pronunci anche una breve frase, verificata contro il tuo profilo vocale. Lo decidi tu per te stesso — nessun altro può attivarlo al posto tuo.",
+    "voiceStateOn": "Attivo — il tuo accesso richiede la voce",
+    "voiceStateOff": "Disattivato — la password basta",
+    "voiceStateResting": "Consenso dato, ma in pausa (via vocale disattivata su questa istanza)",
+    "voiceNoFallback": "Non esiste volutamente un ripiego sulla sola password. Se il microfono si guasta, un amministratore può disattivare il requisito.",
+    "voiceArm": "Richiedi la mia voce",
+    "voiceDisarm": "Non richiederla più",
+    "voiceArmConfirm": "Da ora la password da sola non basta più: dopo l'accesso pronuncerai una breve frase, verificata contro il tuo profilo vocale. Non esiste volutamente un ripiego sulla sola password.",
+    "voiceDisarmConfirmSelf": "Il tuo accesso richiederà di nuovo solo la password.",
+    "voiceArmed": "La tua voce è ora un secondo fattore di accesso.",
+    "voiceDisarmed": "Secondo fattore di accesso disattivato.",
+    "voiceFailed": "Impossibile modificare l'impostazione."
   }
 }

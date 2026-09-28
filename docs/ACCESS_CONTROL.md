@@ -405,6 +405,30 @@ selbst auslösen kann (indem er die Stimmprüfung wiederholt scheitern lässt), 
 den zweiten Faktor auf. Wiederherstellung bei defektem Mikrofon oder Erkältung:
 ein Administrator schaltet `voice_second_factor_enabled` für diese Person ab.
 
+### 🛑 Die Einwilligung gehört der Person — Selbstbedienung unter **Mein Konto**
+
+Bis zum 2026-09-28 stand `users.manage` vor **beiden** Richtungen, und die einzige
+Oberfläche war die Benutzerverwaltung. Damit war die Einwilligung ausgerechnet für
+die Person unerreichbar, um deren Stimme es geht: ein Haushaltsmitglied konnte weder
+einwilligen noch überhaupt sehen, ob der Faktor für sein Konto gilt. **Eine
+Einwilligung nach Art. 9 DSGVO, die nur ein Dritter erteilen kann, ist keine.**
+
+Seither:
+
+* **`/settings/account` („Mein Konto")** — keine Admin-Route, jede angemeldete Person
+  erreicht sie. Dort steht der Schalter für das eigene Konto.
+* **`GET /auth/me` führt `voice_second_factor_enabled`** — derselbe Grund, aus dem
+  `must_change_password` daneben steht: ein Zustand, auf den die Oberfläche reagieren
+  soll, muss ablesbar sein.
+* Die Route hängt an `get_user_or_default` statt an `require_permission(USERS_MANAGE)`.
+  **Die Sicherheitslage ändert sich dadurch nicht:** den eigenen Faktor scharf zu
+  stellen fügt eine *zusätzliche* Hürde am eigenen Konto hinzu, und ihn zurückzunehmen
+  setzt voraus, angemeldet zu sein — was bei scharfem Faktor bereits bedeutet, ihn
+  bestanden zu haben. Ein fremdes Konto abzuschalten verlangt unverändert `admin`.
+* **Ein Gerätekonto wird mit 409 abgewiesen.** Es spricht nicht und meldet sich nicht
+  über `/auth/login` an; eine Einwilligung, die es nie einlösen kann, ist ein Zustand,
+  den niemand gebrauchen kann.
+
 ### Die Hürde steht genau dann, wenn sie auch fällt
 
 🛑 **Der Fehler, gegen den `services/voice_factor_preconditions` geschrieben ist.**
@@ -456,8 +480,8 @@ Asymmetrie wäre nicht abbildbar:
 
 | Richtung | Wer darf | Grund |
 |---|---|---|
-| **Einschalten** | nur das Konto selbst (sonst **403**) | Einwilligung in biometrische Verarbeitung; niemand kann sie für jemand anderen geben |
-| **Ausschalten (eigenes Konto)** | `users.manage` | den eigenen Faktor zurückzunehmen ist niemandes Rechteausweitung |
+| **Einschalten** | nur das Konto selbst (sonst **403**) — **angemeldet genügt, kein `users.manage`** | Einwilligung in biometrische Verarbeitung; niemand kann sie für jemand anderen geben |
+| **Ausschalten (eigenes Konto)** | angemeldet genügt | den eigenen Faktor zurückzunehmen ist niemandes Rechteausweitung — und wer angemeldet ist, hat ihn bei scharfem Faktor bereits bestanden |
 | **Ausschalten (fremdes Konto)** | `admin` | 🛑 der Rückweg ist zugleich ein Angriffsweg: er senkt ein fremdes Konto still auf Passwort allein, und *danach* kann man sich an diesem Passwort versuchen — mehr als ein Passwort-Zurücksetzen, das an einem scharfen Faktor nicht vorbeikommt. `users.manage` ist delegierbar ohne `admin`. |
 
 Das Einschalten wird zusätzlich mit **409** verweigert, solange der Einlöseweg nicht

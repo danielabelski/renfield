@@ -1068,3 +1068,126 @@ class TestTheUnlockButtonSeesBothCounters:
             current_user=MagicMock(username="admin", id=1),
         )
         assert body.locked_out is False
+
+
+def _plain_member(user_id: int):
+    """Ein Haushaltsmitglied: KEIN `users.manage`, KEIN `admin`. Genau die
+    Person, für die die Einwilligung gedacht ist — und die sie bis zum
+    2026-09-28 nicht erteilen konnte."""
+    return MagicMock(
+        username="familie", id=user_id,
+        get_permissions=lambda: ["chat.own", "kb.shared"],
+    )
+
+
+class TestTheConsentBelongsToThePerson:
+    """🛑 Die Einwilligung ist höchstpersönlich — also muss die Person sie
+    erteilen können, nicht nur eine Administratorin.
+
+    Vor dem 2026-09-28 stand `require_permission(USERS_MANAGE)` vor BEIDEN
+    Richtungen. Damit war die Einwilligung in die Verarbeitung biometrischer
+    Daten (Art. 9 DSGVO) ausgerechnet für die Person unerreichbar, um deren
+    Stimme es geht: ein Haushaltsmitglied konnte weder einwilligen noch seinen
+    Zustand sehen. Eine Einwilligung, die nur ein Dritter erteilen kann, ist
+    keine.
+
+    Sicherheitslage dabei unverändert: den eigenen Faktor scharf zu stellen
+    fügt eine ZUSÄTZLICHE Hürde am eigenen Konto hinzu, und ihn zurückzunehmen
+    setzt voraus, angemeldet zu sein — was bei scharfem Faktor bereits bedeutet,
+    ihn bestanden zu haben.
+    """
+
+    @pytest.mark.database
+    async def test_a_plain_member_may_arm_their_own(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        from api.routes import users as users_routes
+
+        await TestVoiceSecondFactorConsent._with_voice(db_session, test_user)
+        body = await users_routes.set_voice_second_factor(
+            user_id=test_user.id,
+            request=users_routes.VoiceSecondFactorRequest(enabled=True),
+            db=db_session,
+            current_user=_plain_member(test_user.id),
+        )
+        assert body.voice_second_factor_enabled is True
+
+    @pytest.mark.database
+    async def test_a_plain_member_may_withdraw_their_own(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        from api.routes import users as users_routes
+
+        test_user.voice_second_factor_enabled = True
+        await db_session.commit()
+        body = await users_routes.set_voice_second_factor(
+            user_id=test_user.id,
+            request=users_routes.VoiceSecondFactorRequest(enabled=False),
+            db=db_session,
+            current_user=_plain_member(test_user.id),
+        )
+        assert body.voice_second_factor_enabled is False
+
+    @pytest.mark.database
+    async def test_a_plain_member_still_cannot_touch_a_stranger(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        """🛑 Die Gegenkontrolle zur Lockerung: die Berechtigung fällt NUR für
+        das eigene Konto. Ein fremdes abzuschalten verlangt weiter `admin` —
+        sonst wäre der Rückweg ein Angriffsweg für jedermann."""
+        from fastapi import HTTPException
+
+        from api.routes import users as users_routes
+
+        test_user.voice_second_factor_enabled = True
+        await db_session.commit()
+
+        with pytest.raises(HTTPException) as exc:
+            await users_routes.set_voice_second_factor(
+                user_id=test_user.id,
+                request=users_routes.VoiceSecondFactorRequest(enabled=False),
+                db=db_session,
+                current_user=_plain_member(test_user.id + 1000),
+            )
+        assert exc.value.status_code == 403
+        await db_session.refresh(test_user)
+        assert test_user.voice_second_factor_enabled is True
+
+    @pytest.mark.database
+    async def test_a_device_account_has_no_voice(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        """Ein Gerätekonto spricht nicht und meldet sich nicht über
+        `/auth/login` an. Eine Einwilligung, die es nie einlösen kann, ist ein
+        Zustand, den niemand gebrauchen kann — lieber hier sagen als später
+        raten."""
+        from fastapi import HTTPException
+
+        from api.routes import users as users_routes
+
+        await TestVoiceSecondFactorConsent._with_voice(db_session, test_user)
+        test_user.is_device_account = True
+        await db_session.commit()
+
+        with pytest.raises(HTTPException) as exc:
+            await users_routes.set_voice_second_factor(
+                user_id=test_user.id,
+                request=users_routes.VoiceSecondFactorRequest(enabled=True),
+                db=db_session,
+                current_user=_plain_member(test_user.id),
+            )
+        assert exc.value.status_code == 409
+
+    def test_the_route_no_longer_demands_users_manage(self):
+        """Strukturprüfung gegen das Zurückrutschen: kehrt
+        `require_permission(USERS_MANAGE)` an diese Route zurück, ist die
+        Einwilligung wieder fremdbestimmt — und das Verhalten oben fiele mit
+        einem 403 aus, dessen Ursache man in der Route suchen müsste."""
+        import inspect
+
+        from api.routes import users as users_routes
+
+        src = inspect.getsource(users_routes.set_voice_second_factor)
+        sig = src[: src.index('"""')]
+        assert "get_user_or_default" in sig
+        assert "USERS_MANAGE" not in sig

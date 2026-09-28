@@ -50,6 +50,7 @@ const BrainReviewPage = lazy(() => import('./pages/BrainReviewPage'));
 const ObligationsPage = lazy(() => import('./pages/ObligationsPage'));
 // WissensbasisPage was the A-LANDING 2D composed page; superseded by
 // the unified 3D Wissensgraph (see /wissensbasis redirect below).
+const AccountSettingsPage = lazy(() => import('./pages/AccountSettingsPage'));
 const CirclesSettingsPage = lazy(() => import('./pages/CirclesSettingsPage'));
 const CirclesPeersPage = lazy(() => import('./pages/CirclesPeersPage'));
 const FederationAuditPage = lazy(() => import('./pages/FederationAuditPage'));
@@ -286,6 +287,13 @@ function AppRoutes() {
             <Route path="/brain/audit" element={
               <ProtectedRoute>
                 <FederationAuditPage />
+              </ProtectedRoute>
+            } />
+            {/* Eigenes Konto — bewusst KEINE AdminRoute: die Einwilligung in die
+                Stimme gehört der Person, nicht der Verwaltung. */}
+            <Route path="/settings/account" element={
+              <ProtectedRoute>
+                <AccountSettingsPage />
               </ProtectedRoute>
             } />
             <Route path="/settings/circles" element={

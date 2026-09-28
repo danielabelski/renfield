@@ -199,6 +199,11 @@ class UserResponse(BaseModel):
     # Security (review M5): surface the forced-rotation flag so /auth/me and the
     # login response are actionable (the frontend can force a password change).
     must_change_password: bool = False
+    # 🛑 Derselbe Grund, eine Ebene weiter: ohne dieses Feld konnte eine Person
+    # nicht einmal SEHEN, ob ihr eigenes Konto die Stimme verlangt — der Zustand
+    # stand nur in der Verwaltungsliste, die ihr verschlossen ist. Eine
+    # Einwilligung nach Art. 9 DSGVO, die man nicht einsehen kann, ist keine.
+    voice_second_factor_enabled: bool = False
 
     class Config:
         from_attributes = True
@@ -646,6 +651,7 @@ async def register(
         last_login=user.last_login,
         speaker_id=user.speaker_id,
         must_change_password=user.must_change_password,
+        voice_second_factor_enabled=bool(user.voice_second_factor_enabled),
     )
 
 
@@ -678,6 +684,7 @@ async def get_current_user_info(
         # False, and get_current_user 403s every other path — so the app loads
         # and every request fails with no way to reach /change-password.
         must_change_password=user.must_change_password,
+        voice_second_factor_enabled=bool(user.voice_second_factor_enabled),
     )
 
 
@@ -864,6 +871,7 @@ async def get_auth_status(
             last_login=user.last_login,
             speaker_id=user.speaker_id,
             must_change_password=user.must_change_password,
+            voice_second_factor_enabled=bool(user.voice_second_factor_enabled),
         )
 
     return AuthStatusResponse(

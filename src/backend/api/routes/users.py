@@ -32,6 +32,7 @@ from services.auth_service import (
     active_admin_ids,
     get_password_hash,
     get_role_by_id,
+    get_user_or_default,
     require_permission,
     validate_password,
 )
@@ -885,7 +886,7 @@ async def set_voice_second_factor(
     user_id: int,
     request: VoiceSecondFactorRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_permission(Permission.USERS_MANAGE))
+    current_user: User = Depends(get_user_or_default)
 ):
     """Die Stimme als zweiten Anmeldefaktor ein- oder ausschalten.
 
@@ -895,10 +896,21 @@ async def set_voice_second_factor(
     ANMELDUNG ihn verlangt, ist eine Einwilligung — und eine Einwilligung kann
     niemand fuer jemanden anderen geben. Deshalb:
 
-    * **Einschalten nur fuer sich selbst.** Auch eine Administratorin darf es
-      einem fremden Konto nicht auferlegen. Das waere keine Verwaltung, das waere
-      eine erzwungene biometrische Erfassung.
-    * **Ausschalten fuer sich selbst** mit `users.manage`; **fuer ein fremdes
+    * **Einschalten nur fuer sich selbst** — und dafuer genuegt, ANGEMELDET zu
+      sein. Auch eine Administratorin darf es einem fremden Konto nicht
+      auferlegen; das waere keine Verwaltung, sondern eine erzwungene
+      biometrische Erfassung.
+
+      🛑 Die Route verlangt darum NICHT mehr `users.manage`. Vorher stand das
+      vor BEIDEN Richtungen, und damit war die Einwilligung ausgerechnet fuer
+      die Person unerreichbar, um deren Stimme es geht: ein Haushaltsmitglied
+      ohne Verwaltungsrecht konnte weder einwilligen noch seinen Zustand sehen.
+      Eine Einwilligung nach Art. 9 DSGVO, die nur ein Dritter erteilen kann,
+      ist keine. Sicherheitslage dabei unveraendert: den eigenen Faktor scharf
+      zu stellen fuegt eine ZUSAETZLICHE Huerde am eigenen Konto hinzu, und ihn
+      zurueckzunehmen setzt voraus, angemeldet zu sein — was bei scharfem Faktor
+      bereits bedeutet, ihn bestanden zu haben.
+    * **Ausschalten fuer sich selbst** (angemeldet genuegt); **fuer ein fremdes
       Konto nur mit `admin`.** Das NIMMT eine Anforderung weg, und genau das ist
       der dokumentierte Wiederherstellungsweg, wenn ein Mikrofon defekt ist oder
       jemand heiser: es gibt bewusst keinen Rueckfall auf Passwort allein
@@ -941,12 +953,11 @@ async def set_voice_second_factor(
             detail="User not found"
         )
 
-    # 🛑 `current_user` ist `None`, wenn `AUTH_ENABLED=false` ist
-    # (`require_permission` reicht das Ergebnis von `get_current_user` dann
-    # ungeprueft durch). Elf Geschwisterstellen in dieser Datei fangen das ab;
-    # diese beiden taten es nicht — der Ausschaltpfad haette nach dem COMMIT
-    # eine AttributeError geworfen, also 500 gemeldet und trotzdem geschrieben.
-    # Genau der Zustand, in dem jemand von Hand an der Datenbank landet.
+    # `get_user_or_default` liefert IMMER einen Nutzer — bei abgeschalteter Auth
+    # loest es auf den Administrator auf. Die `None`-Toleranz bleibt trotzdem
+    # stehen: die Funktion wird in Tests direkt aufgerufen, und vorher hat genau
+    # diese Luecke den Ausschaltpfad nach dem COMMIT abstuerzen lassen — 500
+    # gemeldet und trotzdem geschrieben.
     is_self = current_user is not None and user.id == current_user.id
     actor = current_user.username if current_user else "system"
 
@@ -959,6 +970,16 @@ async def set_voice_second_factor(
                     "holder — a voiceprint requirement is a consent, not a setting."
                 ),
             )
+        # Ein Geraetekonto spricht nicht. Es meldet sich auch nicht ueber
+        # `/auth/login` an, die Huerde traefe es also nie — aber ein Konto mit
+        # gesetzter Einwilligung, das niemals einloesen kann, ist ein Zustand,
+        # den niemand gebrauchen kann. Lieber hier sagen als spaeter raten.
+        if user.is_device_account:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A device account has no voice — it cannot carry a second factor.",
+            )
+
         # Derselbe Pruefer wie in `/auth/login` und `/auth/voice`: eine scharfe
         # Einwilligung, die nicht eingeloest werden kann, ist keine Sicherheit,
         # sondern eine Falle. `voice_auth_enabled` wird hier bewusst NICHT

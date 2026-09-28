@@ -94,6 +94,7 @@
     "fristen": "Fristen",
     "federationAudit": "Föderations-Verlauf",
     "circles": "Kreise",
+    "account": "Mein Konto",
     "intents": "Intents",
     "routingDashboard": "Routing Dashboard",
     "maintenance": "Wartung",
@@ -2487,5 +2488,22 @@
     "preparing": "Vorschlag wird vorbereitet…",
     "successTitle": "Übertragen",
     "success": "„{{filename}}“ wurde an die Steuerkanzlei übertragen."
+  },
+  "account": {
+    "title": "Mein Konto",
+    "subtitle": "Einstellungen, die Ihnen gehören",
+    "voiceTitle": "Stimme als zweiter Anmeldefaktor",
+    "voiceExplain": "Verlangt nach der Anmeldung mit Passwort zusätzlich einen kurzen gesprochenen Satz, der gegen Ihr Sprecherprofil geprüft wird. Sie entscheiden das für sich selbst — niemand sonst kann es für Sie einschalten.",
+    "voiceStateOn": "Scharf — Ihre Anmeldung verlangt die Stimme",
+    "voiceStateOff": "Aus — Ihr Passwort genügt",
+    "voiceStateResting": "Eingewilligt, ruht aber (Sprachweg auf dieser Instanz aus)",
+    "voiceNoFallback": "Einen Rückfall auf das Passwort allein gibt es bewusst nicht. Fällt Ihr Mikrofon aus, kann eine Administratorin die Anforderung abschalten.",
+    "voiceArm": "Stimme verlangen",
+    "voiceDisarm": "Nicht mehr verlangen",
+    "voiceArmConfirm": "Ab sofort genügt Ihr Passwort allein nicht mehr: nach der Anmeldung sprechen Sie einen kurzen Satz, der gegen Ihr Sprecherprofil geprüft wird. Einen Rückfall auf das Passwort allein gibt es bewusst nicht.",
+    "voiceDisarmConfirmSelf": "Ihre Anmeldung verlangt dann wieder nur das Passwort.",
+    "voiceArmed": "Ihre Stimme ist jetzt zweiter Anmeldefaktor.",
+    "voiceDisarmed": "Zweiter Anmeldefaktor abgeschaltet.",
+    "voiceFailed": "Die Einstellung konnte nicht geändert werden."
   }
 }

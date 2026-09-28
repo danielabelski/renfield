@@ -146,6 +146,10 @@ export interface User {
   // route until the password is changed, so the frontend must route the user
   // to the mandatory change-password screen (login audit).
   must_change_password?: boolean;
+  // Die Stimme ist für dieses Konto zweiter Anmeldefaktor. Aus `/auth/me`, damit
+  // die Person ihren EIGENEN Zustand sehen kann — vorher stand er nur in der
+  // Verwaltungsliste, die ihr verschlossen ist.
+  voice_second_factor_enabled?: boolean;
 }
 
 export interface Role {

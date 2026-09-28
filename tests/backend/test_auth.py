@@ -748,3 +748,37 @@ class TestPermissionDependencies:
             assert exc_info.value.status_code == 403
         finally:
             settings.auth_enabled = original
+
+
+@pytest.mark.unit
+def test_me_response_carries_the_voice_consent():
+    """🛑 Ohne dieses Feld kann eine Person nicht einmal SEHEN, ob ihr eigenes
+    Konto die Stimme verlangt — der Zustand stand nur in der Verwaltungsliste,
+    die ihr verschlossen ist. Eine Einwilligung nach Art. 9 DSGVO, die man nicht
+    einsehen kann, ist keine.
+
+    Derselbe Grund, aus dem `must_change_password` daneben steht (Review M5):
+    ein Zustand, auf den die Oberfläche reagieren soll, muss aus `/auth/me`
+    ablesbar sein.
+    """
+    from api.routes.auth import UserResponse
+
+    assert "voice_second_factor_enabled" in UserResponse.model_fields
+    assert UserResponse.model_fields["voice_second_factor_enabled"].default is False
+
+
+@pytest.mark.unit
+def test_every_me_shaped_response_sets_the_consent():
+    """Dieselbe Falle wie bei `UserResponse` in `users.py`: das Feld hat einen
+    Standard, also meldet JEDE Aufbaustelle, die es vergisst, stillschweigend
+    `False`. In `auth.py` sind es drei (register, /auth/me, /auth/status)."""
+    import inspect
+    import re
+
+    from api.routes import auth as auth_routes
+
+    src = inspect.getsource(auth_routes)
+    blocks = re.findall(r"UserResponse\(\n(.*?)\n\s*\)", src, re.S)
+    assert len(blocks) >= 3, f"erwartet >= 3 Aufbaustellen, gefunden {len(blocks)}"
+    ohne = [i for i, b in enumerate(blocks) if "voice_second_factor_enabled" not in b]
+    assert not ohne, f"Aufbaustellen ohne das Feld: {ohne}"
