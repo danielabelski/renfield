@@ -879,13 +879,18 @@ schreibt. Es kann **nur abschalten** — Einschalten ist eine Einwilligung in
 biometrische Verarbeitung, die eine Person über die Oberfläche für sich selbst
 abgibt, nicht ein Betreiber über die Kommandozeile.
 
+🛑 **Das Skript ist NICHT im Bild.** Der Build-Kontext des Backends ist
+`src/backend/`, und `COPY . .` sieht das `bin/` des Repos nicht — wie bei jedem
+`bin/backfill_*.py`. Es wird zur Laufzeit hineinkopiert (darum trägt es denselben
+`_find_backend_dir`-Block: er findet `/app` im Bild von selbst):
+
 ```bash
-kubectl -n renfield exec deploy/backend -- \
-    python /app/../bin/voice_2fa_emergency.py --list
-kubectl -n renfield exec deploy/backend -- \
-    python /app/../bin/voice_2fa_emergency.py --username admin --off --dry-run
-kubectl -n renfield exec deploy/backend -- \
-    python /app/../bin/voice_2fa_emergency.py --username admin --off
+POD=$(kubectl -n renfield get pod -l app.kubernetes.io/name=backend -o name | head -1)
+kubectl -n renfield cp bin/voice_2fa_emergency.py "${POD#pod/}":/tmp/voice_2fa_emergency.py
+
+kubectl -n renfield exec "$POD" -- python /tmp/voice_2fa_emergency.py --list
+kubectl -n renfield exec "$POD" -- python /tmp/voice_2fa_emergency.py --username admin --off --dry-run
+kubectl -n renfield exec "$POD" -- python /tmp/voice_2fa_emergency.py --username admin --off
 ```
 
 Die Alternative wäre gewesen, das Einschalten für den letzten Administrator zu
