@@ -2504,6 +2504,8 @@
     "voiceDisarmConfirmSelf": "Your sign-in will then need only the password again.",
     "voiceArmed": "Your voice is now a second sign-in factor.",
     "voiceDisarmed": "Second sign-in factor switched off.",
-    "voiceFailed": "The setting could not be changed."
+    "voiceFailed": "The setting could not be changed.",
+    "voicePasswordLabel": "Password to confirm",
+    "voicePasswordWhy": "Only for switching off: a session older than your consent should not be able to withdraw it on its own."
   }
 }

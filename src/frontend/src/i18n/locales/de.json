@@ -2504,6 +2504,8 @@
     "voiceDisarmConfirmSelf": "Ihre Anmeldung verlangt dann wieder nur das Passwort.",
     "voiceArmed": "Ihre Stimme ist jetzt zweiter Anmeldefaktor.",
     "voiceDisarmed": "Zweiter Anmeldefaktor abgeschaltet.",
-    "voiceFailed": "Die Einstellung konnte nicht geändert werden."
+    "voiceFailed": "Die Einstellung konnte nicht geändert werden.",
+    "voicePasswordLabel": "Passwort zur Bestätigung",
+    "voicePasswordWhy": "Nur zum Abschalten: eine Sitzung, die älter ist als Ihre Einwilligung, soll sie nicht allein zurücknehmen können."
   }
 }

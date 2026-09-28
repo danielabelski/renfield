@@ -2198,6 +2198,8 @@
     "voiceDisarmConfirmSelf": "Il tuo accesso richiederà di nuovo solo la password.",
     "voiceArmed": "La tua voce è ora un secondo fattore di accesso.",
     "voiceDisarmed": "Secondo fattore di accesso disattivato.",
-    "voiceFailed": "Impossibile modificare l'impostazione."
+    "voiceFailed": "Impossibile modificare l'impostazione.",
+    "voicePasswordLabel": "Password per confermare",
+    "voicePasswordWhy": "Solo per disattivare: una sessione più vecchia del tuo consenso non deve poterlo ritirare da sola."
   }
 }

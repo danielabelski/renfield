@@ -34,6 +34,10 @@ export default function AccountSettingsPage() {
 
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  // 🛑 Nur fürs Abschalten. Der Server verlangt das Passwort dort, weil ein
+  // Token von VOR der Einwilligung sie sonst zurücknehmen könnte.
+  const [password, setPassword] = useState('');
+  const [askPassword, setAskPassword] = useState(false);
 
   const armed = !!user?.voice_second_factor_enabled;
 
@@ -51,6 +55,11 @@ export default function AccountSettingsPage() {
 
   const handleToggle = async () => {
     if (!user) return;
+    // Abschalten: erst das Passwort erfragen, dann bestätigen lassen.
+    if (armed && !askPassword) {
+      setAskPassword(true);
+      return;
+    }
     const enabling = !armed;
     const confirmed = await confirm({
       title: enabling ? t('account.voiceArm') : t('account.voiceDisarm'),
@@ -63,7 +72,13 @@ export default function AccountSettingsPage() {
     setError(null);
     setSuccess(null);
     try {
-      await setVoiceSecondFactor.mutateAsync({ id: user.id, enabled: enabling });
+      await setVoiceSecondFactor.mutateAsync({
+        id: user.id,
+        enabled: enabling,
+        currentPassword: enabling ? undefined : password,
+      });
+      setPassword('');
+      setAskPassword(false);
       // `/auth/me` neu lesen: der Zustand dieser Seite kommt von dort, nicht aus
       // der Antwort der Mutation — sonst zeigt die Seite etwas anderes als die
       // Sitzung glaubt.
@@ -118,11 +133,35 @@ export default function AccountSettingsPage() {
                 {t('account.voiceNoFallback')}
               </p>
             )}
+
+            {askPassword && (
+              <div className="mt-4">
+                <label
+                  htmlFor="voice-disarm-password"
+                  className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+                >
+                  {t('account.voicePasswordLabel')}
+                </label>
+                <input
+                  id="voice-disarm-password"
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="input w-full max-w-sm min-h-11"
+                />
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  {t('account.voicePasswordWhy')}
+                </p>
+              </div>
+            )}
           </div>
 
           <button
             onClick={handleToggle}
-            disabled={setVoiceSecondFactor.isPending || !user}
+            disabled={
+              setVoiceSecondFactor.isPending || !user || (askPassword && !password)
+            }
             className={armed ? 'btn-secondary min-h-11' : 'btn-primary min-h-11'}
           >
             {setVoiceSecondFactor.isPending && (

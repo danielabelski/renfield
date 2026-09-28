@@ -87,6 +87,13 @@ Vollständige Begründung + Runbook: `docs/ACCESS_CONTROL.md`. Hier nur die Inva
   ausgerechnet die Person, um deren Stimme es geht, nicht einwilligen), ein FREMDES abschalten verlangt `admin`,
   ein fremdes einschalten ist immer 403. Einschalten ohne einlösbares Profil → 409, Gerätekonto → 409.
   Selbstbedienung unter `/settings/account`; `GET /auth/me` führt das Feld, damit die Person ihren Zustand sieht.
+  🛑 Bei `AUTH_ENABLED=false` **401 in beiden Richtungen** (`get_user_or_default` löst dort jeden auf `admin` auf —
+  es gäbe kein „selbst"). 🛑 Die Berechtigungsentscheidung steht **vor** der DB-Abfrage, sonst trennt 404 von 403
+  und das ist ein Aufzählungsorakel. Entfernen = WARNING, Erteilen = INFO.
+  🛑 **Selbst-Abschalten verlangt das Passwort** (`current_password`): Einschalten hebt `token_epoch` bewusst NICHT
+  an (sonst Abmeldung im Moment des Einwilligens → Aussperrung auf einer Ein-Admin-Instanz), also überlebt ein Token
+  von VOR der Einwilligung sie und erneuert sich über `/auth/refresh`, das den Faktor nicht prüft. Eine STIMMprobe
+  dort wäre zirkulär. Für ein fremdes Konto entfällt es — dort steht `admin`.
 - 🛑 **Ein-Admin-Instanz:** `users.manage` sitzt per Standard nur auf Admin → die einzige Administratorin mit
   scharfem Faktor und defektem Mikrofon befreit niemand. Notausgang `bin/voice_2fa_emergency.py` (nur abschalten).
 - 🛑 **Einschalten ≠ Wirken, und die Maske bildet das nach.** `GET /api/config/features` führt

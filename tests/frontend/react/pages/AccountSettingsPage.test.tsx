@@ -52,12 +52,17 @@ function asUser(armed: boolean, fetchUser = vi.fn()) {
 }
 
 function captureToggle() {
-  const calls: Array<{ id: string; enabled: boolean }> = [];
+  const calls: Array<{ id: string; enabled: boolean; current_password?: string }> = [];
   server.use(
-    http.post<{ id: string }, { enabled: boolean }>(
+    http.post<{ id: string }, { enabled: boolean; current_password?: string | null }>(
       `${BASE_URL}/api/users/:id/voice-second-factor`,
       async ({ params, request }) => {
-        calls.push({ id: params.id, enabled: (await request.json()).enabled });
+        const body = await request.json();
+        calls.push(
+          body.current_password
+            ? { id: params.id, enabled: body.enabled, current_password: body.current_password }
+            : { id: params.id, enabled: body.enabled },
+        );
         return HttpResponse.json({ id: Number(params.id), username: 'x' });
       },
     ),
@@ -83,12 +88,25 @@ describe('AccountSettingsPage', () => {
     await waitFor(() => expect(calls).toEqual([{ id: '1', enabled: true }]));
   });
 
-  it('und sie wieder zuruecknehmen', async () => {
+  it('🛑 verlangt zum Zuruecknehmen erst das Passwort', async () => {
+    // Der Server verweigert das Abschalten des EIGENEN Faktors ohne Passwort
+    // (400): ein Token von VOR der Einwilligung ueberlebt sie und duerfte sie
+    // sonst zuruecknehmen. Ohne Feld liefe die Schaltflaeche ins 400.
     asUser(true);
     const calls = captureToggle();
     renderWithProviders(<AccountSettingsPage />);
+
     await userEvent.click(await screen.findByRole('button', { name: 'Nicht mehr verlangen' }));
-    await waitFor(() => expect(calls).toEqual([{ id: '1', enabled: false }]));
+    // Erster Klick oeffnet nur das Feld — noch nichts gesendet.
+    expect(calls).toEqual([]);
+    const feld = await screen.findByLabelText('Passwort zur Bestätigung');
+    expect(screen.getByRole('button', { name: 'Nicht mehr verlangen' })).toBeDisabled();
+
+    await userEvent.type(feld, 'geheim');
+    await userEvent.click(screen.getByRole('button', { name: 'Nicht mehr verlangen' }));
+    await waitFor(() =>
+      expect(calls).toEqual([{ id: '1', enabled: false, current_password: 'geheim' }]),
+    );
   });
 
   it('🛑 liest `/auth/me` neu, statt der Antwort der Mutation zu glauben', async () => {
@@ -115,5 +133,16 @@ describe('AccountSettingsPage', () => {
     asUser(true);
     renderWithProviders(<AccountSettingsPage />);
     expect(await screen.findByText(/Rückfall auf das Passwort allein/)).toBeInTheDocument();
+  });
+
+  it('beim EINSCHALTEN wird kein Passwort verlangt', async () => {
+    // Nur das Entfernen ist der Angriffsweg. Beim Erteilen waere die Eingabe
+    // Reibung ohne Gewinn.
+    asUser(false);
+    const calls = captureToggle();
+    renderWithProviders(<AccountSettingsPage />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Stimme verlangen' }));
+    await waitFor(() => expect(calls).toEqual([{ id: '1', enabled: true }]));
+    expect(screen.queryByLabelText('Passwort zur Bestätigung')).not.toBeInTheDocument();
   });
 });
