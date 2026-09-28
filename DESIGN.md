@@ -115,16 +115,34 @@ cream  #f0e6d3   ★ TIER 2 (household) — hearth, warmth-of-home
 
 For UI backgrounds beyond cream + crimson + turquoise, use Tailwind's neutral gray scale (`gray-50`..`gray-900` from Tailwind 4 defaults). NO new gray scale invented.
 
-### Semantic colors (derived from existing palette — no new hues)
+### Semantic colors (aus der Palette abgeleitet — eine Ausnahme: Warnung, s. unten)
 
 | State | Color | Variable | Rationale |
 |---|---|---|---|
 | **Success** | `--color-accent-600` #00ba98 | deep turquoise | Healthy/complete maps to the open/cool axis |
 | **Info** | `--color-accent-500` #00e4b8 | brand turquoise | Same axis, brighter for informational |
-| **Warning** | `--color-primary-300` #f7a4ae on `--color-cream` background, with `--color-primary-700` text | light crimson + cream | Attention without alarm. Soft pink alert against warm background. |
+| **Warning** | **`amber-600` / `amber-400` im Dunkelmodus** (Tailwind), Flächen `amber-50` / `amber-900` | Bernstein | Achtung, die noch kein Stopp ist — **muss sich von Error unterscheiden lassen**, s. Begründung unten. |
 | **Error** | `--color-primary-700` #a5162f text on `--color-primary-50` #fef2f3 background | deep crimson on lightest pink | Visceral red for stop/danger. |
 
-This is a **2-axis semantic system** (warm = stop/attention; cool = success/info). Distinct from the dominant 4-color (red/yellow/green/blue) convention but coherent with the brand palette.
+Das war ursprünglich ein **2-Achsen-System** (warm = Stopp/Achtung, kühl = Erfolg/Info)
+mit Warnung als hellem Karminrot. **Am 2026-09-28 auf drei Achsen erweitert: Warnung ist
+Bernstein.**
+
+🛑 **Warum die Regel „keine neuen Farbtöne" hier nachgibt.** Zwei Gründe, ein sachlicher
+und ein gemessener:
+
+1. **Warnung und Fehler dürfen nicht beide warm sein.** Standen sie nebeneinander, unterschied
+   sie nur die Helligkeit — hellrosa gegen tiefrot. Das ist genau die Unterscheidung, die bei
+   schlechtem Licht, auf einem Wandbildschirm oder mit Rotschwäche zuerst verlorengeht. Eine
+   Warnung, die man für einen Fehler hält (oder umgekehrt), ist schlechter als eine dritte Achse.
+2. **Der Code hatte längst entschieden.** Nachgemessen am 2026-09-28: `amber` erscheint
+   **128-mal in 24 Dateien**, mit vollständigem Vokabular von `amber-50` bis `amber-900` — kein
+   Versehen, sondern eine gewachsene Warnfarbe. Die Alternative wäre gewesen, 24 Dateien
+   umzustellen und Warnung rosa neben rotem Fehler zu setzen; das hätte die Doku gerettet und
+   die Oberfläche verschlechtert.
+
+Damit sagt diese Datei wieder die Wahrheit über das eigene System — was ihre einzige Aufgabe ist.
+`--color-primary-300` bleibt im Verlauf, trägt aber keine Warn-Semantik mehr.
 
 ### Tier visual language (per second-brain-circles design)
 
@@ -357,6 +375,7 @@ Per the design-review skill's catalog. If you find any of these in our code, rip
 | 2026-04-19 | Initial DESIGN.md created from existing implicit system | `/design-consultation` formalized what was already in `index.css`. No pivot — locked in crimson + turquoise + cream + Cormorant + DM Sans. Added gap-fills: spacing scale, radius/shadow scale, motion tokens, semantic colors derived from existing palette, tier visual language, AI slop blacklist. |
 | 2026-07-23 | Buttons: flat → **dimensional** (§Buttons) | Operator wanted "proper" buttons over the flat fills. Added the single-hue tonal-shade + inner-highlight + soft-shadow + hover-lift/press treatment (Apple Liquid Glass / Linear / Stripe idiom), DM Sans 700 (the code shipped 500), and a turquoise `accent-500` focus ring. Amended the decoration rule + slop-blacklist item 1 to distinguish a sanctioned single-hue button shade from banned multi-hue gradients. Implemented in `@layer components` (`index.css`) so utilities still override; also fixed ~25 bare `.btn-primary` buttons that had no padding. |
 | 2026-04-19 | Eureka: Renfield's warm-editorial aesthetic differentiates from clinical PKM/second-brain category | Every PKM app converges on Inter + minimal-color. Renfield is a household product, not a desktop product. Lean into warmth as competitive moat. (Logged to `~/.gstack/analytics/eureka.jsonl`) |
+| 2026-09-28 | **Warnung auf Bernstein umgestellt, 3 Achsen statt 2** | Gemessen: `amber` stand bereits 128-mal in 24 Dateien; und Warnung/Fehler beide warm sind bei schlechtem Licht oder Rotschwäche nicht auseinanderzuhalten. Entscheidung des Eigentümers nach `/review`-Befund. |
 | 2026-04-19 | Semantic colors derived from existing palette (no new hues) | User instruction: "use what we have already." 2-axis system (warm = stop/attention, cool = success/info) instead of conventional 4-color. |
 | 2026-04-19 | Tier visual language locked: 5 concentric tiers with symbol + color + label | Per second-brain-circles design review. Color never alone (WCAG-AA + colorblind-safe). |
 | 2026-04-19 | Cormorant restricted to 24px+ display only | Below 24px serifs lose legibility on screens. Body always DM Sans. |
