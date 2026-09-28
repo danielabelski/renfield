@@ -275,6 +275,25 @@ data:
   # which made a full `kubectl apply` clobber the working URL).
   VOICE_SERVER_URL: "http://voice-server-anon.voice:8081"
 
+  # 🛑 Die Stimme als ZWEITER Anmeldefaktor wird scharf gestellt (#1350).
+  #
+  # Das Flag allein aendert fuer NIEMANDEN etwas: die Huerde greift nur fuer
+  # Konten mit gesetzter Einwilligung (`users.voice_second_factor_enabled`,
+  # Standard false, heute 0 von 7). Erst beides zusammen haelt `/auth/login`
+  # die Token zurueck. Die Reihenfolge ist Absicht — erst die Tuer oeffnen,
+  # dann laesst sich einwilligen, ohne sich auszusperren.
+  #
+  # Vorflug am 2026-09-28 gegen den laufenden voice-server belegt: Dienst-Token
+  # akzeptiert, `speaker_embedding` mit 192 Dimensionen zurueck, und die 6
+  # gespeicherten Einbettungen haben dieselbe Form. Was NICHT belegt ist: dass
+  # echte Sprache eine Einbettung liefert, die zum Profil passt — das kann nur
+  # ein Mensch am Mikrofon zeigen.
+  #
+  # Rueckweg, falls es klemmt: dieses Flag wieder auf "false" (dann ruht die
+  # Huerde fuer alle, Einwilligungen bleiben stehen), oder je Person ueber
+  # Verwaltung -> Benutzer -> Schild. Letzte Instanz: bin/voice_2fa_emergency.py.
+  VOICE_AUTH_ENABLED: "true"
+
   # Legacy Ollama model names kept for back-compat with config code paths
   # that read them as defaults. They're NOT used while the LLM_OPENAI_*
   # endpoints are set, except OLLAMA_VISION_MODEL which gates the vision
