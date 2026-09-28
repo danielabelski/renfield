@@ -1117,6 +1117,8 @@
     "voiceLinked": "Stimme verknüpft",
     "voiceFactorOn": "Stimme als 2. Faktor",
     "voiceFactorResting": "2. Faktor ruht (kein Stimmprofil)",
+    "voiceFactorRestingPathOff": "2. Faktor ruht (Sprachweg aus)",
+    "voiceFactorRecognitionOff": "Sprecherkennung ist auf dieser Instanz aus",
     "voiceFactorArm": "Stimme als zweiten Faktor einschalten",
     "voiceFactorDisarm": "Stimme als zweiten Faktor abschalten",
     "voiceFactorNeedsSpeaker": "Erst ein Sprecherprofil verknüpfen",

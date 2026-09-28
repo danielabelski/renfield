@@ -139,3 +139,32 @@ async def test_features_chat_starters_default_empty(monkeypatch):
         app.dependency_overrides.clear()
     assert resp.status_code == 200
     assert resp.json()["chat_starters"] == []
+
+
+@pytest.mark.parametrize("flag", ["voice_auth_enabled", "speaker_recognition_enabled"])
+@pytest.mark.parametrize("enabled", [True, False])
+async def test_features_reports_the_instance_half_of_the_voice_preconditions(
+    monkeypatch, flag, enabled
+):
+    """🛑 Ohne diese beiden meldet die Benutzerverwaltung „scharf", während der
+    zweite Faktor in Wahrheit RUHT.
+
+    Die Vorbedingungen haben zwei Hälften (`services/voice_factor_preconditions`):
+    instanzweite Schalter und das Profil der Person. Die Maske sah nur die
+    zweite. Bei der Browser-Abnahme am 2026-09-28 zeigte eine eingewilligte Zeile
+    „scharf", während `VOICE_AUTH_ENABLED=false` die Hürde ruhen ließ — und im
+    Cutover-Fenster (erst Einwilligungen, dann Flag) ist das bei JEDER Zeile
+    falsch, also genau dann, wenn es zählt.
+
+    Kein Geheimnis: die Flags sagen nur, ob ein Weg offen ist, nicht wer ihn geht.
+    """
+    monkeypatch.setattr(settings, flag, enabled)
+    from main import app
+    _auth_default(app)
+    try:
+        async with await _client(app) as c:
+            resp = await c.get("/api/config/features")
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 200
+    assert resp.json()[flag] is enabled

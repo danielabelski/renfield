@@ -87,6 +87,10 @@ Vollständige Begründung + Runbook: `docs/ACCESS_CONTROL.md`. Hier nur die Inva
   mit `admin` (der Rückweg ist auch ein Angriffsweg). Einschalten ohne einlösbares Profil → 409.
 - 🛑 **Ein-Admin-Instanz:** `users.manage` sitzt per Standard nur auf Admin → die einzige Administratorin mit
   scharfem Faktor und defektem Mikrofon befreit niemand. Notausgang `bin/voice_2fa_emergency.py` (nur abschalten).
+- 🛑 **Einschalten ≠ Wirken, und die Maske bildet das nach.** `GET /api/config/features` führt
+  `voice_auth_enabled` + `speaker_recognition_enabled`, sonst meldet die Benutzerliste „scharf", während der
+  Faktor ruht (Abnahme-Befund 2026-09-28). Der **Einschalt**-Riegel lässt `voice_auth_enabled` AUS (sonst ist die
+  Cutover-Reihenfolge unmöglich), das **Abzeichen** zählt beide. Flags noch nicht geladen → NICHT auf „ruht" schließen.
 - 🛑 **Sperrzähler:** `voice_factor_lock_id(user_id)` = `voice2fa:<id>`, NICHT der Benutzername (ein Stimm-Fehlversuch
   darf den Passwortpfad nicht mitsperren). Liste und `/unlock` prüfen und räumen BEIDE.
 - 🛑 **Jeder Fehlschlag antwortet identisch** (`{"success": false, "message": "Voice authentication failed"}`); das

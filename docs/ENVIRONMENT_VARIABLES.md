@@ -2402,6 +2402,9 @@ VOICE_SECOND_FACTOR_TTL_SECONDS=180
 # `SPEAKER_RECOGNITION_MIN_DURATION_S` gilt seither AUCH für den Anmeldepfad: geprüft
 # wird die vom voice-server gemessene Dauer, nicht die der Maske.
 #
+# Beide Schalter erscheinen in `GET /api/config/features`, damit die Benutzerliste
+# „scharf" von „ruht" unterscheiden kann. Sie verraten nur, ob ein Weg offen ist.
+#
 # `VOICE_SECOND_FACTOR_TTL_SECONDS` ist die Lebensdauer des Tickets. Kurz halten: es
 # überbrückt nur die Sekunden zwischen Passworteingabe und Aufnahme, und ein
 # längeres Fenster macht ein abgefangenes Ticket wertvoller.

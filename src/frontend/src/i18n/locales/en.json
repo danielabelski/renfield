@@ -1117,6 +1117,8 @@
     "voiceLinked": "Voice linked",
     "voiceFactorOn": "Voice as 2nd factor",
     "voiceFactorResting": "2nd factor resting (no voice profile)",
+    "voiceFactorRestingPathOff": "2nd factor resting (voice path off)",
+    "voiceFactorRecognitionOff": "Speaker recognition is off on this instance",
     "voiceFactorArm": "Require voice as a second factor",
     "voiceFactorDisarm": "Stop requiring voice as a second factor",
     "voiceFactorNeedsSpeaker": "Link a speaker profile first",
