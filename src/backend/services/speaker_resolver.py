@@ -48,6 +48,73 @@ def _empty_speaker_info() -> dict[str, Any]:
     }
 
 
+def known_speaker_flags() -> tuple[bool, bool, bool]:
+    """Die zwei Schalter, die den Vergleichsmassstab bestimmen.
+
+    🛑 Beides zusammen, nicht einzeln. `quality_active` ist `gating ODER
+    controlled`: die Dauerschranke gilt unter Phase-0-Gating UND unter der
+    kontrollierten Erkennung aus Phase 3. Wer nur `speaker_quality_gating_enabled`
+    prueft, rechnet im Haushalt (controlled an, gating aus) einen ANDEREN
+    Schwerpunkt als die Erkennung.
+    """
+    gating = settings.speaker_quality_gating_enabled
+    controlled = settings.speaker_controlled_enrollment_enabled
+    return gating, controlled, (gating or controlled)
+
+
+def build_known_speaker_centroids(
+    all_speakers: list[Speaker],
+    *,
+    controlled: bool,
+    quality_active: bool,
+) -> tuple[list[tuple[int, str, np.ndarray]], list[Speaker]]:
+    """Die Referenzprofile, gegen die verglichen wird — EINE Fassung fuer alle.
+
+    🛑 WARUM DAS EINE FUNKTION IST
+    ------------------------------
+    Bis 2026-09-27 baute `GET /api/speakers/identify` seinen eigenen Schwerpunkt
+    (`routes/speakers.py:get_speaker_embeddings_averaged`) und wich vom lebenden
+    Pfad in DREI Punkten ab:
+
+      * normalisiert nur unter `speaker_quality_gating_enabled`, der Resolver
+        auch unter `speaker_controlled_enrollment_enabled` — im Haushalt genau
+        der Fall, also unterschiedliche Schwerpunkte;
+      * nahm ALLE Sprecher, der Resolver unter `controlled` nur die
+        eingeschriebenen;
+      * mittelte ALLE Einbettungen, der Resolver nur die
+        `MAX_EMBEDDINGS_PER_SPEAKER` jüngsten.
+
+    Damit antwortete das Diagnose-Endpunkt aus einem anderen Modell als die
+    Erkennung — und zwar ausgerechnet das Werkzeug, mit dem man einer
+    Fehlerkennung nachgeht. Eine zweite Kopie derselben Rechnung hat kein
+    Gegenmittel ausser: es gibt keine zweite Kopie.
+    """
+    known: list[tuple[int, str, np.ndarray]] = []
+    with_embeddings: list[Speaker] = []
+    service = get_speaker_service()
+    for speaker in all_speakers:
+        if not speaker.embeddings:
+            continue
+        # Phase-3: identify against ENROLLED reference profiles ONLY.
+        if controlled and not speaker.enrolled:
+            continue
+        with_embeddings.append(speaker)
+        recent = sorted(
+            speaker.embeddings,
+            key=lambda e: e.created_at or datetime.min,
+            reverse=True,
+        )[:MAX_EMBEDDINGS_PER_SPEAKER]
+        decoded = [service.embedding_from_base64(emb.embedding) for emb in recent]
+        if decoded:
+            # L2-normalize each embedding before averaging so the centroid
+            # isn't dominated by larger-norm samples (raw ECAPA norms vary
+            # ~250-410). Off = legacy raw mean.
+            if quality_active:
+                decoded = [_l2_normalize(d) for d in decoded]
+            known.append((speaker.id, speaker.name, np.mean(decoded, axis=0)))
+    return known, with_embeddings
+
+
 async def resolve_speaker_from_embedding(
     db_session: AsyncSession,
     embedding: list[float] | np.ndarray,
@@ -76,11 +143,9 @@ async def resolve_speaker_from_embedding(
     if not settings.speaker_recognition_enabled:
         return _empty_speaker_info()
 
-    gating = settings.speaker_quality_gating_enabled
-    controlled = settings.speaker_controlled_enrollment_enabled
-    # The duration quality gate is active under EITHER Phase-0 gating or Phase-3
-    # controlled recognition (the review bucket must not fill with short/noisy turns).
-    quality_active = gating or controlled
+    # Die Schalter kommen aus EINER Stelle, damit die Route nicht wieder
+    # abweichen kann (s. `known_speaker_flags`).
+    gating, controlled, quality_active = known_speaker_flags()
     too_short = (
         quality_active
         and audio_duration_s is not None
@@ -110,29 +175,9 @@ async def resolve_speaker_from_embedding(
         )
         all_speakers = result.scalars().all()
 
-        known_speakers: list[tuple[int, str, np.ndarray]] = []
-        speakers_with_embeddings: list[Speaker] = []
-        for speaker in all_speakers:
-            if not speaker.embeddings:
-                continue
-            # Phase-3: identify against ENROLLED reference profiles ONLY.
-            if controlled and not speaker.enrolled:
-                continue
-            speakers_with_embeddings.append(speaker)
-            recent = sorted(
-                speaker.embeddings,
-                key=lambda e: e.created_at or datetime.min,
-                reverse=True,
-            )[:MAX_EMBEDDINGS_PER_SPEAKER]
-            decoded = [service.embedding_from_base64(emb.embedding) for emb in recent]
-            if decoded:
-                # L2-normalize each embedding before averaging so the centroid
-                # isn't dominated by larger-norm samples (raw ECAPA norms vary
-                # ~250-410). Off = legacy raw mean.
-                if quality_active:
-                    decoded = [_l2_normalize(d) for d in decoded]
-                averaged = np.mean(decoded, axis=0)
-                known_speakers.append((speaker.id, speaker.name, averaged))
+        known_speakers, speakers_with_embeddings = build_known_speaker_centroids(
+            all_speakers, controlled=controlled, quality_active=quality_active
+        )
 
         identified: Speaker | None = None
         confidence = 0.0
