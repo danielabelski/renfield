@@ -15,6 +15,7 @@ import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import Badge from '../components/Badge';
 import { useConfirmDialog } from '../components/ConfirmDialog';
+import { useFeatureFlags } from '../api/resources/brain';
 import {
   Users, UserPlus, UserCog, Pencil, Trash2, Loader,
   Shield, ShieldCheck, User, Mic, Link2, Unlink, Eye, EyeOff, RefreshCw, Lock, LockOpen,
@@ -56,6 +57,7 @@ export default function UsersPage() {
   const usersQuery = useUsersQuery();
   const rolesQuery = useRolesListQuery();
   const speakersQuery = useSpeakersListQuery();
+  const featureFlags = useFeatureFlags();
 
   const users = usersQuery.data ?? [];
   const roles = rolesQuery.data ?? [];
@@ -344,10 +346,60 @@ export default function UsersPage() {
    * `/api/speakers` jeden Schalter sperren — also nur sperren, wenn das Profil
    * da ist und nachweislich leer.
    */
-  const canPassSecondFactor = (user: AdminUser): boolean => {
-    if (!user.speaker_id) return false;
+  /**
+   * 🛑 ZWEI VERSCHIEDENE FRAGEN, die nicht zusammenfallen.
+   *
+   * Beide spiegeln `services/voice_factor_preconditions` im Backend:
+   *
+   * * **Darf eingeschaltet werden?** — `armingBlocker`. Entspricht dem 409 der
+   *   Route und schliesst `voice_auth_enabled` BEWUSST aus: sonst waere die
+   *   Cutover-Reihenfolge unmoeglich (erst die Einwilligungen einsammeln, dann
+   *   das Flag umlegen). Solange das Flag aus ist, ruht die Huerde eben.
+   * * **Wirkt ein scharfer Faktor gerade?** — `restingReason`. Hier zaehlen
+   *   BEIDE Haelften. Diese Maske kannte nur die Profil-Haelfte und nannte alles
+   *   andere „scharf": bei der Browser-Abnahme am 2026-09-28 zeigte eine
+   *   eingewilligte Zeile „scharf", waehrend `VOICE_AUTH_ENABLED=false` die
+   *   Huerde ruhen liess. Im Cutover-Fenster waere das bei JEDER Zeile falsch,
+   *   also genau dann, wenn es zaehlt.
+   *
+   * 🛑 Solange die Schalter noch laden (`undefined`), wird NICHT auf „ruht"
+   * geschlossen — eine unbekannte Antwort ist kein Beweis.
+   *
+   * 🛑 Ein Profil, das NICHT in der Sprecherliste steht, gilt als brauchbar:
+   * `fetchSpeakers` schluckt Fehler und gibt `[]` zurueck. Aus einer leeren
+   * Liste „keine Einbettungen" zu folgern, wuerde bei totem `/api/speakers`
+   * jeden Schalter sperren.
+   */
+  const profileBlocker = (user: AdminUser): 'no_profile' | 'no_samples' | null => {
+    if (!user.speaker_id) return 'no_profile';
     const profile = speakers.find((s) => s.id === user.speaker_id);
-    return !profile || profile.embedding_count > 0;
+    return !profile || profile.embedding_count > 0 ? null : 'no_samples';
+  };
+
+  const armingBlocker = (
+    user: AdminUser,
+  ): 'recognition_off' | 'no_profile' | 'no_samples' | null => {
+    if (featureFlags.data?.speaker_recognition_enabled === false) return 'recognition_off';
+    return profileBlocker(user);
+  };
+
+  const restingReason = (
+    user: AdminUser,
+  ): 'path_off' | 'recognition_off' | 'no_profile' | 'no_samples' | null => {
+    const flags = featureFlags.data;
+    if (flags?.speaker_recognition_enabled === false) return 'recognition_off';
+    if (flags?.voice_auth_enabled === false) return 'path_off';
+    return profileBlocker(user);
+  };
+
+  /** Der Titel der Schild-Schaltflaeche: benennt den GRUND, wenn gesperrt. */
+  const armingTitle = (user: AdminUser): string => {
+    switch (armingBlocker(user)) {
+      case 'recognition_off': return t('users.voiceFactorRecognitionOff');
+      case 'no_profile': return t('users.voiceFactorNeedsSpeaker');
+      case 'no_samples': return t('users.voiceFactorNeedsSamples');
+      default: return t('users.voiceFactorArm');
+    }
   };
 
   const availableSpeakers: SpeakerSummary[] = Array.isArray(speakers) && Array.isArray(users)
@@ -453,16 +505,21 @@ export default function UsersPage() {
                            Anzeige, die luegt. */
                         <span
                           className={
-                            canPassSecondFactor(user)
+                            restingReason(user) === null
                               ? 'flex items-center space-x-1 text-amber-600 dark:text-amber-400'
                               : 'flex items-center space-x-1 text-gray-500 dark:text-gray-400'
                           }
                         >
                           <ShieldCheck className="w-3 h-3" />
                           <span>
-                            {canPassSecondFactor(user)
-                              ? t('users.voiceFactorOn')
-                              : t('users.voiceFactorResting')}
+                            {(() => {
+                              const reason = restingReason(user);
+                              if (reason === null) return t('users.voiceFactorOn');
+                              if (reason === 'no_profile' || reason === 'no_samples') {
+                                return t('users.voiceFactorResting');
+                              }
+                              return t('users.voiceFactorRestingPathOff');
+                            })()}
                           </span>
                         </span>
                       )}
@@ -488,15 +545,11 @@ export default function UsersPage() {
                       title={
                         user.voice_second_factor_enabled
                           ? t('users.voiceFactorDisarm')
-                          : canPassSecondFactor(user)
-                            ? t('users.voiceFactorArm')
-                            : user.speaker_id
-                              ? t('users.voiceFactorNeedsSamples')
-                              : t('users.voiceFactorNeedsSpeaker')
+                          : armingTitle(user)
                       }
                       disabled={
                         setVoiceSecondFactor.isPending ||
-                        (!user.voice_second_factor_enabled && !canPassSecondFactor(user))
+                        (!user.voice_second_factor_enabled && armingBlocker(user) !== null)
                       }
                     >
                       {user.voice_second_factor_enabled ? (

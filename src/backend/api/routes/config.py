@@ -126,6 +126,18 @@ class FeatureFlags(BaseModel):
     # Per-user live event push (/ws/user). On => the frontend opens the socket and
     # invalidates KB queries on server-side changes. See utils/config.py.
     user_events_enabled: bool = True
+    # 🛑 Die beiden Schalter, von denen die STIMM-HUERDE abhaengt — und ohne die
+    # die Oberflaeche „scharf" meldet, waehrend der Faktor in Wahrheit RUHT.
+    #
+    # Die Vorbedingungen haben zwei Haelften (`services/voice_factor_preconditions`):
+    # instanzweite Schalter und das Profil der Person. Die Benutzerverwaltung sah
+    # nur die zweite und nannte alles andere scharf. Im Cutover-Fenster — erst die
+    # Einwilligungen einsammeln, dann `VOICE_AUTH_ENABLED` umlegen — meldet damit
+    # JEDE eingewilligte Zeile das Falsche, also genau dann, wenn es zaehlt.
+    #
+    # Kein Geheimnis: beide sagen nur, ob ein Weg offen ist, nicht wer ihn geht.
+    voice_auth_enabled: bool = False
+    speaker_recognition_enabled: bool = True
     # Registry client id the browser sends as ?client= on /ws/voice (runtime, so
     # one shared frontend image serves every instance). Empty => the frontend
     # falls back to the build-time VITE_VOICE_CLIENT_ID, else omits the param.
@@ -161,5 +173,7 @@ async def get_features(
         simba_ingest_review_enabled=settings.folder_ingest_simba_enabled,
         document_dedupe_enabled=settings.document_dedupe_enabled,
         user_events_enabled=settings.user_events_enabled,
+        voice_auth_enabled=settings.voice_auth_enabled,
+        speaker_recognition_enabled=settings.speaker_recognition_enabled,
         voice_client_id=settings.voice_browser_client_id,
     )

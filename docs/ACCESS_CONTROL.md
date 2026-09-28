@@ -897,6 +897,31 @@ Die Alternative wäre gewesen, das Einschalten für den letzten Administrator zu
 verweigern — dann könnte ausgerechnet die Person mit dem größten Schutzbedarf
 den Faktor als Einzige nie benutzen.
 
+### Was die Oberfläche zeigt — und was sie dafür wissen muss
+
+Das Abzeichen in der Benutzerliste unterscheidet **„Stimme als 2. Faktor"** (wirkt)
+von **„2. Faktor ruht"** (Einwilligung steht, greift aber nicht). Dafür braucht die
+Maske **beide** Hälften der Vorbedingungen, und `GET /api/config/features` führt
+darum `voice_auth_enabled` und `speaker_recognition_enabled` mit. Kein Geheimnis:
+sie sagen nur, ob ein Weg offen ist, nicht wer ihn geht.
+
+🛑 **Einschalten und Ruhen hängen an VERSCHIEDENEN Bedingungen** — die Maske bildet
+das nach, weil das Backend es so tut:
+
+| | zählt `voice_auth_enabled`? | zählt `speaker_recognition_enabled`? | zählt das Profil? |
+|---|---|---|---|
+| **Einschalten** (409) | **nein** | ja | ja |
+| **Wirkt der Faktor?** | ja | ja | ja |
+
+`voice_auth_enabled` ist beim Einschalten bewusst ausgenommen: die Cutover-Reihenfolge
+lautet erst die Einwilligungen einsammeln, **dann** das Flag umlegen. Sperrte die
+Schaltfläche solange, wäre genau das unmöglich. Umgekehrt meldete die Maske ohne diese
+Trennung im selben Fenster bei *jeder* eingewilligten Zeile „scharf", obwohl alles ruht
+— gefunden bei der Browser-Abnahme am 2026-09-28.
+
+Solange die Schalter noch laden, schließt die Maske **nicht** auf „ruht": eine
+unbekannte Antwort ist kein Beweis.
+
 ### Sperren: zwei Zähler, ein Knopf
 
 Fehlversuche des zweiten Faktors zählen unter `voice2fa:<user_id>`, nicht unter

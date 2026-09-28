@@ -61,14 +61,27 @@ interface Row {
 /** `adminAuthMock` meldet sich als `id: 1` an — das ist „das eigene Konto". */
 const SELF = 1;
 
-function listing(rows: Row[], speakers: Array<{ id: number; name: string; embedding_count: number }> = [
-  { id: 7, name: 'stimme', embedding_count: 3 },
-]) {
+function listing(
+  rows: Row[],
+  speakers: Array<{ id: number; name: string; embedding_count: number }> = [
+    { id: 7, name: 'stimme', embedding_count: 3 },
+  ],
+  flags: { voice_auth_enabled?: boolean; speaker_recognition_enabled?: boolean } = {},
+) {
   server.use(
     http.get(`${BASE_URL}/api/users`, () =>
       HttpResponse.json({ users: rows, total: rows.length, page: 1, page_size: 50 }),
     ),
     http.get(`${BASE_URL}/api/speakers`, () => HttpResponse.json(speakers)),
+    // Die instanzweite Haelfte der Vorbedingungen. Standard: Sprachweg AN, damit
+    // die uebrigen Faelle die Profil-Haelfte pruefen.
+    http.get(`${BASE_URL}/api/config/features`, () =>
+      HttpResponse.json({
+        voice_auth_enabled: true,
+        speaker_recognition_enabled: true,
+        ...flags,
+      }),
+    ),
   );
 }
 
@@ -207,5 +220,62 @@ describe('UsersPage — Stimme als zweiter Faktor', () => {
     renderWithProviders(<UsersPage />);
     expect(await screen.findByText('2. Faktor ruht (kein Stimmprofil)')).toBeInTheDocument();
     expect(screen.queryByText('Stimme als 2. Faktor')).not.toBeInTheDocument();
+  });
+
+  it('🛑 meldet „ruht", wenn der SPRACHWEG der Instanz aus ist', async () => {
+    // Der Befund aus der Browser-Abnahme vom 2026-09-28: eine eingewilligte
+    // Zeile zeigte „scharf", waehrend VOICE_AUTH_ENABLED=false die Huerde ruhen
+    // liess. Die Maske kannte nur die Profil-Haelfte der Vorbedingungen.
+    listing(
+      [row({ id: 2, username: 'anna', voice_second_factor_enabled: true })],
+      [{ id: 7, name: 'stimme', embedding_count: 3 }],
+      { voice_auth_enabled: false },
+    );
+    renderWithProviders(<UsersPage />);
+    expect(await screen.findByText('2. Faktor ruht (Sprachweg aus)')).toBeInTheDocument();
+    expect(screen.queryByText('Stimme als 2. Faktor')).not.toBeInTheDocument();
+  });
+
+  it('meldet „ruht", wenn die SPRECHERKENNUNG aus ist', async () => {
+    listing(
+      [row({ id: 2, username: 'anna', voice_second_factor_enabled: true })],
+      [{ id: 7, name: 'stimme', embedding_count: 3 }],
+      { speaker_recognition_enabled: false },
+    );
+    renderWithProviders(<UsersPage />);
+    expect(await screen.findByText('2. Faktor ruht (Sprachweg aus)')).toBeInTheDocument();
+  });
+
+  it('🛑 sperrt das EINSCHALTEN NICHT, nur weil der Sprachweg aus ist', async () => {
+    // Die Gegenkontrolle gegen die Regression, die ich mir beim Fix fast gebaut
+    // haette. Das Backend schliesst `voice_auth_enabled` bewusst aus dem 409 aus:
+    // die Cutover-Reihenfolge lautet erst Einwilligungen einsammeln, DANN das
+    // Flag umlegen. Sperrte die Maske hier, waere genau das unmoeglich.
+    listing(
+      [row({ id: SELF, username: 'admin', role_name: 'Admin', role_id: 1 })],
+      [{ id: 7, name: 'stimme', embedding_count: 3 }],
+      { voice_auth_enabled: false },
+    );
+    const { calls } = captureToggle();
+
+    renderWithProviders(<UsersPage />);
+    const button = await screen.findByTitle('Stimme als zweiten Faktor einschalten');
+    expect(button).toBeEnabled();
+    await userEvent.click(button);
+    await waitFor(() => expect(calls).toEqual([{ id: String(SELF), enabled: true }]));
+  });
+
+  it('sperrt das Einschalten SEHR WOHL, wenn die Sprecherkennung aus ist', async () => {
+    // Die andere Haelfte: DIESEN Fall verweigert das Backend mit 409, also darf
+    // die Maske ihn nicht ins 409 laufen lassen.
+    listing(
+      [row({ id: SELF, username: 'admin', role_name: 'Admin', role_id: 1 })],
+      [{ id: 7, name: 'stimme', embedding_count: 3 }],
+      { speaker_recognition_enabled: false },
+    );
+    renderWithProviders(<UsersPage />);
+    expect(
+      await screen.findByTitle('Sprecherkennung ist auf dieser Instanz aus'),
+    ).toBeDisabled();
   });
 });

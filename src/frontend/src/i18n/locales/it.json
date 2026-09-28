@@ -775,6 +775,8 @@
     "voiceLinked": "Voce collegata",
     "voiceFactorOn": "Voce come 2° fattore",
     "voiceFactorResting": "2° fattore in pausa (nessun profilo vocale)",
+    "voiceFactorRestingPathOff": "2° fattore in pausa (via vocale disattivata)",
+    "voiceFactorRecognitionOff": "Il riconoscimento vocale è disattivato su questa istanza",
     "voiceFactorArm": "Richiedi la voce come secondo fattore",
     "voiceFactorDisarm": "Non richiedere più la voce come secondo fattore",
     "voiceFactorNeedsSpeaker": "Collega prima un profilo vocale",
