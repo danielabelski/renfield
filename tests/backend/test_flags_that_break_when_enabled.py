@@ -238,6 +238,28 @@ class TestVoiceSecondFactor:
     Token, die ABWESENHEIT von Token, und dass es keinen Weg ohne Stimme gibt.
     """
 
+    @pytest.fixture(autouse=True)
+    def _no_rate_limit(self, monkeypatch):
+        """Ratenbegrenzer aus, weil diese Tests den Handler DIREKT aufrufen.
+
+        Dasselbe Muster wie `test_auth.py:280` ("its wrapper guards everything
+        behind `if self.enabled`"): ein Direktaufruf soll nicht an einem
+        Zaehler haengen, den andere Tests fuellen, und slowapi greift auf
+        `request.app.state.limiter` zu (`extension.py:83`), das eine handgebaute
+        `Request` nicht hat.
+
+        🛑 Berichtigung an mir selbst: hier stand zuerst, dieser Bypass behebe
+        die vier Fehlschlaege der Vollsuite. Das war FALSCH — er hat sie nicht
+        behoben, die Ursache war die Namensbindung in `_own_session`. Ein
+        Kommentar, der eine widerlegte Ursache behauptet, kostet den naechsten
+        Leser denselben Weg noch einmal. Der Bypass bleibt, weil er fuer sich
+        richtig ist; was er kostet, holt `TestTheRateLimitIsStillDeclared`
+        zurueck.
+        """
+        from services.api_rate_limiter import limiter
+
+        monkeypatch.setattr(limiter, "enabled", False)
+
     @staticmethod
     def _upload(data: bytes = b"RIFFfake", name: str = "turn.wav"):
         class _Up:
@@ -627,21 +649,60 @@ class TestLoginWithholdsTokensForSecondFactor:
     """
 
     @pytest.fixture(autouse=True)
+    def _no_rate_limit(self, monkeypatch):
+        """Ratenbegrenzer aus, weil diese Tests den Handler DIREKT aufrufen.
+
+        Dasselbe Muster wie `test_auth.py:280` ("its wrapper guards everything
+        behind `if self.enabled`"): ein Direktaufruf soll nicht an einem
+        Zaehler haengen, den andere Tests fuellen, und slowapi greift auf
+        `request.app.state.limiter` zu (`extension.py:83`), das eine handgebaute
+        `Request` nicht hat.
+
+        🛑 Berichtigung an mir selbst: hier stand zuerst, dieser Bypass behebe
+        die vier Fehlschlaege der Vollsuite. Das war FALSCH — er hat sie nicht
+        behoben, die Ursache war die Namensbindung in `_own_session`. Ein
+        Kommentar, der eine widerlegte Ursache behauptet, kostet den naechsten
+        Leser denselben Weg noch einmal. Der Bypass bleibt, weil er fuer sich
+        richtig ist; was er kostet, holt `TestTheRateLimitIsStillDeclared`
+        zurueck.
+        """
+        from services.api_rate_limiter import limiter
+
+        monkeypatch.setattr(limiter, "enabled", False)
+
+    @pytest.fixture(autouse=True)
     def _own_session(self, monkeypatch, db_session):
-        """🛑 `DBProvider` oeffnet eine EIGENE Sitzung (`auth/providers/db.py:40`,
-        `AsyncSessionLocal`) — der Vertrag der Anbieter traegt kein `db`. Ohne
-        diese Umlenkung sieht der Anbieter-Walk den Testnutzer nicht und die
-        Anmeldung endet in 401 „Incorrect username or password", was wie ein
-        Testfehler aussieht und keiner ist. Dasselbe Muster wie
-        `test_auth_cookies.py::ws_session_factory`.
+        """🛑 BEIDE Namen umbiegen — und das ist der eigentliche Fund.
+
+        `DBProvider` oeffnet eine EIGENE Sitzung (der Vertrag der Anbieter traegt
+        kein `db`), und `auth/providers/db.py:18` holt sie ueber
+        `from services.database import AsyncSessionLocal` — ein auf MODULEBENE
+        GEBUNDENER Name. Ein `monkeypatch.setattr` auf `services.database`
+        erreicht diese Bindung NICHT, sobald das Modul einmal importiert ist.
+
+        Genau daran hingen vier Tests, und der Fehlermodus war heimtueckisch:
+
+        * **Allein** ist `auth.providers.db` beim Fixture-Lauf noch nicht
+          importiert. Der Patch landet zuerst, der spaetere Import KOPIERT den
+          gepatchten Wert — die Tests waren gruen.
+        * **In der Suite** hat ein frueherer Test das Modul laengst geladen. Es
+          haelt die echte Fabrik, der Anbieter sucht den Testnutzer in der
+          falschen Datenbank, findet ihn nicht, und die Anmeldung endet in
+          `bad credentials` — was wie ein Produktfehler aussieht.
+
+        Also beide Bindungen. Und nicht nur die, die gerade weh tut: `services.database`
+        bleibt gepatcht, weil andere Pfade sie zur Laufzeit nachschlagen.
         """
         from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+        import auth.providers.db as db_provider
         import services.database as db_mod
 
-        monkeypatch.setattr(db_mod, "AsyncSessionLocal", async_sessionmaker(
+        factory = async_sessionmaker(
             db_session.bind, class_=AsyncSession, expire_on_commit=False,
-        ))
+        )
+        monkeypatch.setattr(db_mod, "AsyncSessionLocal", factory)
+        monkeypatch.setattr(db_provider, "AsyncSessionLocal", factory)
 
     @staticmethod
     def _request():
@@ -789,3 +850,46 @@ class TestLoginWithholdsTokensForSecondFactor:
         assert ei.value.status_code == 503, (
             "ohne Ticket darf es weder Token noch eine stille Umgehung geben"
         )
+
+
+class TestTheRateLimitIsStillDeclared:
+    """🛑 Was der Bypass kostet, wird hier zurückgeholt.
+
+    `TestVoiceSecondFactor` und `TestLoginWithholdsTokensForSecondFactor` schalten
+    den Ratenbegrenzer ab, weil sie die Handler DIREKT aufrufen (slowapi greift
+    sonst auf `request.app.state.limiter` zu, das eine handgebaute Anfrage nicht
+    hat). Damit prüft aber auch kein Test mehr, dass die Begrenzung überhaupt
+    noch an den Routen HÄNGT — und beide sind unangemeldet erreichbar.
+
+    Ohne diesen Riegel könnte jemand den Dekorator entfernen und alle Tests
+    blieben grün. Das ist genau die Lücke, die ein Workaround typischerweise
+    aufreisst, ohne dass es jemand bemerkt.
+    """
+
+    pytestmark = [pytest.mark.unit]
+
+    @pytest.mark.parametrize("route", ["login", "voice_authenticate"])
+    def test_the_auth_routes_carry_the_rate_limiter(self, route):
+        from api.routes import auth
+
+        fn = getattr(auth, route)
+        # slowapi wickelt den Handler mit `functools.wraps`; die Kette ist über
+        # `__wrapped__` erreichbar. Ist sie leer, ist der Dekorator weg.
+        assert hasattr(fn, "__wrapped__"), (
+            f"`{route}` traegt keinen Dekorator mehr — die Ratenbegrenzung auf "
+            f"einer unangemeldet erreichbaren Anmelderoute ist weg"
+        )
+
+    def test_the_auth_limit_is_stricter_than_the_default(self):
+        """Die Anmelderouten laufen auf `api_rate_limit_auth`, nicht auf dem
+        allgemeinen Wert — sonst waere die strengere Grenze nur Dekoration."""
+        from utils.config import settings
+
+        def _per_minute(spec: str) -> float:
+            n, _, unit = spec.partition("/")
+            factor = {"second": 60.0, "minute": 1.0, "hour": 1 / 60, "day": 1 / 1440}
+            return float(n) * factor[unit.strip().rstrip("s") or "minute"]
+
+        assert _per_minute(settings.api_rate_limit_auth) <= _per_minute(
+            settings.api_rate_limit_default
+        ), "die Anmeldegrenze ist nicht strenger als die allgemeine"
