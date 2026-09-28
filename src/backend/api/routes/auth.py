@@ -12,6 +12,7 @@ import hmac
 import secrets
 from datetime import UTC, datetime
 
+import numpy as np
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile, status
 from fastapi.security import OAuth2PasswordRequestForm
 from loguru import logger
@@ -336,7 +337,15 @@ async def login(
     # koennte niemand das Ticket einloesen, und ein Konto mit dem Flag waere
     # ausgesperrt. Deshalb greift die Huerde nur, wenn es auch eine Tuer gibt —
     # ansonsten laeuft der Passwortpfad normal weiter und die Einwilligung ruht.
-    if user.voice_second_factor_enabled and settings.voice_auth_enabled:
+    # 🛑 Die Pruefung liegt in `services/voice_factor_preconditions`, NICHT hier.
+    # Frueher stand hier nur `voice_auth_enabled` — aber `/auth/voice` verlangt
+    # zum Einloesen mehr (Sprecherkennung an, verknuepftes Profil, Einbettungen),
+    # und jede Luecke zwischen Stellen und Abraeumen ist eine Aussperrung, weil
+    # es keinen Rueckfall auf Passwort allein gibt. Fehlt eine Vorbedingung,
+    # RUHT die Huerde (mit WARNING) und die Einwilligung bleibt gespeichert.
+    from services.voice_factor_preconditions import second_factor_applies
+
+    if await second_factor_applies(db, user):
         from services.voice_second_factor_store import issue_ticket
 
         ticket = await issue_ticket(user.id, client_ip)
@@ -956,18 +965,15 @@ async def voice_authenticate(
     ausloesen kann, hebt den Faktor auf. Wiederherstellung ist ein Administrator,
     der `voice_second_factor_enabled` fuer diese Person abschaltet.
     """
-    if not settings.voice_auth_enabled:
+    # Derselbe Pruefer wie in `/auth/login`, damit Stellen und Abraeumen der
+    # Huerde nicht auseinanderlaufen koennen.
+    from services.voice_factor_preconditions import voice_path_blocker
+
+    path_blocked = voice_path_blocker()
+    if path_blocked:
         return VoiceAuthResponse(
             success=False,
             message="Voice authentication is disabled"
-        )
-
-    # Ein Stimmabdruck ist biometrisches Datum. Ist die Erkennung aus, wird hier
-    # auch keiner BERECHNET — derselbe Grundsatz wie im Resolver.
-    if not settings.speaker_recognition_enabled:
-        return VoiceAuthResponse(
-            success=False,
-            message="Speaker recognition is disabled"
         )
 
     from services.api_rate_limiter import client_ip_is_spoof_resistant, get_client_ip
@@ -1002,7 +1008,9 @@ async def voice_authenticate(
     # darf die Sperre auf den Nutzer gehen statt auf die Adresse: ein Fremder kann
     # damit kein Konto aussperren, denn er kaeme ohne das Passwort nicht bis
     # hierher.
-    lock_key = f"voice2fa:{pending.user_id}"
+    from services.voice_factor_preconditions import voice_factor_lock_id
+
+    lock_key = voice_factor_lock_id(pending.user_id)
     if await login_lockout.is_locked(lock_key, client_ip):
         record_login_failure("voice_2fa_locked_out")
         logger.warning(
@@ -1047,18 +1055,63 @@ async def voice_authenticate(
 
         speaker_service = get_speaker_service()
 
-        # 🛑 `to_thread`: der Aufruf ist ein schlichtes `def` (Tempdatei,
-        # `librosa.load`, torch-ECAPA, beim ersten Mal das Modellladen) und
-        # blockiert nackt die GESAMTE Ereignisschleife — jeden WebSocket, jede
-        # Satelliten-Sprachrunde. Gibt `None` zurueck, wenn In-Prozess-
-        # Einbettungen abgeschaltet sind (zentraler Riegel im `SpeakerService`,
-        # der „voice-login" selbst als abgedeckten Aufrufer nennt).
-        query_embedding = await asyncio.to_thread(
-            speaker_service.extract_embedding_from_bytes,
-            audio_bytes, audio_file.filename or "voice-second-factor",
-        )
-        if query_embedding is None:
-            return _refused("could not extract an embedding")
+        # 🛑 DIE EINBETTUNG KOMMT VOM VOICE-SERVER, NICHT AUS DIESEM PROZESS.
+        #
+        # Hier stand `speaker_service.extract_embedding_from_bytes`. Dieser Weg
+        # konnte in der Produktion NIE gelingen, und zwar aus zwei Gruenden:
+        #
+        # 1. `SpeakerService` haelt ihn zu. `speaker_inprocess_embeddings_enabled`
+        #    ist standardmaessig `False` und in keiner ConfigMap gesetzt, also auf
+        #    beiden Instanzen aus; der zentrale Riegel gibt dann `None` zurueck.
+        #    Sein eigener Docstring nennt „voice-login" als abgedeckten Aufrufer.
+        # 2. Selbst offen waere es der FALSCHE VEKTORRAUM. Gespeichert sind
+        #    voice-server-ONNX-Einbettungen (`speaker_enrollment_service`),
+        #    berechnet wuerde SpeechBrain — der Riegel nennt das „silently
+        #    corrupts identity".
+        #
+        # Also derselbe Weg wie beim Anlernen: `stt()` gegen den voice-server,
+        # mit einem kurzlebigen Dienst-Token, weil hier noch niemand angemeldet
+        # ist (Vorbild: `speaker_enrollment_service._service_token`,
+        # `meeting_pipeline._service_token`). `verify_speaker` bleibt unberuehrt
+        # — es ist reine Kosinus-Aehnlichkeit und haengt nicht am Riegel.
+        from services.speaker_enrollment_service import _service_token
+        from services.voice_server_client import VoiceServerError
+        from services.voice_server_client import stt as voice_server_stt
+
+        try:
+            stt_result = await voice_server_stt(
+                audio_bytes,
+                filename=audio_file.filename or "voice-second-factor",
+                auth_token=_service_token(),
+            )
+        except VoiceServerError as e:
+            # Kein `_refused`: das ist ein Betriebsfehler, kein Fehlversuch der
+            # Person. Er darf ihr nicht als Fehlschlag angerechnet werden.
+            logger.error(f"Voice second factor: voice-server unavailable ({e})")
+            return VoiceAuthResponse(
+                success=False,
+                message="Voice authentication temporarily unavailable",
+            )
+
+        raw_embedding = stt_result.get("speaker_embedding")
+        if not raw_embedding:
+            return _refused("voice-server returned no embedding (too short / silent?)")
+
+        # 🛑 H3, damit geschlossen: eine Mindestdauer SERVERSEITIG. Die 1,5 s in
+        # der Maske sind Bedienfuehrung — ein Angreifer schickt direkt an die
+        # API. Der voice-server misst die Aufnahme selbst, und das ist die
+        # einzige Zahl, der man hier trauen kann.
+        duration_s = stt_result.get("audio_duration_s")
+        if duration_s is not None and duration_s < settings.speaker_recognition_min_duration_s:
+            return _refused(
+                f"sample too short ({duration_s:.2f}s < "
+                f"{settings.speaker_recognition_min_duration_s}s)"
+            )
+
+        query_embedding = np.asarray(raw_embedding, dtype=np.float32)
+        if not np.all(np.isfinite(query_embedding)):
+            # Ein NaN rutscht durch jeden Schwellenvergleich (NaN < x ist False).
+            return _refused("non-finite embedding from voice-server")
 
         # 🛑 VERIFIZIEREN, nicht identifizieren: gegen die Einbettungen GENAU
         # DIESES Profils. Das ist der Kern des Umbaus — kein Argmax ueber alle

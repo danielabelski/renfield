@@ -61,11 +61,14 @@ interface Row {
 /** `adminAuthMock` meldet sich als `id: 1` an — das ist „das eigene Konto". */
 const SELF = 1;
 
-function listing(rows: Row[]) {
+function listing(rows: Row[], speakers: Array<{ id: number; name: string; embedding_count: number }> = [
+  { id: 7, name: 'stimme', embedding_count: 3 },
+]) {
   server.use(
     http.get(`${BASE_URL}/api/users`, () =>
       HttpResponse.json({ users: rows, total: rows.length, page: 1, page_size: 50 }),
     ),
+    http.get(`${BASE_URL}/api/speakers`, () => HttpResponse.json(speakers)),
   );
 }
 
@@ -156,5 +159,53 @@ describe('UsersPage — Stimme als zweiter Faktor', () => {
     listing([row({ id: SELF, username: 'admin', role_name: 'Admin', role_id: 1, speaker_id: null })]);
     renderWithProviders(<UsersPage />);
     expect(await screen.findByTitle('Erst ein Sprecherprofil verknüpfen')).toBeDisabled();
+  });
+
+  it('🛑 sperrt das Einschalten auch bei einem Profil OHNE Stimmproben', async () => {
+    // Das Backend verweigert BEIDE Faelle mit 409 — die Oberflaeche sperrte nur
+    // den ersten. Der zweite lief ins 409 und zeigte die englische
+    // Server-Meldung in der deutschen Maske.
+    listing(
+      [row({ id: SELF, username: 'admin', role_name: 'Admin', role_id: 1, speaker_id: 7 })],
+      [{ id: 7, name: 'leer', embedding_count: 0 }],
+    );
+    renderWithProviders(<UsersPage />);
+    expect(
+      await screen.findByTitle('Das verknüpfte Profil hat noch keine Stimmproben'),
+    ).toBeDisabled();
+  });
+
+  it('sperrt NICHT, wenn die Sprecherliste gar nicht geladen werden konnte', async () => {
+    // 🛑 `fetchSpeakers` schluckt Fehler und gibt `[]` zurueck. Aus einer leeren
+    // Liste „keine Einbettungen" zu folgern, wuerde bei totem /api/speakers
+    // jeden Schalter sperren — die Abwesenheit eines Profils ist kein Beweis.
+    listing([row({ id: SELF, username: 'admin', role_name: 'Admin', role_id: 1, speaker_id: 7 })], []);
+    renderWithProviders(<UsersPage />);
+    expect(await screen.findByTitle('Stimme als zweiten Faktor einschalten')).toBeEnabled();
+  });
+
+  it('am eigenen Konto mit scharfem Faktor wird das ABSCHALTEN angeboten', async () => {
+    // Der Quadrant eigen+an: sonst haette sich der Eigentuemer selbst scharf
+    // gestellt und keinen Weg zurueck gesehen.
+    listing([row({ id: SELF, username: 'admin', role_name: 'Admin', role_id: 1,
+                   voice_second_factor_enabled: true })]);
+    const { calls } = captureToggle();
+    renderWithProviders(<UsersPage />);
+    await userEvent.click(await screen.findByTitle('Stimme als zweiten Faktor abschalten'));
+    await waitFor(() => expect(calls).toEqual([{ id: String(SELF), enabled: false }]));
+  });
+
+  it('🛑 unterscheidet „scharf" von „ruht"', async () => {
+    // Fehlt eine Vorbedingung, haelt die Anmeldung die Token NICHT zurueck: die
+    // Einwilligung steht, wirkt aber nicht. Ein Abzeichen, das beides gleich
+    // zeigt, waere eine Anzeige, die luegt — und ein Administrator haette
+    // geglaubt, das Konto sei geschuetzt.
+    listing(
+      [row({ id: 2, username: 'anna', speaker_id: null, voice_second_factor_enabled: true })],
+      [],
+    );
+    renderWithProviders(<UsersPage />);
+    expect(await screen.findByText('2. Faktor ruht (kein Stimmprofil)')).toBeInTheDocument();
+    expect(screen.queryByText('Stimme als 2. Faktor')).not.toBeInTheDocument();
   });
 });

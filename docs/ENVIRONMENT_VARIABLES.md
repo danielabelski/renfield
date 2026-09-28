@@ -2391,6 +2391,17 @@ VOICE_SECOND_FACTOR_TTL_SECONDS=180
 # Spalte. Das ist Absicht: ohne Sprachweg könnte niemand das Ticket einlösen, und
 # das Konto wäre ausgesperrt.
 #
+# 🛑 Dasselbe gilt für JEDE fehlende Vorbedingung, nicht nur für dieses Flag:
+# `SPEAKER_RECOGNITION_ENABLED=false`, ein entzogenes Sprecherprofil oder ein Profil
+# ohne Einbettungen lassen die Hürde ebenfalls ruhen (mit WARNING im Protokoll). Die
+# Prüfung liegt an EINER Stelle, `services/voice_factor_preconditions` — vorher stellte
+# die Anmeldung die Hürde auf eine Bedingung und `/auth/voice` räumte sie auf fünf ab,
+# und jede Lücke dazwischen war eine Aussperrung. Die Einwilligung bleibt dabei
+# gespeichert und greift von selbst wieder, sobald die Vorbedingung zurück ist.
+#
+# `SPEAKER_RECOGNITION_MIN_DURATION_S` gilt seither AUCH für den Anmeldepfad: geprüft
+# wird die vom voice-server gemessene Dauer, nicht die der Maske.
+#
 # `VOICE_SECOND_FACTOR_TTL_SECONDS` ist die Lebensdauer des Tickets. Kurz halten: es
 # überbrückt nur die Sekunden zwischen Passworteingabe und Aufnahme, und ein
 # längeres Fenster macht ein abgefangenes Ticket wertvoller.

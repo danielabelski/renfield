@@ -330,6 +330,26 @@ export default function UsersPage() {
     }
   };
 
+  /**
+   * Kann dieses Konto den zweiten Faktor ueberhaupt bestehen?
+   *
+   * Das Backend verweigert das Einschalten mit 409 in ZWEI Faellen: kein
+   * verknuepftes Profil, UND ein verknuepftes Profil ohne Einbettungen. Die
+   * Oberflaeche sperrte nur den ersten — der zweite lief ins 409 und zeigte die
+   * englische Server-Meldung in einer deutschen Maske.
+   *
+   * 🛑 Ein Profil, das NICHT in der Liste steht, gilt als brauchbar: `fetchSpeakers`
+   * schluckt Fehler und gibt `[]` zurueck (`api/resources/users.ts`). Aus einer
+   * leeren Liste „keine Einbettungen" zu folgern, wuerde bei totem
+   * `/api/speakers` jeden Schalter sperren — also nur sperren, wenn das Profil
+   * da ist und nachweislich leer.
+   */
+  const canPassSecondFactor = (user: AdminUser): boolean => {
+    if (!user.speaker_id) return false;
+    const profile = speakers.find((s) => s.id === user.speaker_id);
+    return !profile || profile.embedding_count > 0;
+  };
+
   const availableSpeakers: SpeakerSummary[] = Array.isArray(speakers) && Array.isArray(users)
     ? speakers.filter((s) => !users.some((u) => u.speaker_id === s.id))
     : [];
@@ -426,9 +446,24 @@ export default function UsersPage() {
                         </span>
                       )}
                       {user.voice_second_factor_enabled && (
-                        <span className="flex items-center space-x-1 text-amber-600 dark:text-amber-400">
+                        /* 🛑 „Scharf" und „ruht" auseinanderhalten. Fehlt eine
+                           Vorbedingung, haelt die Anmeldung die Token NICHT
+                           zurueck — die Einwilligung steht, wirkt aber nicht.
+                           Ein Abzeichen, das beides gleich zeigt, waere eine
+                           Anzeige, die luegt. */
+                        <span
+                          className={
+                            canPassSecondFactor(user)
+                              ? 'flex items-center space-x-1 text-amber-600 dark:text-amber-400'
+                              : 'flex items-center space-x-1 text-gray-500 dark:text-gray-400'
+                          }
+                        >
                           <ShieldCheck className="w-3 h-3" />
-                          <span>{t('users.voiceFactorOn')}</span>
+                          <span>
+                            {canPassSecondFactor(user)
+                              ? t('users.voiceFactorOn')
+                              : t('users.voiceFactorResting')}
+                          </span>
                         </span>
                       )}
                     </div>
@@ -453,13 +488,15 @@ export default function UsersPage() {
                       title={
                         user.voice_second_factor_enabled
                           ? t('users.voiceFactorDisarm')
-                          : user.speaker_id
+                          : canPassSecondFactor(user)
                             ? t('users.voiceFactorArm')
-                            : t('users.voiceFactorNeedsSpeaker')
+                            : user.speaker_id
+                              ? t('users.voiceFactorNeedsSamples')
+                              : t('users.voiceFactorNeedsSpeaker')
                       }
                       disabled={
                         setVoiceSecondFactor.isPending ||
-                        (!user.voice_second_factor_enabled && !user.speaker_id)
+                        (!user.voice_second_factor_enabled && !canPassSecondFactor(user))
                       }
                     >
                       {user.voice_second_factor_enabled ? (

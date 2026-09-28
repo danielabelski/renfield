@@ -66,30 +66,35 @@ no token ever in Redis or a URL. 404 when the flag is off. Redirects carry only 
 - Frontend cookie mode: `AuthContext.setTokens` persists NEITHER token to localStorage; "logged in?" comes from `/me`.
 
 ## Voice token + voiceprint privacy gate
+Vollständige Begründung + Runbook: `docs/ACCESS_CONTROL.md`. Hier nur die Invarianten und die Fallen.
+
 - **`POST /auth/voice` ist der ZWEITE Faktor, nicht der erste** (`VOICE_AUTH_ENABLED`, aus auf beiden Instanzen).
-  Ablauf: `/auth/login` gibt für ein Konto mit `users.voice_second_factor_enabled` **keine Token und keine Cookies**,
-  sondern `second_factor="voice"` + ein Einmalticket (`services/voice_second_factor_store`: 256 Bit, Redis-`GETDEL`,
-  TTL `VOICE_SECOND_FACTOR_TTL_SECONDS`, an die Adresse gebunden **nur** wenn sie fälschungsresistent ist).
-  `/auth/voice` löst Ticket + Aufnahme ein, prüft **1:1** gegen das verknüpfte Profil (`verify_speaker`), und prägt
-  erst dann die Token. Die Einwilligung ist eine Spalte je Person (Art. 9 DSGVO), kein ConfigMap-Flag.
-  🛑 **KEIN Rückfall** auf Passwort allein — ein Rückfall, den der Angreifer selbst auslöst, hebt den Faktor auf.
-  Wiederherstellung = Administrator schaltet `voice_second_factor_enabled` ab. Die Hürde greift nur bei
-  `VOICE_AUTH_ENABLED=true`, sonst wäre das Konto ausgesperrt.
-  🛑 **Die Spalte hat eine eigene Route, weil die Richtungen verschiedene Rechte haben:**
-  `POST /users/{id}/voice-second-factor` — **einschalten nur für sich selbst** (sonst 403; eine Einwilligung
-  kann niemand für jemanden anderen geben), **ausschalten für jedes Konto** mit `users.manage` (das ist der
-  Rückweg). Einschalten ohne verknüpftes Profil *mit* Einbettungen → 409, sonst wäre es eine Selbstaussperrung.
-  In `PATCH /users/{id}` hätten beide Richtungen dieselbe Berechtigung — deshalb NICHT dort einbauen.
-  Oberfläche: Schild-Schaltfläche je Zeile in `pages/UsersPage`.
-  Im Browser: `LoginPage` faengt `SecondFactorRequired` ab und zeigt
-  `components/auth/VoiceSecondFactorStep` (Aufnahme ueber `hooks/useVoiceFactorRecording`, Mindestdauer 1,5 s,
-  Selbststopp 8 s, kein VAD). Die Maske reicht die Server-Meldung NICHT durch und bietet keinen Weg vorbei;
-  unterscheidbar sind nur Geraetefehler des Nutzers. Das Mikrofon wird beim Unmount freigegeben.
-  🛑 **Jeder Fehlschlag antwortet identisch** (`{"success": false, "message": "Voice authentication failed"}`) und das
-  Antwortmodell trägt **keine** `speaker_id`/`speaker_name`/`confidence`/`user_id`/`username`. Bis zum 2026-09-27 tat
-  es das, und war damit ein unangemeldetes Namensorakel plus Gradient für eine Wiedereinspielung. Sperre auf
-  `voice2fa:<user_id>` (nach dem Ticket ist der Nutzer bekannt, also kann ein Fremder niemanden aussperren);
-  `speaker_recognition_enabled` wird VOR jeder Einbettung geprüft; ECAPA läuft in `asyncio.to_thread`.
+  `/auth/login` gibt für ein Konto mit `users.voice_second_factor_enabled` **keine Token, keine Cookies**, nur ein
+  Einmalticket (`services/voice_second_factor_store`, Redis-`GETDEL`); `/auth/voice` löst es ein und prüft **1:1**
+  gegen das verknüpfte Profil. Die Einwilligung ist eine Spalte je Person (Art. 9 DSGVO), kein ConfigMap-Flag.
+  🛑 **KEIN Rückfall** auf Passwort allein — einen Rückfall löst der Angreifer selbst aus.
+- 🛑 **Vorbedingungen NUR in `services/voice_factor_preconditions`.** Login (`second_factor_applies`), die
+  409-Prüfung der Verwaltungsroute und `/auth/voice` (`voice_path_blocker`) fragen dort. Schreibt eine Seite wieder
+  eine eigene Bedingung daneben, entsteht der Fehler neu: die Hürde stand auf EINER Bedingung und fiel auf FÜNF,
+  und jede Lücke dazwischen war eine Aussperrung. Fehlt eine Vorbedingung, **RUHT** die Hürde (WARNING) und die
+  Einwilligung bleibt stehen — sie ist der Nachweis einer Erklärung, kein Schalter für das System.
+- 🛑 **Einbettung vom VOICE-SERVER** (`voice_server_client.stt` + `_service_token`), NIE aus `SpeakerService`:
+  `SPEAKER_INPROCESS_EMBEDDINGS_ENABLED` ist überall aus (der Riegel nennt „voice-login" selbst), und offen wäre es
+  der falsche Vektorraum (gespeichert: ONNX). `verify_speaker` bleibt unberührt. Mindestdauer = die vom
+  voice-server gemessene `audio_duration_s`; die 1,5 s der Maske sind Bedienführung, keine Prüfung.
+- 🛑 **`POST /users/{id}/voice-second-factor`, nicht `PATCH /users/{id}`** — die Richtungen haben verschiedene
+  Rechte: einschalten nur für sich selbst (403), ausschalten für sich mit `users.manage`, für ein FREMDES Konto nur
+  mit `admin` (der Rückweg ist auch ein Angriffsweg). Einschalten ohne einlösbares Profil → 409.
+- 🛑 **Ein-Admin-Instanz:** `users.manage` sitzt per Standard nur auf Admin → die einzige Administratorin mit
+  scharfem Faktor und defektem Mikrofon befreit niemand. Notausgang `bin/voice_2fa_emergency.py` (nur abschalten).
+- 🛑 **Sperrzähler:** `voice_factor_lock_id(user_id)` = `voice2fa:<id>`, NICHT der Benutzername (ein Stimm-Fehlversuch
+  darf den Passwortpfad nicht mitsperren). Liste und `/unlock` prüfen und räumen BEIDE.
+- 🛑 **Jeder Fehlschlag antwortet identisch** (`{"success": false, "message": "Voice authentication failed"}`); das
+  Antwortmodell trägt **keine** `speaker_id`/`speaker_name`/`confidence`/`user_id`/`username`. Bis 2026-09-27 tat es
+  das und war ein unangemeldetes Namensorakel plus Gradient für eine Wiedereinspielung.
+- Browser: `LoginPage` fängt `SecondFactorRequired` ab → `components/auth/VoiceSecondFactorStep`
+  (`hooks/useVoiceFactorRecording`, kein VAD, keine Transkription). Die Maske reicht die Server-Meldung NICHT durch
+  und bietet keinen Weg vorbei; unterscheidbar nur Gerätefehler. Mikrofon wird beim Unmount freigegeben.
 - **With `SPEAKER_RECOGNITION_ENABLED=false` NO voiceprint is persisted on ANY path (Art. 9 GDPR):**
   `chat_handler._resolve_wire_speaker` + `speaker_resolver.resolve_speaker_from_embedding` (refuse before DB access),
   enrollment routes/service (409), `Meeting.segments` (`meeting_pipeline.strip_biometric_fields`, always), fingerprints.
