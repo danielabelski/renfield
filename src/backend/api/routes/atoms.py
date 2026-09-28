@@ -29,19 +29,20 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
-    Atom as AtomModel,
+    OBLIGATION_MILESTONE_CONFIRMED,
     Document,
     DocumentFact,
     KnowledgeBase,
-    OBLIGATION_MILESTONE_CONFIRMED,
     ObligationAcknowledgement,
     ObligationCalendarPref,
     User,
 )
+from models.database import (
+    Atom as AtomModel,
+)
 from services.atom_service import AtomService
 from services.atom_types import Atom
 from services.auth_service import get_user_or_default
-from services.circle_resolver import CircleResolver, atom_from_orm
 from services.database import get_db
 from services.document_fact_retrieval import DocumentFactRetrieval
 from services.polymorphic_atom_store import PolymorphicAtomStore
@@ -105,7 +106,7 @@ class AtomResponse(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
-    def from_atom(cls, atom: Atom) -> "AtomResponse":
+    def from_atom(cls, atom: Atom) -> AtomResponse:
         return cls(
             atom_id=atom.atom_id,
             atom_type=atom.atom_type,
@@ -197,7 +198,7 @@ async def _writable_calendars(request: Request, user_id: int) -> list[CalendarOp
             "mcp.calendar.list_calendars", {},
             user_permissions=["mcp.calendar.read"], user_id=user_id,
         )
-    except Exception:  # noqa: BLE001
+    except Exception:
         return []
     if not res or not res.get("success"):
         return []
@@ -400,7 +401,7 @@ async def set_calendar_pref(
                 from services.obligation_calendar_sync import ObligationCalendarSync
                 try:
                     await ObligationCalendarSync(db, mgr).teardown_user(current_user.id)
-                except Exception as e:  # noqa: BLE001 — teardown is best-effort
+                except Exception as e:
                     logger.warning(f"calendar pref clear: teardown failed: {e}")
             await db.delete(existing)
             await db.commit()

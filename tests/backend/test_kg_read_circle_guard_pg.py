@@ -106,7 +106,7 @@ class TestListRelationsCircleGuard:
         assert total == 0 and rels == []
 
         # Owner still sees it
-        own_rels, own_total = await svc.list_relations(
+        _own_rels, own_total = await svc.list_relations(
             asker_id=owner.id, enforce_circle=True
         )
         assert own_total == 1

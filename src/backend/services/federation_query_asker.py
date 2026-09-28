@@ -65,18 +65,14 @@ from services.federation_query_schemas import (
     QueryBrainRetrieveRequest,
     QueryBrainRetrieveResponse,
     complete_canonical_payload,
-    initiate_canonical_payload,
-    retrieve_canonical_payload,
 )
 from services.mcp_streaming import (
-    PROGRESS_LABEL_FAILED,
     PROGRESS_LABEL_TOOL_RUNNING,
     PROGRESS_LABELS,
     ProgressChunk,
 )
 from services.pairing_service import _canonical_bytes
 from utils.config import settings
-
 
 # Timeouts (seconds) — responder-side TTL is 60s (F3a), so we cap here.
 POLL_INTERVAL_SECONDS = 0.5
@@ -153,7 +149,7 @@ class FederationQueryAsker:
                     querier_ref = await resolve_querier_ref(
                         session, peer_id=peer.id, local_user_id=user_id,
                     )
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.warning(f"Federation querier_ref resolve failed (fallback): {e}")
 
         if self._client is not None:
@@ -175,7 +171,7 @@ class FederationQueryAsker:
 
     async def _run(
         self,
-        client: "httpx.AsyncClient | Any",
+        client: httpx.AsyncClient | Any,
         peer: PeerUser,
         endpoint: str,
         query_text: str,

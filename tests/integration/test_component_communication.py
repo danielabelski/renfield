@@ -8,9 +8,8 @@ Tests communication between system components:
 - Backend ↔ Frontend
 """
 
-import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
 
+import pytest
 
 # ============================================================================
 # Backend ↔ Home Assistant Communication Tests

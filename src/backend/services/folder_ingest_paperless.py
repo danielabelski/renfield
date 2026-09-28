@@ -100,7 +100,7 @@ async def _resolve_paperless_id_by_checksum(checksum: str | None) -> int | None:
             results = (resp.json() or {}).get("results") or []
             if results:
                 return int(results[0]["id"])
-    except Exception as e:  # noqa: BLE001 — link resolution is best-effort
+    except Exception as e:
         logger.debug(f"paperless-leg: checksum id-lookup failed: {type(e).__name__}: {e}")
     return None
 
@@ -115,7 +115,7 @@ async def _emit_paperless_changed(db: AsyncSession, doc: Document) -> None:
         from services.user_events import emit_documents_changed
 
         await emit_documents_changed(get_redis(), reason="paperless", db=db, document=doc)
-    except Exception:  # noqa: BLE001 — never break filing on an event
+    except Exception:
         pass
 
 
@@ -530,12 +530,12 @@ def make_paperless_leg(
                     tags = await resolve_tags_from_metadata(mcp_manager, m)
                     if tags:
                         upload_params["tags"] = tags
-                except Exception as tax_exc:  # noqa: BLE001 - taxonomy is best-effort
+                except Exception as tax_exc:
                     logger.warning(
                         f"paperless-leg: document_type/tags resolution failed for "
                         f"doc {doc.id} (uploading with title/correspondent only): {tax_exc}"
                     )
-        except Exception as exc:  # noqa: BLE001 - extractor is best-effort
+        except Exception as exc:
             logger.warning(
                 f"paperless-leg: extractor error for doc {doc.id} "
                 f"(bare upload): {exc}"
@@ -652,7 +652,7 @@ def make_paperless_leg(
                                 f"paperless-leg: applied post-consume patch {applied} "
                                 f"to paperless_id={pid} for doc {doc.id}"
                             )
-                    except Exception as exc:  # noqa: BLE001 - best-effort
+                    except Exception as exc:
                         logger.warning(
                             f"paperless-leg: post-consume patch error for doc "
                             f"{doc.id}: {exc}"

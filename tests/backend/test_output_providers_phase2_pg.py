@@ -24,9 +24,10 @@ commit(). Services that commit are patched commit→flush (see _commit_as_flush)
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import inspect as sa_inspect, select, text
+from sqlalchemy import inspect as sa_inspect
+from sqlalchemy import text
 
-from ha_glue.models.database import Room, RoomDevice, RoomOutputDevice
+from ha_glue.models.database import Room, RoomOutputDevice
 from ha_glue.services.output_routing_service import OutputRoutingService
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]

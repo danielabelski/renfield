@@ -17,11 +17,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src", "s
 import asyncio
 import base64
 import json
-import tempfile
+from unittest.mock import AsyncMock, patch
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-
 
 # ============================================================================
 # CameraController Tests

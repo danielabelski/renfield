@@ -20,15 +20,16 @@ _missing_stubs = [
     "openwakeword", "openwakeword.model",
 ]
 import importlib as _importlib
+
 for _mod in _missing_stubs:
     if _mod in sys.modules:
         continue
     try:
         _importlib.import_module(_mod)
-    except Exception:  # noqa: BLE001
+    except Exception:
         sys.modules[_mod] = MagicMock()
 
-from services.schicht_a_extractor import (  # noqa: E402
+from services.schicht_a_extractor import (
     _MAX_OPEN_FACTS,
     SchichtAExtractor,
     _clean_currency,
@@ -172,7 +173,7 @@ class TestFactsFromPayload:
                 "excerpt": "Date due April 17, 2026", "payment_method": "manual",
             }],
         })
-        ob = [f for f in facts if f.category == "obligation"][0]
+        ob = next(f for f in facts if f.category == "obligation")
         assert ob.kind == "zahlung"
         assert ob.obligation_date == date(2026, 4, 17)
         assert ob.amount_value == Decimal("107.10")
@@ -199,7 +200,7 @@ class TestFactsFromPayload:
         })
         kinds = {f.kind for f in facts}
         assert {"issuer", "total", "rechnungsnummer"} <= kinds
-        total = [f for f in facts if f.kind == "total"][0]
+        total = next(f for f in facts if f.kind == "total")
         assert total.amount_value == Decimal("107.10")
 
     def test_malformed_entries_skipped_not_fatal(self):

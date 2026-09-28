@@ -109,7 +109,7 @@ async def cleanup_meetings() -> tuple[int, int]:
             try:
                 await purge_meeting(db, meeting_id, transcript_document_id)
                 meetings_purged += 1
-            except Exception as e:  # noqa: BLE001 - one bad row must not block the sweep
+            except Exception as e:
                 logger.warning(f"meeting retention: purge of meeting {meeting_id} failed: {e}")
                 await db.rollback()
                 continue

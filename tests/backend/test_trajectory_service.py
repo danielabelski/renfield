@@ -10,18 +10,18 @@ DB-backed via the sqlite in-memory fixture. Covers:
 """
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
-    AgentTrajectory,
-    Role,
     TRAJECTORY_OUTCOME_ABORT,
     TRAJECTORY_OUTCOME_SUCCESS,
     TRAJECTORY_OUTCOME_TOOL_FAIL,
+    AgentTrajectory,
+    Role,
     User,
 )
 
@@ -202,7 +202,8 @@ class TestSave:
         the value just needs to point at an existing row.
         """
         from models.database import (
-            ProceduralSkill, SKILL_SOURCE_AUTO_EXTRACTED,
+            SKILL_SOURCE_AUTO_EXTRACTED,
+            ProceduralSkill,
         )
         from services.trajectory_service import TrajectoryService
         monkeypatch.setattr(

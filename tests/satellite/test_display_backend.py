@@ -7,9 +7,8 @@ byte-identical and the Orange Pi gets the right pins. No hardware: open() is not
 """
 
 import pytest
-
 from renfield_satellite.config import Config, load_config
-from renfield_satellite.hardware.display import ST7789Display, DisplayController
+from renfield_satellite.hardware.display import DisplayController, ST7789Display
 
 
 class TestDisplayConfigDefaults:

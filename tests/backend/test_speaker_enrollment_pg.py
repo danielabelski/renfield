@@ -6,11 +6,12 @@ duration + count + cohesion gates. docs/design/speaker-enrollment-redesign.md.
 """
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, patch
+
 import numpy as np
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
-from unittest.mock import AsyncMock, patch
 
 from models.database import Role, Speaker, SpeakerEmbedding, User
 from services.speaker_enrollment_service import enroll_speaker_controlled

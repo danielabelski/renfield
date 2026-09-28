@@ -4,6 +4,7 @@ Tests for AgentToolRegistry — Tool descriptions for the Agent Loop.
 Tools are registered dynamically from MCP servers.
 """
 
+import re
 from unittest.mock import MagicMock
 
 import pytest
@@ -159,10 +160,10 @@ class TestAgentToolRegistryAsyncCreate:
         skips the ``register_tools`` hook and would silently lose plugin
         tools (Reva's resolve_team_members, resolve_role, etc.). This is
         the structural guard that prevents a regression of TD-13."""
-        with pytest.raises(RuntimeError, match="AgentToolRegistry.create"):
+        with pytest.raises(RuntimeError, match=re.escape("AgentToolRegistry.create")):
             AgentToolRegistry()
 
-        with pytest.raises(RuntimeError, match="AgentToolRegistry.create"):
+        with pytest.raises(RuntimeError, match=re.escape("AgentToolRegistry.create")):
             AgentToolRegistry(server_filter=["jira"])
 
     @pytest.mark.unit

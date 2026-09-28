@@ -146,7 +146,7 @@ async def probe_search_functional() -> dict[str, Any]:
         if not isinstance(payload, dict):
             raise ValueError("SearXNG-Antwort ist kein JSON-Objekt")
         return _classify(payload)
-    except Exception as e:  # noqa: BLE001 — best-effort, never crash the caller
+    except Exception as e:
         logger.warning(f"search_health: functional probe failed: {e}")
         return {
             "verdict": "unknown",

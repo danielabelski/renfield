@@ -14,16 +14,15 @@ from fastapi import APIRouter, FastAPI, Query, WebSocket, WebSocketDisconnect
 from loguru import logger
 from pydantic import ValidationError
 
+from api.websocket.shared import get_whisper_service, send_ws_error
+from ha_glue.services.device_manager import DeviceManager, DeviceState, get_device_manager
 from models.database import DEFAULT_CAPABILITIES, DEVICE_TYPE_SATELLITE, DEVICE_TYPE_WEB_BROWSER, DEVICE_TYPES
 from models.websocket_messages import WSAudioMessage, WSErrorCode, WSRegisterMessage
 from services.database import AsyncSessionLocal
-from ha_glue.services.device_manager import DeviceManager, DeviceState, get_device_manager
 from services.wakeword_config_manager import get_wakeword_config_manager
 from services.websocket_auth import WSAuthError, authenticate_websocket
 from services.websocket_rate_limiter import get_connection_limiter, get_rate_limiter
 from utils.config import settings
-
-from api.websocket.shared import get_whisper_service, send_ws_error
 
 router = APIRouter()
 

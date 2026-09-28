@@ -252,7 +252,7 @@ class TestActionExecutorPreMCPCall:
     @pytest.mark.unit
     async def test_pre_mcp_call_replaces_parameters(self, action_executor):
         """Hook handler returning a dict replaces parameters before execute_tool."""
-        from utils.hooks import register_hook, _hooks
+        from utils.hooks import _hooks, register_hook
 
         async def rewrite(intent, parameters, user_id=None, **_):
             if intent == "mcp.release.get_release":
@@ -276,7 +276,7 @@ class TestActionExecutorPreMCPCall:
     @pytest.mark.unit
     async def test_pre_mcp_call_none_leaves_parameters_unchanged(self, action_executor):
         """Hook returning None leaves the original parameters intact."""
-        from utils.hooks import register_hook, _hooks
+        from utils.hooks import _hooks, register_hook
 
         async def noop(intent, parameters, user_id=None, **_):
             return None

@@ -26,9 +26,9 @@ from models.database import (
     PdfSplitProposal,
     User,
 )
+from models.permissions import Permission, has_permission
 from services.auth_service import get_optional_user
 from services.database import get_db
-from models.permissions import Permission, has_permission
 from services.pdf_split_proposals import (
     ProposalRangeError,
     ProposalStateError,
@@ -104,7 +104,7 @@ def _is_admin(user: User | None) -> bool:
         return False
     try:
         return has_permission(user.get_permissions(), Permission.ADMIN)
-    except Exception:  # noqa: BLE001 - permission parse must not 500 the route
+    except Exception:
         return False
 
 
@@ -217,7 +217,7 @@ def _render_page_thumb(file_path: str, page_number: int) -> bytes | None:
             return buf.getvalue()
         finally:
             pdf.close()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"pdf-split: page render failed for {file_path}: {e}")
         return None
 

@@ -192,10 +192,13 @@ test-e2e-browser: ## Run browser-based E2E suite against renfield.local + HTML r
 lint: lint-backend lint-frontend ## Lint all code (in Docker)
 	@echo "$(GREEN)✓ All linting passed$(NC)"
 
-lint-backend: ## Lint backend Python code (in Docker)
+lint-backend: ## Lint backend Python code (ruff on the host, pinned version)
 	@echo "$(BLUE)Linting backend...$(NC)"
-	@$(DC) exec -T backend ruff check /app --config /app/pyproject.toml
+	@./bin/lint-backend.sh
 	@echo "$(GREEN)✓ Backend linted$(NC)"
+
+lint-backend-fix: ## Auto-fix the mechanical backend findings (safe fixes only)
+	@./bin/lint-backend.sh --fix
 
 lint-frontend: ## Lint frontend JavaScript code (in Docker)
 	@echo "$(BLUE)Linting frontend...$(NC)"

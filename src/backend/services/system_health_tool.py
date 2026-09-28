@@ -34,7 +34,7 @@ from typing import Any
 from loguru import logger
 from sqlalchemy import func, select, text
 
-from models.database import Document, SETTING_EMAIL_INGEST_TOKEN, SETTING_FOLDER_INGEST_TOKEN
+from models.database import SETTING_EMAIL_INGEST_TOKEN, SETTING_FOLDER_INGEST_TOKEN, Document
 from models.permissions import Permission, has_permission
 from services.database import AsyncSessionLocal
 from services.ingest_common import get_ingest_token
@@ -176,13 +176,13 @@ async def _check_infra() -> list[str]:
     try:
         async with AsyncSessionLocal() as db:
             await db.execute(text("SELECT 1"))
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         problems.append(f"Datenbank nicht erreichbar: {e!s}")
     try:
         from services.redis_client import get_redis
 
         await get_redis().ping()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         problems.append(f"Redis nicht erreichbar: {e!s}")
     return problems
 
@@ -214,7 +214,7 @@ async def system_health(
             if pl:
                 problems.append(pl)
             data["config_state_problems"] = cfg
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"system_health: config/paperless probe failed: {e}")
 
     try:
@@ -222,7 +222,7 @@ async def system_health(
             failing = await _check_scheduled_tasks(db)
         problems += failing
         data["scheduled_task_problems"] = failing
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"system_health: scheduled-task probe failed: {e}")
 
     try:
@@ -230,7 +230,7 @@ async def system_health(
         problems += mcp_problems
         data["mcp_ok"] = mcp_ok
         data["mcp_problems"] = mcp_problems
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"system_health: mcp probe failed: {e}")
 
     try:
@@ -246,14 +246,14 @@ async def system_health(
                 + (f" ({r.get('reason')})" if r.get("reason") else "")
             )
         data["ingest_mcp_reports"] = reports
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"system_health: ingest-mcp probe failed: {e}")
 
     try:
         sub = await _check_subsystems()
         problems += sub
         data["subsystem_problems"] = sub
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"system_health: subsystem probe failed: {e}")
 
     # Functional search-backbone probe (#1162): connectivity-only MCP health can't see
@@ -267,7 +267,7 @@ async def system_health(
             data["search_functional"] = sh
             if sh.get("verdict") == "degraded":
                 problems.append(f"Websuche (SearXNG): DEGRADED ({sh.get('reason')})")
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"system_health: search functional probe failed: {e}")
 
     try:
@@ -280,12 +280,12 @@ async def system_health(
             problems.append("Ingest-Worker ist NICHT erreichbar (Dokumentverarbeitung steht)")
         elif backlog and backlog > 50:
             problems.append(f"Ingest-Rückstau: {backlog} Aufgaben in der Warteschlange")
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"system_health: worker probe failed: {e}")
 
     try:
         problems += await _check_infra()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"system_health: infra probe failed: {e}")
 
     data["problem_count"] = len(problems)

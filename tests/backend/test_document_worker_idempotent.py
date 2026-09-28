@@ -18,7 +18,6 @@ import pytest
 import workers.document_processor_worker as worker
 from services.document_processing_history import ProcessingStatus
 
-
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
 
@@ -109,7 +108,7 @@ async def test_user_reindex_always_reprocesses(monkeypatch):
     when initial_ingest is completed (otherwise the idempotent-consumer guard
     would wrongly skip every reindex). reindex_document purges+rebuilds; the
     initial-ingest skip path must NOT run."""
-    db, rag, queue = _wire(monkeypatch, ingest_status=ProcessingStatus.COMPLETED.value)
+    _db, rag, queue = _wire(monkeypatch, ingest_status=ProcessingStatus.COMPLETED.value)
 
     await worker._process_entry(MagicMock(), queue, _entry(5, trigger="user_reindex"))
 

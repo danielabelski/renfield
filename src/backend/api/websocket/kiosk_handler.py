@@ -95,7 +95,7 @@ async def note_chat_turn_active(active: bool) -> None:
     if now_active != was_active:
         try:
             await broadcast_kiosk_event({"type": "chat_activity", "active": now_active})
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.debug(f"kiosk chat_activity broadcast failed: {e}")
 
 

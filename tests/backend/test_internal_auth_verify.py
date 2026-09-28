@@ -49,7 +49,7 @@ def _install_service_stubs(
         user = SimpleNamespace(id=42, is_active=True)
 
     auth_module = types.ModuleType("services.auth_service")
-    auth_module.decode_token = lambda token: decode_return  # noqa: ARG005
+    auth_module.decode_token = lambda token: decode_return
 
     async def _get_user_by_id(_db, _user_id):
         return user

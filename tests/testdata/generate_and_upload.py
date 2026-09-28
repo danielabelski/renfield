@@ -12,17 +12,17 @@ Note: TXT format is NOT supported by Renfield's Docling document processor.
       All text-based documents use MD format instead.
 """
 
-import sys
 import os
+import sys
 
 # Add tests/testdata to path for sibling imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from generators import generate
-from uploader import upload_document, ensure_kb_exists
 from docs_arbeit import DOCS as ARBEIT_DOCS
 from docs_privat import DOCS as PRIVAT_DOCS
 from docs_verein import DOCS as VEREIN_DOCS
+from generators import generate
+from uploader import ensure_kb_exists, upload_document
 
 
 def main():

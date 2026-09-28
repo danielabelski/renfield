@@ -28,7 +28,6 @@ from __future__ import annotations
 import re
 import unicodedata
 
-
 # ---------------------------------------------------------------- literal
 # Chat-template tokens — these are fixed-string sequences shipped by the
 # instruct templates of every major model family. Case sensitivity is
@@ -88,7 +87,8 @@ _ZERO_WIDTH_RE = re.compile(r"[​‌‍‎‏﻿]")
 # parametrize tests over the scrub list. New code should not rely on this
 # being exhaustive — the regex patterns above are the source of truth.
 # Each entry here SHOULD produce a match when fed through scrub_for_prompt.
-SCRUB_PATTERNS: tuple[tuple[str, str], ...] = _LITERAL_PATTERNS + (
+SCRUB_PATTERNS: tuple[tuple[str, str], ...] = (
+    *_LITERAL_PATTERNS,
     ("system:", "[sys]"),
     ("System:", "[sys]"),
     ("SYSTEM:", "[sys]"),

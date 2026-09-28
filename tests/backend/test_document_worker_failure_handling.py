@@ -14,7 +14,6 @@ Pure unit tests — collaborators are mocked; no DB / Redis.
 """
 from __future__ import annotations
 
-import asyncio
 import types
 from unittest.mock import AsyncMock, MagicMock
 
@@ -82,7 +81,7 @@ def _entry(doc_id: int = 5, trigger: str | None = None):
 @pytest.mark.parametrize(
     "exc",
     [
-        asyncio.TimeoutError(),
+        TimeoutError(),
         httpx.ConnectError("conn refused"),
         httpx.ConnectTimeout("slow"),
         httpx.ReadTimeout("slow"),
@@ -132,7 +131,7 @@ def test_ollama_4xx_is_terminal(status):
 # ---------------------------------------------------------------------------
 
 async def test_transient_error_left_in_pel_not_acked(monkeypatch):
-    rag, queue = _wire(monkeypatch, process_side_effect=asyncio.TimeoutError())
+    _rag, queue = _wire(monkeypatch, process_side_effect=TimeoutError())
     mark = AsyncMock()
     monkeypatch.setattr(worker, "_mark_document_failed", mark)
 
@@ -143,7 +142,7 @@ async def test_transient_error_left_in_pel_not_acked(monkeypatch):
 
 
 async def test_transient_httpx_connecterror_not_acked(monkeypatch):
-    rag, queue = _wire(monkeypatch, process_side_effect=httpx.ConnectError("down"))
+    _rag, queue = _wire(monkeypatch, process_side_effect=httpx.ConnectError("down"))
     monkeypatch.setattr(worker, "_mark_document_failed", AsyncMock())
 
     await worker._process_entry(MagicMock(), queue, _entry(5))
@@ -152,7 +151,7 @@ async def test_transient_httpx_connecterror_not_acked(monkeypatch):
 
 
 async def test_terminal_error_marks_failed_and_acks(monkeypatch):
-    rag, queue = _wire(monkeypatch, process_side_effect=ValueError("poison doc"))
+    _rag, queue = _wire(monkeypatch, process_side_effect=ValueError("poison doc"))
     mark = AsyncMock(return_value=True)
     monkeypatch.setattr(worker, "_mark_document_failed", mark)
 
@@ -184,7 +183,7 @@ async def test_terminal_error_not_acked_when_mark_failed_cannot_persist(monkeypa
     # If we can't even record the failed status (DB blip while marking), DON'T
     # ack — leave the entry in the PEL for reclaim rather than dropping a doc
     # whose terminal state was never written.
-    rag, queue = _wire(monkeypatch, process_side_effect=ValueError("poison doc"))
+    _rag, queue = _wire(monkeypatch, process_side_effect=ValueError("poison doc"))
     monkeypatch.setattr(worker, "_mark_document_failed", AsyncMock(return_value=False))
 
     await worker._process_entry(MagicMock(), queue, _entry(7))

@@ -16,20 +16,18 @@ Usage:
 
 import argparse
 import logging
-import os
 import re
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
 
-from playwright.sync_api import sync_playwright, Page
+from playwright.sync_api import Page, sync_playwright
 
 # Ensure imports work when run from project root
 sys.path.insert(0, str(Path(__file__).parent))
 
+from monitor import ScenarioResult, SystemMonitor
 from scenarios import ALL_SCENARIOS, Scenario
-from monitor import SystemMonitor, ScenarioResult
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -82,7 +80,7 @@ def _validate_response(response_text: str, sent_message: str, prev_response: str
 
     # Stale/duplicate detection: exact match with previous assistant response
     if prev_response and response_text.strip() == prev_response.strip():
-        return f"Stale response: identical to previous answer", warnings
+        return "Stale response: identical to previous answer", warnings
 
     # Check warning patterns
     lower = response_text.lower()
@@ -238,7 +236,7 @@ def send_chat_message(
     #    the test captured the PREVIOUS answer (timing/offset bug)
     error = None
     if raw_response and raw_response.strip() == old_last_text.strip():
-        error = f"Stale response: text identical to previous assistant message"
+        error = "Stale response: text identical to previous assistant message"
 
     # 7. Validate response quality
     val_error, warnings = _validate_response(

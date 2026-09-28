@@ -16,6 +16,7 @@ from sqlalchemy import select
 from models.database import Atom as AtomModel
 from services.atom_service import reap_orphan_placeholder_atoms
 
+
 async def _seed_owner(db):
     """`atoms.owner_user_id` is a foreign key — the owner has to exist."""
     from tests.backend.dbrows import ensure_user

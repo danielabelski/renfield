@@ -86,7 +86,7 @@ async def paperless_filing_post_ingest_hook(
             await leg(
                 db, doc, file_bytes, IngestMeta(filename=doc.filename), field_text
             )
-        except Exception as exc:  # noqa: BLE001 - leg is best-effort
+        except Exception as exc:
             logger.warning(
                 f"paperless-filing-hook: leg error for doc {document_id} "
                 f"(left pending for retry): {exc}"
@@ -149,7 +149,7 @@ async def refile_document_paperless(
             # doc_text=None → the leg re-OCRs via Docling (full quality) and
             # transports that OCR into Paperless content too.
             await leg(db, doc, file_bytes, IngestMeta(filename=doc.filename), None)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning(
                 f"paperless-refile: leg error for doc {document_id}: {exc}"
             )

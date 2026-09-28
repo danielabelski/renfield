@@ -122,10 +122,10 @@ async def test_no_mcp_manager_returns_builtins_only():
 
 # --- dedupe (same physical device exposed by multiple providers) -------------
 
-from ha_glue.services.output_routing_service import (  # noqa: E402
+from ha_glue.services.output_routing_service import (
     _clean_display_name,
-    _device_match_key,
     _dedupe_output_targets,
+    _device_match_key,
 )
 
 

@@ -58,13 +58,14 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship
 
-from models.database import Base, _utcnow
-
 # Ensure User is registered with Base.metadata before ha_glue classes that
 # FK into users.id are defined. Importing the class triggers registration
 # as a side effect of the decorator-less declarative mapping.
-from models.database import User  # noqa: F401 — side-effect import
-
+from models.database import (
+    Base,
+    User,  # noqa: F401 — side-effect import
+    _utcnow,
+)
 
 # ---------------------------------------------------------------------------
 # CameraEvent — Frigate event log
@@ -593,27 +594,27 @@ class RadioFavorite(Base):
 
 
 __all__ = [
+    "DEFAULT_CAPABILITIES",
+    "DEVICE_TYPES",
+    # Device type constants
+    "DEVICE_TYPE_SATELLITE",
+    "DEVICE_TYPE_WEB_BROWSER",
+    "DEVICE_TYPE_WEB_KIOSK",
+    "DEVICE_TYPE_WEB_PANEL",
+    "DEVICE_TYPE_WEB_TABLET",
+    "OUTPUT_TYPES",
+    # Output type constants
+    "OUTPUT_TYPE_AUDIO",
+    "OUTPUT_TYPE_VISUAL",
     # Tables
     "CameraEvent",
     "HomeAssistantEntity",
+    "PaperlessAuditResult",
+    "PresenceEvent",
+    "RadioFavorite",
     "Room",
     "RoomDevice",
     "RoomOutputDevice",
     "RoomSatellite",
     "UserBleDevice",
-    "PresenceEvent",
-    "PaperlessAuditResult",
-    "RadioFavorite",
-    # Device type constants
-    "DEVICE_TYPE_SATELLITE",
-    "DEVICE_TYPE_WEB_PANEL",
-    "DEVICE_TYPE_WEB_TABLET",
-    "DEVICE_TYPE_WEB_BROWSER",
-    "DEVICE_TYPE_WEB_KIOSK",
-    "DEVICE_TYPES",
-    "DEFAULT_CAPABILITIES",
-    # Output type constants
-    "OUTPUT_TYPE_AUDIO",
-    "OUTPUT_TYPE_VISUAL",
-    "OUTPUT_TYPES",
 ]

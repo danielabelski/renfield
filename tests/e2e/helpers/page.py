@@ -7,7 +7,7 @@ test reimplementing the same timing + selector scaffolding.
 from __future__ import annotations
 
 import os
-from typing import Callable
+from collections.abc import Callable
 
 from playwright.sync_api import Page
 

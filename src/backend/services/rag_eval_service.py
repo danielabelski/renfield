@@ -12,11 +12,11 @@ Usage:
 """
 import asyncio
 import logging
-import yaml
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import yaml
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.rag_service import RAGService

@@ -47,7 +47,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-
 # =============================================================================
 # Status discriminator for retrieve responses
 # =============================================================================

@@ -38,8 +38,8 @@ from services.email_ingest import (
     EMAIL_INGEST_CONTRACT_VERSION,
     generate_email_ingest_token,
     ingest_email_document,
-    resolve_mailbox_target,
     resolve_email_ingest_client,
+    resolve_mailbox_target,
 )
 from services.folder_ingest import IngestStatus
 from utils.config import settings
@@ -171,7 +171,7 @@ async def ingest_pushed_email(
             sha256=raw.get("sha256"),
             file_to_paperless=_should_file_paperless(),
         )
-    except Exception as exc:  # noqa: BLE001 - never 500 the push contract
+    except Exception as exc:
         logger.error(f"email-ingest: unexpected error processing {filename!r}: {exc}")
         raise HTTPException(
             status_code=503,

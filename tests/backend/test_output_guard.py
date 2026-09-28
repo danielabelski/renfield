@@ -4,11 +4,9 @@ import pytest
 
 from services.output_guard import (
     LEAKAGE_FRAGMENT_THRESHOLD,
-    OutputGuardResult,
     check_output,
     extract_prompt_fragments,
 )
-
 
 # ============================================================================
 # extract_prompt_fragments

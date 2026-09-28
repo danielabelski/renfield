@@ -89,7 +89,7 @@ async def publish_user_event(
             {"target": target_user_id, **build_event(event_type, reason, session_id)}
         )
         await redis.publish(USER_EVENTS_CHANNEL, payload)
-    except Exception as exc:  # noqa: BLE001 — emitting an event is never critical-path
+    except Exception as exc:
         logger.warning(f"user-events: publish failed ({event_type}/{reason}): {exc}")
 
 
@@ -115,7 +115,7 @@ async def emit_documents_changed(
             owner = await resolve_document_owner(db, document)
         target = None if not settings.auth_enabled else owner
         await publish_user_event(redis, target, EVENT_DOCUMENTS_CHANGED, reason)
-    except Exception as exc:  # noqa: BLE001 — never let an event break the caller
+    except Exception as exc:
         logger.warning(f"user-events: emit_documents_changed({reason}) failed: {exc}")
 
 
@@ -134,7 +134,7 @@ async def resolve_document_owner(db: Any, document: Any) -> int | None:
         return (
             await db.execute(select(Atom.owner_user_id).where(Atom.atom_id == atom_id))
         ).scalar_one_or_none()
-    except Exception as exc:  # noqa: BLE001 — owner lookup failure ⇒ treat as unattributable
+    except Exception as exc:
         logger.debug(f"user-events: owner lookup failed for atom {atom_id}: {exc}")
         return None
 
@@ -187,7 +187,7 @@ class UserEventRegistry:
             *(self._send_one(ws, event) for ws in recipients), return_exceptions=True
         )
         delivered = 0
-        for ws, result in zip(recipients, results):
+        for ws, result in zip(recipients, results, strict=True):
             if isinstance(result, Exception):
                 self.unregister(ws)  # backpressured/closed → drop from all keys
             else:
@@ -243,7 +243,7 @@ class EventCoalescer:
             for (target, _type, _session), event in pending.items():
                 try:
                     await self._flush(target, event)
-                except Exception as exc:  # noqa: BLE001 — one bad flush never kills the loop
+                except Exception as exc:
                     logger.warning(f"user-events: coalesced flush failed: {exc}")
 
     def close(self) -> None:
@@ -301,7 +301,7 @@ async def _subscriber_loop(redis, coalescer, backoff, stop_event) -> None:
                     event = {k: v for k, v in parsed.items() if k != "target"}
                     if event.get("type"):
                         coalescer.submit(target, event)
-                except Exception as exc:  # noqa: BLE001 — skip a bad frame, keep the loop
+                except Exception as exc:
                     logger.debug(f"user-events: skipping malformed message: {exc}")
             # ``listen()`` returned WITHOUT raising. With real redis this only
             # happens on unsubscribe/close, so treat it as a dropped connection
@@ -310,13 +310,13 @@ async def _subscriber_loop(redis, coalescer, backoff, stop_event) -> None:
             # when the transport yields nothing).
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # noqa: BLE001 — Redis blip → reconnect with backoff
+        except Exception as exc:
             logger.warning(f"user-events: subscriber error: {exc}")
         finally:
             if pubsub is not None:
                 try:
                     await pubsub.aclose()
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
         # Single suspend point covering BOTH a normal listen() return and an
         # error: throttles reconnects and guarantees the loop always yields

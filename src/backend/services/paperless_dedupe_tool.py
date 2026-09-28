@@ -104,7 +104,7 @@ async def paperless_dedupe(
             # archive — raise the per-call timeout so it doesn't time out mid-sweep.
             call_timeout=settings.paperless_dedupe_call_timeout_s,
         ))
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"paperless_dedupe failed: {e}")
         return {
             "success": False,

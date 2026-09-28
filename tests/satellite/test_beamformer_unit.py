@@ -11,7 +11,6 @@ Tests for renfield_satellite.audio.beamformer.BeamformerDAS:
 
 import numpy as np
 import pytest
-
 from renfield_satellite.audio.beamformer import BeamformerDAS
 
 

@@ -28,17 +28,17 @@ _missing_stubs = [
     "speechbrain.inference", "speechbrain.inference.speaker",
     "openwakeword", "openwakeword.model",
 ]
-import importlib as _importlib  # noqa: E402
+import importlib as _importlib
 
 for _mod in _missing_stubs:
     if _mod in sys.modules:
         continue
     try:
         _importlib.import_module(_mod)
-    except Exception:  # noqa: BLE001
+    except Exception:
         sys.modules[_mod] = MagicMock()
 
-from models.database import (  # noqa: E402
+from models.database import (
     ATOM_TYPE_KB_DOCUMENT,
     Atom,
     Document,
@@ -46,8 +46,8 @@ from models.database import (  # noqa: E402
     Role,
     User,
 )
-from services.atom_service import AtomService  # noqa: E402
-from services.schicht_a_extractor import (  # noqa: E402
+from services.atom_service import AtomService
+from services.schicht_a_extractor import (
     ExtractedFact,
     SchichtAResult,
     _fact_identity_key,

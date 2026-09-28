@@ -299,7 +299,7 @@ function SatelliteCard({ satellite, expanded, onToggle, latestVersion, onUpdate 
                 <p>{t('satellites.duration', 'Duration')}: {formatDuration(satellite.current_session.duration_seconds)}</p>
                 <p>{t('satellites.audioChunks', 'Audio chunks')}: {satellite.current_session.audio_chunks_count}</p>
                 {satellite.current_session.transcription && (
-                  <p className="mt-1 italic">"{satellite.current_session.transcription}"</p>
+                  <p className="mt-1 italic">&quot;{satellite.current_session.transcription}&quot;</p>
                 )}
               </div>
             </div>

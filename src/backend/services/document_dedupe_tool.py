@@ -96,7 +96,7 @@ async def find_duplicate_documents(parameters: dict, user_id: int | None = None)
                     "suggested_survivor_id": p.suggested_survivor_id,
                     "shared_key": p.shared_key,
                 })
-    except Exception as exc:  # noqa: BLE001 — best-effort chat tool, never crash the turn
+    except Exception as exc:
         logger.error(f"find_duplicate_documents failed: {exc}")
         return {
             "success": False,

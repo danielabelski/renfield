@@ -13,10 +13,9 @@ test our filter and trigger logic, not docling's chunking.
 from __future__ import annotations
 
 import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 # Same docling-stub dance as the existing test_document_processor.py.
 _missing_stubs = [
@@ -28,17 +27,17 @@ _missing_stubs = [
     "docling.datamodel.base_models",
 ]
 import importlib as _importlib
+
 for _mod in _missing_stubs:
     if _mod in sys.modules:
         continue
     try:
         _importlib.import_module(_mod)
-    except Exception:  # noqa: BLE001
+    except Exception:
         sys.modules[_mod] = MagicMock()
 
 
 from services.document_processor import DocumentProcessor
-
 
 # ---- shared fixtures ------------------------------------------------------
 

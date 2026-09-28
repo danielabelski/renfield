@@ -20,7 +20,12 @@ class TestSatelliteUpdateWebSocketFlow:
     @pytest.mark.asyncio
     async def test_update_progress_updates_satellite_status(self, async_client: AsyncClient):
         """update_progress message should update satellite's update status"""
-        from ha_glue.services.satellite_manager import SatelliteCapabilities, SatelliteInfo, SatelliteManager, UpdateStatus
+        from ha_glue.services.satellite_manager import (
+            SatelliteCapabilities,
+            SatelliteInfo,
+            SatelliteManager,
+            UpdateStatus,
+        )
 
         manager = SatelliteManager()
         mock_ws = MagicMock()
@@ -52,7 +57,12 @@ class TestSatelliteUpdateWebSocketFlow:
     @pytest.mark.asyncio
     async def test_update_complete_updates_version(self, async_client: AsyncClient):
         """update_complete message should update satellite version"""
-        from ha_glue.services.satellite_manager import SatelliteCapabilities, SatelliteInfo, SatelliteManager, UpdateStatus
+        from ha_glue.services.satellite_manager import (
+            SatelliteCapabilities,
+            SatelliteInfo,
+            SatelliteManager,
+            UpdateStatus,
+        )
 
         manager = SatelliteManager()
         mock_ws = MagicMock()
@@ -82,7 +92,12 @@ class TestSatelliteUpdateWebSocketFlow:
     @pytest.mark.asyncio
     async def test_update_failed_sets_error(self, async_client: AsyncClient):
         """update_failed message should set error status"""
-        from ha_glue.services.satellite_manager import SatelliteCapabilities, SatelliteInfo, SatelliteManager, UpdateStatus
+        from ha_glue.services.satellite_manager import (
+            SatelliteCapabilities,
+            SatelliteInfo,
+            SatelliteManager,
+            UpdateStatus,
+        )
 
         manager = SatelliteManager()
         mock_ws = MagicMock()
@@ -126,7 +141,12 @@ class TestSatelliteUpdateAPIFlow:
     @pytest.mark.asyncio
     async def test_full_update_flow_via_api(self, async_client: AsyncClient):
         """Test complete update flow: check version -> initiate -> progress -> complete"""
-        from ha_glue.services.satellite_manager import SatelliteCapabilities, SatelliteInfo, UpdateStatus, get_satellite_manager
+        from ha_glue.services.satellite_manager import (
+            SatelliteCapabilities,
+            SatelliteInfo,
+            UpdateStatus,
+            get_satellite_manager,
+        )
 
         manager = get_satellite_manager()
         mock_ws = MagicMock()
@@ -315,13 +335,11 @@ class TestVersionComparisonIntegration:
         )
 
         try:
-            with patch('ha_glue.api.routes.satellites.ha_glue_settings') as mock_route_settings, \
-                 patch('ha_glue.services.satellite_update_service.ha_glue_settings') as mock_svc_settings, \
+            with patch('ha_glue.services.satellite_update_service.ha_glue_settings') as mock_svc_settings, \
                  patch(
                      'ha_glue.services.satellite_update_service.SatelliteUpdateService._read_source_version',
                      return_value=None,
                  ):
-                mock_route_settings.satellite_latest_version = "2.0.0"
                 mock_svc_settings.satellite_latest_version = "2.0.0"
 
                 response = await async_client.get("/api/satellites")
@@ -462,7 +480,12 @@ class TestRollbackScenarios:
     @pytest.mark.asyncio
     async def test_failed_update_preserves_original_version(self, async_client: AsyncClient):
         """When update fails, satellite should keep original version"""
-        from ha_glue.services.satellite_manager import SatelliteCapabilities, SatelliteInfo, UpdateStatus, get_satellite_manager
+        from ha_glue.services.satellite_manager import (
+            SatelliteCapabilities,
+            SatelliteInfo,
+            UpdateStatus,
+            get_satellite_manager,
+        )
 
         manager = get_satellite_manager()
         mock_ws = MagicMock()
@@ -523,7 +546,12 @@ class TestRollbackScenarios:
     @pytest.mark.asyncio
     async def test_clear_update_status_after_failure(self, async_client: AsyncClient):
         """After acknowledging failure, update status should be clearable"""
-        from ha_glue.services.satellite_manager import SatelliteCapabilities, SatelliteInfo, UpdateStatus, get_satellite_manager
+        from ha_glue.services.satellite_manager import (
+            SatelliteCapabilities,
+            SatelliteInfo,
+            UpdateStatus,
+            get_satellite_manager,
+        )
 
         manager = get_satellite_manager()
         mock_ws = MagicMock()

@@ -72,7 +72,7 @@ from services.pdf_split_detector import (
 # Re-exported for callers/tests — the classes live in the import-light errors
 # module so the document worker can extend its transient taxonomy without
 # pulling this module's LLM import graph.
-from services.pdf_split_errors import (  # noqa: F401  (re-export)
+from services.pdf_split_errors import (
     SplitExecutionError,
     SplitTransientError,
 )
@@ -549,7 +549,7 @@ async def maybe_split_at_ingest(
         verdict = await detect_boundaries(signals)
     except SplitTransientError:
         raise
-    except Exception as e:  # noqa: BLE001 - detection must never break ingest
+    except Exception as e:
         logger.warning(f"pdf-split: detection failed for doc {doc_id}: {e}")
         return False
 
@@ -588,7 +588,7 @@ async def act_on_verdict(
             row = await create_review_proposal(db, doc, verdict, user_id)
         except (OperationalError, InterfaceError, DisconnectionError):
             raise
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(
                 f"pdf-split: could not file review proposal for doc {doc.id} "
                 f"({e}) — processing as a single document"

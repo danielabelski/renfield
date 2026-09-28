@@ -16,9 +16,8 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import TIER_PUBLIC, Atom, Document, DocumentFact, Role, User
+from models.database import Atom, Document, DocumentFact, Role, User
 from utils.config import settings
-
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
 

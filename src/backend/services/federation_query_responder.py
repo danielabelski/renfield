@@ -72,10 +72,8 @@ from services.federation_identity import (
 )
 from services.federation_pending_store import (
     NONCE_WINDOW_SECONDS,
-    REQUEST_TTL_SECONDS,
     _PendingRequest,
     get_pending_store,
-    reset_store_for_tests,
 )
 from services.federation_query_schemas import (
     STATUS_COMPLETE,

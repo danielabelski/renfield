@@ -41,10 +41,10 @@ from services.folder_ingest import (
     IngestStatus,
     generate_folder_ingest_token,
     ingest_document,
+    resolve_folder_ingest_client,
     resolve_owner_user_id,
     resolve_target_kb,
     target_kb_exists,
-    resolve_folder_ingest_client,
 )
 from utils.config import settings
 
@@ -202,7 +202,7 @@ async def ingest_pushed_document(
             file_to_paperless=_should_file_paperless(),
             source=FOLDER_INGEST_SOURCE,  # provenance for the Simba review flow
         )
-    except Exception as exc:  # noqa: BLE001 - never 500 the push contract
+    except Exception as exc:
         logger.error(f"folder-ingest: unexpected error processing {meta.filename!r}: {exc}")
         raise HTTPException(
             status_code=503,

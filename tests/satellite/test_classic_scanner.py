@@ -6,11 +6,9 @@ read via `hcitool cc/rssi/dc`, including the fallback to SYNTHETIC_RSSI
 when the connection or RSSI read fails (so presence is never lost).
 """
 
-import asyncio
 from unittest.mock import patch
 
 import pytest
-
 from renfield_satellite.ble.classic_scanner import ClassicBTScanner
 
 MAC = "4C:E6:C0:27:52:93"
@@ -62,7 +60,7 @@ def _fake_hcitool(responses: dict, timeouts: set | None = None):
 
             async def communicate(self):
                 if sub in timeouts:
-                    raise asyncio.TimeoutError()
+                    raise TimeoutError()
                 p = responses.get(sub, _proc())
                 return await p.communicate()
 

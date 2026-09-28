@@ -108,7 +108,7 @@ async def remember_scan_requester(
             ex=_TTL_SECONDS,
         )
         return True
-    except Exception as exc:  # noqa: BLE001 - losing the return path must not fail the scan
+    except Exception as exc:
         logger.warning(f"scanner: could not record requester for job {job_id}: {exc}")
         return False
 
@@ -229,7 +229,7 @@ async def _announce_in_origin_room(requester: dict, status: str) -> None:
         from utils.hooks import run_hooks
 
         await run_hooks("announce_in_room", room_id=room_id, text=text)
-    except Exception as exc:  # noqa: BLE001 - a failed announcement never fails delivery
+    except Exception as exc:
         logger.warning(f"scanner: outcome announcement in room {room_id} failed: {exc}")
 
 
@@ -287,7 +287,7 @@ async def _release_claim(redis: Any, claim_key: str, token: str) -> None:
     """Free the claim only if it is still ours. Best-effort: the TTL frees it anyway."""
     try:
         await redis.eval(_RELEASE_CLAIM_LUA, 1, claim_key, token)
-    except Exception as exc:  # noqa: BLE001 - the TTL releases it
+    except Exception as exc:
         logger.warning(f"scanner: could not release claim {claim_key}: {exc}")
 
 
@@ -296,7 +296,7 @@ async def _mark_reported(redis: Any, reported_key: str, outcome: str) -> None:
     Best-effort: if it is lost, the next retry finds the message and settles then."""
     try:
         await redis.set(reported_key, outcome, ex=_TTL_SECONDS)
-    except Exception as exc:  # noqa: BLE001 - the message is already durable
+    except Exception as exc:
         logger.warning(f"scanner: could not cache the delivery marker {reported_key}: {exc}")
 
 

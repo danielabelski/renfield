@@ -11,7 +11,6 @@ import pytest
 
 from services.followup_service import _parse_followups, generate_followups
 
-
 # ---- _parse_followups (pure) -------------------------------------------------
 
 @pytest.mark.unit

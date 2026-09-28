@@ -50,7 +50,7 @@ def _has_chat_all(current_user) -> bool:
         from models.permissions import has_permission
 
         return has_permission(current_user.get_permissions(), Permission.CHAT_ALL)
-    except Exception as e:  # noqa: BLE001 — a permission read must not 500 a delete
+    except Exception as e:
         # Denying is the safe direction, but never the silent one: `get_permissions()`
         # reads `User.role`, and a lazy load on an async session raises
         # MissingGreenlet. Swallowed, that reads as "this admin has no chat.all"

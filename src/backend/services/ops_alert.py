@@ -112,7 +112,7 @@ async def resolve_admin_user_id(db) -> int | None:
         return (
             await db.execute(select(User.id).order_by(User.id).limit(1))
         ).scalar_one_or_none()
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
 
 
@@ -160,7 +160,7 @@ async def _persisted_since(
                 )
             ).scalar_one_or_none()
         return found is not None
-    except Exception:  # noqa: BLE001
+    except Exception:
         return False
 
 
@@ -231,7 +231,7 @@ async def notify_admin(
             )
     except ValueError:
         return True  # deduped / suppressed by the pipeline — they already know
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         if await _persisted_since(
             title=title, message=message, source=source,
             target_user_id=target, since=started,

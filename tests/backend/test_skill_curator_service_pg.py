@@ -21,17 +21,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
     EMBEDDING_DIMENSION,
-    ProceduralSkill,
-    Role,
     SKILL_SOURCE_AUTO_EXTRACTED,
     SKILL_SOURCE_SEED,
     TIER_PUBLIC,
     TIER_SELF,
+    ProceduralSkill,
+    Role,
     User,
 )
 from services.skill_curator_service import SkillCuratorService
 from services.skill_service import SkillService
-
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
 

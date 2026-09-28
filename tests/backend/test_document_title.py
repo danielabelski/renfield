@@ -41,8 +41,8 @@ def _f(category, kind, value, **kw):
 
 
 def test_facts_to_block_includes_kind_value_date_amount():
-    from decimal import Decimal
     from datetime import date
+    from decimal import Decimal
     facts = [
         _f("universal", "aussteller", "Allianz Versicherungs-AG"),
         _f("obligation", "abgabefrist", "innerhalb von sechs Wochen", obligation_date=date(2026, 5, 15)),

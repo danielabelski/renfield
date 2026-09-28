@@ -146,7 +146,7 @@ async def _notify_owner(
                 "confidence": row.overall_confidence,
             },
         )
-    except Exception as e:  # noqa: BLE001 - notification is a nice-to-have
+    except Exception as e:
         logger.warning(f"pdf-split: review notification failed: {e}")
 
 

@@ -10,7 +10,6 @@ import pytest
 from services.agent_service import AgentStep, _parse_agent_json
 from utils.config import settings
 
-
 # ===========================================================================
 # Phase 1: Parallel Tool Execution
 # ===========================================================================
@@ -341,7 +340,6 @@ async def test_orchestrator_synthesis_none_falls_back_to_first_answer():
     sub-agent results, the orchestrator must still emit a final_answer
     (falling back to the first answer). Regression test for the
     silent-return hole in the middle branch."""
-    from services.agent_service import AgentStep
     from services.orchestrator import QueryOrchestrator
 
     mock_router = MagicMock()

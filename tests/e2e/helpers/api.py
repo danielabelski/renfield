@@ -33,7 +33,7 @@ if os.environ.get(_TOKEN_ENV):
 def _client() -> httpx.Client:
     return httpx.Client(
         base_url=BASE_URL,
-        verify=False,     # noqa: S501 — self-signed cert, intentional
+        verify=False,
         headers=_HEADERS,
         timeout=30.0,
     )

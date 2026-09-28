@@ -38,8 +38,9 @@ NOT IN SCOPE for v1 PolymorphicAtomStore:
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from datetime import datetime
-from typing import Any, Sequence
+from typing import Any
 
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession

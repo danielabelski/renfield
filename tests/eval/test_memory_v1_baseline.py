@@ -42,8 +42,7 @@ if not (_runner_dir / "memory_v1_baseline.py").exists():
 if str(_runner_dir) not in sys.path:
     sys.path.insert(0, str(_runner_dir))
 
-import memory_v1_baseline as runner  # noqa: E402
-
+import memory_v1_baseline as runner
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -384,7 +383,7 @@ class TestSafetyHelpers:
         # infra name is hardcoded in this public test.
         monkeypatch.setattr(
             runner, "PROD_URL_PATTERNS",
-            tuple(runner.PROD_URL_PATTERNS) + ("sentinel-prod-host",),
+            (*runner.PROD_URL_PATTERNS, "sentinel-prod-host"),
         )
         refusal = runner.check_database_url_safety(
             "postgresql://u@sentinel-prod-host/db", allow_prod=False

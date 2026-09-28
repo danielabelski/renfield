@@ -101,7 +101,7 @@ async def drain_running_tasks(timeout: float = 10.0) -> None:
         t.cancel()
     try:
         await asyncio.wait(tasks, timeout=timeout)
-    except Exception as e:  # noqa: BLE001 — shutdown drain must never raise
+    except Exception as e:
         logger.warning(f"scheduled-tasks drain: {type(e).__name__}: {e}")
 
 
@@ -124,7 +124,7 @@ def _cron_next(expr: str, after_naive_utc: datetime) -> datetime | None:
         local_after = after_naive_utc.replace(tzinfo=UTC).astimezone(tz)
         nxt_local = croniter(expr, local_after).get_next(datetime)
         return nxt_local.astimezone(UTC).replace(tzinfo=None)
-    except Exception as e:  # noqa: BLE001 — bad cron / missing dep must not crash the engine
+    except Exception as e:
         logger.warning(f"scheduled-task cron '{expr}' next-run failed: {type(e).__name__}: {e}")
         return None
 
@@ -159,9 +159,8 @@ async def ensure_builtin_tasks() -> int:
     """Create any missing built-in task rows — INSERT ... ON CONFLICT (name) DO
     NOTHING (Review M8): create-if-missing, NEVER clobber admin edits, race-safe
     across a rolling deploy's two pods. Returns the number of rows inserted."""
-    from services.scheduled_tasks.builtins import builtin_task_seeds
-
     from services.database import AsyncSessionLocal
+    from services.scheduled_tasks.builtins import builtin_task_seeds
 
     seeds = builtin_task_seeds()
     if not seeds:
@@ -243,7 +242,7 @@ async def force_run_at_boot_tasks() -> int:
 # Tick + run
 # ---------------------------------------------------------------------------
 
-async def run_engine_tick(app: "FastAPI") -> None:
+async def run_engine_tick(app: FastAPI) -> None:
     """One engine tick: select due tasks and spawn each under the Semaphore. Does
     NOT await the spawned runs (Review C1)."""
     from services.database import AsyncSessionLocal
@@ -267,20 +266,20 @@ async def run_engine_tick(app: "FastAPI") -> None:
         t.add_done_callback(_running_tasks.discard)
 
 
-async def _bounded_run(app: "FastAPI", task_id: int) -> None:
+async def _bounded_run(app: FastAPI, task_id: int) -> None:
     sem = _get_semaphore()
     try:
         async with sem:
             await _run_one(app, task_id)
     except asyncio.CancelledError:
         raise
-    except Exception as e:  # noqa: BLE001 — a runner crash must not kill the engine
+    except Exception as e:
         logger.warning(f"scheduled-task runner (id={task_id}) crashed: {type(e).__name__}: {e}")
     finally:
         _inflight.discard(task_id)
 
 
-async def _run_one(app: "FastAPI", task_id: int) -> None:
+async def _run_one(app: FastAPI, task_id: int) -> None:
     """Acquire the per-task advisory lock (skip if held), then execute the task on
     a dedicated lock connection held for the handler's whole duration."""
     from services.database import engine as app_engine
@@ -439,7 +438,7 @@ async def _handle_failure_streak(task: ScheduledTask, status: str) -> None:
         )
 
 
-async def _execute_task(app: "FastAPI", task_id: int) -> None:
+async def _execute_task(app: FastAPI, task_id: int) -> None:
     from services.database import AsyncSessionLocal
 
     started = time.monotonic()
@@ -467,7 +466,7 @@ async def _execute_task(app: "FastAPI", task_id: int) -> None:
             # task never runs, which the admin needs to hear (see the helper).
             try:
                 await _handle_failure_streak(task, SCHEDULED_TASK_STATUS_SKIPPED)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.warning(f"scheduled task '{task.name}': streak reset failed: {e}")
             await session.commit()
             await _record_run_safe(
@@ -492,7 +491,7 @@ async def _execute_task(app: "FastAPI", task_id: int) -> None:
             detail = await spec.handler(app, params)
         except asyncio.CancelledError:
             raise
-        except Exception as e:  # noqa: BLE001 — a handler failure is recorded, not fatal
+        except Exception as e:
             status = SCHEDULED_TASK_STATUS_ERROR
             err = f"{type(e).__name__}: {e}"
             logger.warning(f"scheduled task '{task_name}' failed: {err}")
@@ -511,7 +510,7 @@ async def _execute_task(app: "FastAPI", task_id: int) -> None:
         # keeps the task scheduled.
         try:
             await _handle_failure_streak(task, status)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"scheduled task '{task_name}': failure-streak alerting failed: {e}")
         await session.commit()
 
@@ -538,6 +537,6 @@ async def _record_run_safe(session, task_id: int, task_name: str, **kw) -> None:
     on any failure it rolls back its own partial work and logs a warning."""
     try:
         await _record_run(session, task_id, **kw)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         await session.rollback()
         logger.warning(f"scheduled-task run-history record failed for '{task_name}': {e}")

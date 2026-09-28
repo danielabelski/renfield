@@ -15,6 +15,7 @@ _missing_stubs = [
     "redis", "redis.asyncio",
 ]
 import importlib as _importlib
+
 for _mod in _missing_stubs:
     # Stub ONLY when genuinely unimportable — unconditional stubbing
     # poisons sys.modules for the rest of the session, breaking later
@@ -23,7 +24,7 @@ for _mod in _missing_stubs:
         continue
     try:
         _importlib.import_module(_mod)
-    except Exception:  # noqa: BLE001
+    except Exception:
         sys.modules[_mod] = MagicMock()
 
 from unittest.mock import AsyncMock, patch
@@ -346,7 +347,7 @@ class TestDocumentTaskQueueReadOne:
         a live redis."""
         import inspect
 
-        from services.task_queue import DocumentTaskQueue, _REDIS_SOCKET_TIMEOUT_S
+        from services.task_queue import _REDIS_SOCKET_TIMEOUT_S, DocumentTaskQueue
 
         block_default_ms = inspect.signature(
             DocumentTaskQueue.read_one

@@ -38,7 +38,6 @@ from typing import Any
 
 from loguru import logger
 
-
 # German device keyword → HA domain mapping. Pre-computed once at module
 # load so `_filter_entities_by_message` runs in O(words × domains) instead
 # of scanning the dict on every call.
@@ -87,7 +86,7 @@ async def ha_build_entity_context(
         from ha_glue.integrations.homeassistant import HomeAssistantClient
         ha_client = HomeAssistantClient()
         entity_map = await ha_client.get_entity_map()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.error(f"❌ ha_glue intent_context: entity fetch failed: {exc}")
         return None
 
@@ -200,7 +199,7 @@ async def _get_ha_keywords() -> set[str]:
         from ha_glue.integrations.homeassistant import HomeAssistantClient
         ha_client = HomeAssistantClient()
         return await ha_client.get_keywords()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.error(f"❌ ha_glue intent_context: HA keyword fetch failed: {exc}")
         return set(_HA_FALLBACK_KEYWORDS)
 

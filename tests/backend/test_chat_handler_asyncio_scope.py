@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-import api.websocket.chat_handler as _chat_handler  # noqa: E402
+import api.websocket.chat_handler as _chat_handler
 
 pytestmark = [pytest.mark.unit]
 

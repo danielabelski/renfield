@@ -307,7 +307,8 @@ class WhisperService:
         """Delegate STT to the voice-server pod (B.4.c thin-client path).
 
         is_opus → /stt-opus (opuslib decode on the voice-server, design D6)."""
-        from services.voice_server_client import VoiceServerError, stt as vs_stt
+        from services.voice_server_client import VoiceServerError
+        from services.voice_server_client import stt as vs_stt
         from services.voice_server_client import stt_opus as vs_stt_opus
 
         # Caller passes the bearer token implicitly via FastAPI Depends
@@ -685,7 +686,8 @@ class WhisperService:
         """
         from services.database import AsyncSessionLocal
         from services.speaker_resolver import resolve_speaker_from_embedding
-        from services.voice_server_client import VoiceServerError, stt as vs_stt
+        from services.voice_server_client import VoiceServerError
+        from services.voice_server_client import stt as vs_stt
         from services.voice_server_client import stt_opus as vs_stt_opus
 
         token = _get_service_token()

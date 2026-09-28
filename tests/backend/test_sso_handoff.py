@@ -70,7 +70,9 @@ def test_pkce_s256_roundtrip_and_rejections():
 
 async def test_store_is_single_use(fake_redis, monkeypatch):
     from services.sso_handoff_store import (
-        HandoffSession, consume_handoff_code, issue_handoff_code,
+        HandoffSession,
+        consume_handoff_code,
+        issue_handoff_code,
     )
     monkeypatch.setattr(settings, "sso_handoff_ttl_seconds", 60)
     sess = HandoffSession(

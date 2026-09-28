@@ -36,7 +36,6 @@ from services.fts_languages import (
 )
 from services.lexical_retrieval import LexicalRetrieval
 
-
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
 
 
@@ -82,7 +81,7 @@ async def fts_columns_installed(pg_db_session: AsyncSession) -> None:
     """
     expr = build_generated_tsvector_expression("content")
 
-    for table_name, content_col in (
+    for table_name, _content_col in (
         ("document_chunks", "content"),
         ("conversation_memories", "content"),
     ):

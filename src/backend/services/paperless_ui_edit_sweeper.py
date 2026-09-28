@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from loguru import logger
@@ -140,7 +140,8 @@ async def _run_sweep_tick_locked(
     """Internal body of ``run_sweep_tick`` — assumes the caller holds
     ``_sweep_lock``. Split out so the lock behaviour is visible at a
     glance and the body is still directly testable."""
-    from sqlalchemy import select, update as sqla_update
+    from sqlalchemy import select
+    from sqlalchemy import update as sqla_update
 
     from models.database import (
         PaperlessExtractionExample,
@@ -395,7 +396,7 @@ def _parse_iso_datetime(value: str) -> datetime | None:
     if parsed.tzinfo is not None:
         # Convert to UTC then drop the tz info — the rest of the
         # sweeper works with naive-UTC (see migration comment).
-        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        parsed = parsed.astimezone(UTC).replace(tzinfo=None)
     return parsed
 
 

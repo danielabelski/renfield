@@ -100,7 +100,7 @@ async def extract_memories_background(
                         _changed = await _CS(db).recompute_memory_activation(_conv)
                         if _changed:
                             await db.commit()
-                except Exception as _ge:  # noqa: BLE001
+                except Exception as _ge:
                     logger.warning(
                         f"⚠️ Post-extraction branch recompute failed: {_ge}"
                     )

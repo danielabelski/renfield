@@ -23,7 +23,6 @@ from services.agent_tools import AgentToolRegistry, unsanitize_tool_name
 from services.prompt_manager import prompt_manager
 from utils.circuit_breaker import agent_circuit_breaker
 from utils.config import settings
-from utils.prompt_safety import neutralize_delimiters
 from utils.llm_client import (
     effective_agent_num_ctx,
     extract_response_content,
@@ -31,6 +30,7 @@ from utils.llm_client import (
     get_classification_chat_kwargs,
     use_openai_for_tier,
 )
+from utils.prompt_safety import neutralize_delimiters
 from utils.token_counter import token_counter
 
 if TYPE_CHECKING:
@@ -546,7 +546,7 @@ def _warn_if_truncated(raw_response: Any, model: str, call_type: str, step_num: 
         from utils.metrics import record_llm_response_truncated
 
         record_llm_response_truncated(model, call_type)
-    except Exception as e:  # noqa: BLE001 — metrics must never break the agent loop
+    except Exception as e:
         # WARNING, not debug: this except is the reason the counter's own
         # registration bug went unnoticed while the line above logged happily.
         # A dead metric is invisible precisely because nothing depends on it.
@@ -1020,7 +1020,7 @@ class AgentService:
             )
             return filtered
 
-        except (asyncio.TimeoutError, json.JSONDecodeError, Exception) as e:
+        except (TimeoutError, json.JSONDecodeError, Exception) as e:
             logger.warning(f"Tool pre-selection failed (using all tools): {e}")
             return None
 
@@ -1418,7 +1418,7 @@ class AgentService:
                                 f"🔧 {len(th_warnings)} tool-health warning(s) "
                                 f"injected into agent prompt"
                             )
-                except Exception as e:  # noqa: BLE001
+                except Exception as e:
                     logger.warning(f"⚠️ Tool-health warning lookup failed: {e}")
             context._tool_health_cache = tool_health_warnings
 
@@ -1631,7 +1631,7 @@ class AgentService:
                         tools_available_snapshot = list(
                             self.tool_registry.get_tool_names()
                         )
-                except Exception:  # noqa: BLE001 — never block the post-turn task
+                except Exception:
                     tools_available_snapshot = []
                 try:
                     _spawn_skill_task(_post_turn_skill_bookkeeping(
@@ -1643,7 +1643,7 @@ class AgentService:
                         tools_available=tools_available_snapshot,
                         session_id=session_id,
                     ))
-                except Exception as e:  # noqa: BLE001
+                except Exception as e:
                     logger.warning(f"⚠️ Failed to schedule post-turn skill task: {e}")
 
     async def _run_impl(
@@ -1988,7 +1988,7 @@ class AgentService:
                     # summarise (which drops the per-field choices).
                     parallel_preview: tuple[str, Any] | None = None
                     parallel_confirm_data: dict | None = None
-                    for act, res in zip(valid_actions, exec_results):
+                    for act, res in zip(valid_actions, exec_results, strict=True):
                         if isinstance(res, Exception):
                             logger.error(f"❌ Parallel tool '{act['action']}' failed: {res}")
                             res = {"success": False, "message": str(res), "action_taken": False}
@@ -2700,9 +2700,9 @@ async def _post_turn_skill_bookkeeping(
                 for sid in injected_skill_ids:
                     try:
                         await svc.record_outcome(sid, turn_success)
-                    except Exception as e:  # noqa: BLE001
+                    except Exception as e:
                         logger.warning(f"⚠️ Skill outcome recording failed (id={sid}): {e}")
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"⚠️ Skill outcome session failed: {e}")
 
     # Tool-outcome tracking — independently gated. Best-effort per-tool
@@ -2714,7 +2714,7 @@ async def _post_turn_skill_bookkeeping(
             async with AsyncSessionLocal() as db:
                 t_outcome = ToolOutcomeService(db)
                 await t_outcome.record_from_steps(user_id=user_id, steps=steps)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"⚠️ Tool-outcome recording failed: {e}")
 
     # Skill auto-extraction: gated on skills_enabled + skill_extract_enabled
@@ -2745,7 +2745,7 @@ async def _post_turn_skill_bookkeeping(
                         circle_tier=0,
                     )
                     extracted_skill_id = new_skill.id
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"⚠️ Skill auto-extraction failed: {e}")
 
     # Trajectory capture. Independently gated on trajectory_capture_enabled.
@@ -2758,15 +2758,16 @@ async def _post_turn_skill_bookkeeping(
         conv_id: int | None = None
         if session_id:
             try:
-                from models.database import Conversation
                 from sqlalchemy import select as _select
+
+                from models.database import Conversation
                 async with AsyncSessionLocal() as conv_db:
                     conv_id = (await conv_db.execute(
                         _select(Conversation.id).where(
                             Conversation.session_id == session_id
                         )
                     )).scalar_one_or_none()
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.warning(
                     f"⚠️ Trajectory conv_id resolve failed for "
                     f"session={session_id!r}: {e}"
@@ -2790,5 +2791,5 @@ async def _post_turn_skill_bookkeeping(
                     used_skill_ids=injected_skill_ids,
                     extracted_skill_id=extracted_skill_id,
                 )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"⚠️ Trajectory capture failed: {e}")

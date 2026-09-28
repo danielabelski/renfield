@@ -7,9 +7,8 @@ Provides fixtures for testing frontend-related functionality:
 - Component test utilities
 """
 
-import pytest
-from unittest.mock import MagicMock, AsyncMock
 
+import pytest
 
 # ============================================================================
 # API Mock Fixtures

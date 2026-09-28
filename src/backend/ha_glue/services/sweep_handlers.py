@@ -54,7 +54,7 @@ async def ha_chat_context_established(
             room_id=room_id,
             room_name=room_name,
         )
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"⚠️  ha_glue chat_context_established: voice presence update failed: {e}")
 
 
@@ -81,7 +81,7 @@ async def ha_resolve_user_current_room(
         from ha_glue.services.presence_service import get_presence_service
         presence = get_presence_service()
         user_p = presence.get_user_presence(user_id)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.debug(f"ha_glue resolve_user_current_room: presence lookup failed: {e}")
         return None
 
@@ -124,7 +124,7 @@ async def ha_resolve_room_occupants(
         from ha_glue.services.presence_service import get_presence_service
         presence = get_presence_service()
         occupants = presence.get_room_occupants(room_id)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.debug(f"ha_glue resolve_room_occupants: presence lookup failed: {e}")
         return None
 

@@ -14,16 +14,14 @@ Coverage:
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from services.federation_audit import (
-    FEDERATION_AUDIT_RETENTION_DAYS,
     MAX_ANSWER_EXCERPT_LEN,
-    MAX_ERROR_MESSAGE_LEN,
     MAX_QUERY_TEXT_LEN,
     _classify_final,
     _truncate,
@@ -31,7 +29,6 @@ from services.federation_audit import (
     prune_old_audit_rows,
     write_federation_audit,
 )
-
 
 # =============================================================================
 # Pure helpers
@@ -71,7 +68,7 @@ class TestClassifyFinal:
         assert status == "unknown"
         assert verified is False
         assert excerpt is None
-        assert err is not None and "cancel" in err.lower() or "abort" in err.lower()
+        assert (err is not None and "cancel" in err.lower()) or "abort" in err.lower()
 
 
 class TestTruncate:
@@ -473,7 +470,6 @@ class TestListAndPrune:
             lambda: session_mock,
         )
 
-        from services.federation_audit import list_audit_for_user
         rows = await list_audit_for_user(user_id=42)
         assert rows == []
 
@@ -495,7 +491,6 @@ class TestListAndPrune:
             lambda: session_mock,
         )
 
-        from services.federation_audit import list_audit_for_user
         await list_audit_for_user(user_id=1, peer_pubkey="a" * 64)
 
         # The filter compiles into the statement passed to execute.
@@ -522,7 +517,6 @@ class TestListAndPrune:
             lambda: session_mock,
         )
 
-        from services.federation_audit import prune_old_audit_rows
         deleted = await prune_old_audit_rows(retention_days=90)
         assert deleted == 0
 

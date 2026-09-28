@@ -6,6 +6,7 @@ from sqlalchemy import select
 from models.database import Conversation
 from services.conversation_service import ConversationService
 
+
 async def _seed_identities(db):
     """Speakers 10 and 42, users 3 and 7 — the ids these tests name."""
     from tests.backend.dbrows import ensure_speaker, ensure_user

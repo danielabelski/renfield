@@ -151,7 +151,7 @@ async def _record_ledger(
                 )
             )
         await db.commit()
-    except Exception as exc:  # noqa: BLE001 - ledger is best-effort
+    except Exception as exc:
         logger.warning(f"email-ingest: ledger write failed (non-fatal): {exc}")
         await db.rollback()
 

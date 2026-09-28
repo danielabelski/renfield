@@ -19,7 +19,6 @@ keeps a strong reference on `self._reconnect_task` and honors the
 import asyncio
 
 import pytest
-
 from renfield_satellite.satellite import Satellite
 
 

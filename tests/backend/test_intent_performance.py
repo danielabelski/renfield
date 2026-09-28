@@ -10,7 +10,7 @@ Tests:
 """
 
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -24,7 +24,7 @@ class TestEntityMapCache:
     @pytest.fixture(autouse=True)
     def reset_cache(self):
         """Clear class-level cache before each test."""
-        with patch('ha_glue.integrations.homeassistant.settings') as mock_settings:
+        with patch('ha_glue.integrations.homeassistant.ha_glue_settings') as mock_settings:
             mock_settings.home_assistant_url = "http://ha.local:8123"
             mock_settings.home_assistant_token = "test_token"
             from ha_glue.integrations.homeassistant import HomeAssistantClient
@@ -34,7 +34,7 @@ class TestEntityMapCache:
 
     @pytest.fixture
     def ha_client(self):
-        with patch('ha_glue.integrations.homeassistant.settings') as mock_settings:
+        with patch('ha_glue.integrations.homeassistant.ha_glue_settings') as mock_settings:
             mock_settings.home_assistant_url = "http://ha.local:8123"
             mock_settings.home_assistant_token = "test_token"
             from ha_glue.integrations.homeassistant import HomeAssistantClient
@@ -109,7 +109,7 @@ class TestEntityMapCache:
     @pytest.mark.asyncio
     async def test_entity_map_cache_shared_across_instances(self):
         """Cache should be shared across HomeAssistantClient instances."""
-        with patch('ha_glue.integrations.homeassistant.settings') as mock_settings:
+        with patch('ha_glue.integrations.homeassistant.ha_glue_settings') as mock_settings:
             mock_settings.home_assistant_url = "http://ha.local:8123"
             mock_settings.home_assistant_token = "test_token"
 
@@ -291,8 +291,8 @@ class TestIntentRegistryCache:
             from services.intent_registry import IntentRegistry
             registry = IntentRegistry()
 
-            result_de = registry.build_intent_prompt(lang="de")
-            result_en = registry.build_intent_prompt(lang="en")
+            _result_de = registry.build_intent_prompt(lang="de")
+            _result_en = registry.build_intent_prompt(lang="en")
 
             assert "intent_prompt_de" in registry._prompt_cache
             assert "intent_prompt_en" in registry._prompt_cache

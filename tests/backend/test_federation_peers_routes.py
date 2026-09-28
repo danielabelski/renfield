@@ -12,15 +12,15 @@ Coverage:
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from api.routes.federation_pairing import (
+    _tier_for_peer,
     list_peers,
     revoke_peer,
-    _tier_for_peer,
 )
 
 

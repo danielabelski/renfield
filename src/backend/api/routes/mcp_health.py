@@ -8,8 +8,7 @@ surface + a proactive alert (``services/mcp_health_monitor``). Same revocable Be
 token as folder-ingest (the MCPs already hold it)."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Header, HTTPException
-from fastapi import Depends
+from fastapi import APIRouter, Depends, Header, HTTPException
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -48,6 +47,6 @@ async def report_mcp_health(
         raise HTTPException(status_code=403, detail="Invalid token")
     try:
         await ingest_report(payload if isinstance(payload, dict) else {})
-    except Exception as e:  # noqa: BLE001 — never fail the MCP's fire-and-forget notify
+    except Exception as e:
         logger.warning(f"mcp-health report handling failed: {e}")
     return {"status": "recorded"}

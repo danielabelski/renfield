@@ -137,7 +137,7 @@ async def _mark_meeting_failed(meeting_id, error: BaseException) -> bool:
                 meeting.error = str(error)[:2000]
                 await db.commit()
             return True
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"could not mark meeting {meeting_id} failed: {e}")
         return False
 
@@ -149,11 +149,11 @@ async def _heartbeat_loop(
     while not stop_event.is_set():
         try:
             await redis.set(HEARTBEAT_KEY, consumer_id, ex=HEARTBEAT_TTL_S)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"heartbeat write failed: {e}")
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=HEARTBEAT_INTERVAL_S)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             continue
 
 
@@ -167,11 +167,11 @@ async def _row_heartbeat_loop(meeting_id, stop_event: asyncio.Event) -> None:
                 if meeting is not None:
                     meeting.heartbeat_at = datetime.utcnow()
                     await db.commit()
-        except Exception as e:  # noqa: BLE001 - a heartbeat write must never crash the job
+        except Exception as e:
             logger.debug(f"row heartbeat write failed for meeting {meeting_id}: {e}")
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=ROW_HEARTBEAT_REFRESH_S)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             continue
 
 
@@ -182,7 +182,7 @@ def _transient_key(entry_id: str) -> str:
 async def _clear_transient(redis: aioredis.Redis, entry_id: str) -> None:
     try:
         await redis.delete(_transient_key(entry_id))
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.debug(f"transient-counter cleanup failed for {entry_id}: {e}")
 
 
@@ -227,7 +227,7 @@ async def _process_entry(
     if delivery_count > 1:
         try:
             transient_leaves = int(await redis.get(_transient_key(entry.entry_id)) or 0)
-        except Exception:  # noqa: BLE001
+        except Exception:
             transient_leaves = 0
         crash_count = delivery_count - transient_leaves
         if crash_count > settings.worker_max_deliveries:
@@ -301,7 +301,7 @@ async def _process_entry(
                 tkey = _transient_key(entry.entry_id)
                 await redis.incr(tkey)
                 await redis.expire(tkey, 86_400)
-            except Exception as ie:  # noqa: BLE001
+            except Exception as ie:
                 logger.debug(f"transient-counter incr failed for {entry.entry_id}: {ie}")
             logger.warning(
                 f"meeting {meeting_id}: transient {type(e).__name__} — leaving in PEL"
@@ -369,7 +369,7 @@ async def main() -> None:
                 try:
                     for stale in await queue.reclaim_stale(min_idle_ms=_RECLAIM_MIN_IDLE_MS):
                         await _process_entry(redis, queue, stale)
-                except Exception as e:  # noqa: BLE001
+                except Exception as e:
                     logger.warning(f"periodic reclaim failed: {e}")
             entry = await queue.read_one(block_ms=5_000)
             if entry is None:

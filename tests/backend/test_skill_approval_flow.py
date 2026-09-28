@@ -21,7 +21,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
     EMBEDDING_DIMENSION,
-    ProceduralSkill,
     Role,
     SkillCuratorRun,
     User,

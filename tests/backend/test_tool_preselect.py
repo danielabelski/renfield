@@ -11,7 +11,7 @@ import pytest
 if "ollama" not in sys.modules:
     try:
         import ollama  # noqa: F401
-    except Exception:  # noqa: BLE001
+    except Exception:
         sys.modules["ollama"] = MagicMock()
 
 from services.agent_service import AgentService
@@ -130,10 +130,9 @@ class TestToolPreSelection:
     @pytest.mark.asyncio
     async def test_timeout_falls_back(self):
         """Timeout falls back gracefully."""
-        import asyncio
         agent = _make_agent(10)
         client = AsyncMock()
-        client.chat = AsyncMock(side_effect=asyncio.TimeoutError())
+        client.chat = AsyncMock(side_effect=TimeoutError())
 
         with patch("services.agent_service.prompt_manager") as pm, \
              patch("services.agent_service.get_classification_chat_kwargs", return_value={}):

@@ -71,7 +71,7 @@ def _spawn_periodic_task(
             # below. Only a genuine work() failure is logged and swallowed,
             # so a transient boot-run error still falls into the interval
             # loop instead of disabling the scheduler.
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.warning(f"{name} failed (boot run): {e}")
         while True:
             try:
@@ -79,7 +79,7 @@ def _spawn_periodic_task(
                 await work()
             except asyncio.CancelledError:
                 break
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.warning(f"{name} failed: {e}")
 
     task = asyncio.create_task(_loop())
@@ -101,7 +101,7 @@ async def _reconcile_credentials_boot():
         from services.credential_reconciler import reconcile_credentials
 
         await reconcile_credentials()
-    except Exception as e:  # noqa: BLE001 - never block startup
+    except Exception as e:
         logger.warning(f"credential-reconciler boot pass failed: {e}")
 
 
@@ -588,7 +588,7 @@ async def _init_paperless_audit(app: "FastAPI") -> None:
         app.state.paperless_audit = audit_service
         await audit_service.start()
         logger.info("✅ Paperless Audit: routes mounted + service started (platform-core)")
-    except Exception:  # noqa: BLE001 — never break startup on the audit mount
+    except Exception:
         logger.opt(exception=True).warning("Paperless audit init failed")
 
 
@@ -613,7 +613,7 @@ async def _setup_task_engine(app):
     # skip everything.
     try:
         register_builtin_handlers()
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.opt(exception=True).error(
             "Scheduled Tasks handler registration failed — engine not started"
         )
@@ -626,7 +626,7 @@ async def _setup_task_engine(app):
     try:
         await ensure_builtin_tasks()
         await force_run_at_boot_tasks()
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.opt(exception=True).error(
             "Scheduled Tasks seeding/boot-force failed — starting the engine anyway "
             "(existing rows still run; new built-ins may be missing until next boot)"
@@ -647,7 +647,7 @@ async def _setup_task_engine(app):
             ),
             run_at_boot=True,
         )
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.opt(exception=True).error("Scheduled Tasks engine tick loop failed to start")
 
 
@@ -724,7 +724,7 @@ async def lifespan(app: "FastAPI"):
             logger.info("✅ ha_glue bootstrap loaded")
         except ImportError:
             logger.info("ha_glue not installed — running platform-only")
-        except Exception:  # noqa: BLE001 — never break startup on plugin error
+        except Exception:
             logger.opt(exception=True).warning(
                 "ha_glue bootstrap raised — HA fallback disabled, continuing startup"
             )
@@ -856,7 +856,7 @@ async def lifespan(app: "FastAPI"):
     try:
         from services.scheduled_tasks.engine import drain_running_tasks
         await drain_running_tasks()
-    except Exception:  # noqa: BLE001 — shutdown drain must never break teardown
+    except Exception:
         logger.opt(exception=True).warning("Scheduled Tasks drain failed")
 
     # Stop paperless audit before MCP shutdown

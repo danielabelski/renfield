@@ -20,7 +20,7 @@ import pytest
 if "ollama" not in sys.modules:
     try:
         import ollama  # noqa: F401
-    except Exception:  # noqa: BLE001
+    except Exception:
         _ollama_stub = MagicMock()
         _ollama_stub.AsyncClient = MagicMock()
         sys.modules["ollama"] = _ollama_stub
@@ -28,7 +28,7 @@ if "ollama" not in sys.modules:
 if "openai" not in sys.modules:
     try:
         import openai  # noqa: F401
-    except Exception:  # noqa: BLE001
+    except Exception:
         _openai_stub = MagicMock()
         _openai_stub.AsyncOpenAI = MagicMock()
         sys.modules["openai"] = _openai_stub
@@ -47,8 +47,8 @@ from utils.llm_client import (
     get_embed_client,
     get_intent_client,
     get_openai_compat_client,
-    get_vision_client,
     get_openai_compat_embed_client,
+    get_vision_client,
     is_thinking_model,
     use_openai_for_tier,
 )
@@ -107,7 +107,7 @@ class TestCreateLLMClient:
         result = create_llm_client("http://localhost:11434")
 
         # Client is created with host + explicit httpx.Timeout kwargs
-        args, kwargs = mock_cls.call_args
+        _args, kwargs = mock_cls.call_args
         assert kwargs.get("host") == "http://localhost:11434"
         assert "timeout" in kwargs
         assert result is sentinel
@@ -191,7 +191,7 @@ class TestGetDefaultClient:
 
         result = get_default_client()
 
-        args, kwargs = mock_cls.call_args
+        _args, kwargs = mock_cls.call_args
         assert kwargs.get("host") == "http://my-ollama:11434"
         assert result is sentinel
 
@@ -262,7 +262,7 @@ class TestGetEmbedClient:
 
         result = get_embed_client()
 
-        args, kwargs = mock_cls.call_args
+        _args, kwargs = mock_cls.call_args
         assert kwargs.get("host") == "http://embed-host:11434"
         assert result.inner is sentinel
 
@@ -283,7 +283,7 @@ class TestGetEmbedClient:
 
         result = get_embed_client()
 
-        args, kwargs = mock_cls.call_args
+        _args, kwargs = mock_cls.call_args
         assert kwargs.get("host") == "http://default:11434"
         assert result.inner is sentinel
 
@@ -321,9 +321,9 @@ class TestGetEmbedClient:
         sentinel = MagicMock()
         mock_cls.return_value = sentinel
 
-        result = get_embed_client()
+        _result = get_embed_client()
 
-        args, kwargs = mock_cls.call_args
+        _args, kwargs = mock_cls.call_args
         assert kwargs.get("host") == "http://default:11434"
 
 
@@ -1220,7 +1220,7 @@ class TestGetDedicatedClient:
 
         result = get_dedicated_client("http://router-ollama:11434")
 
-        args, kwargs = mock_cls.call_args
+        _args, kwargs = mock_cls.call_args
         assert kwargs.get("host") == "http://router-ollama:11434"
         assert result is sentinel
 
@@ -1465,8 +1465,8 @@ class TestOpenAICompatFallbackClient:
     @pytest.mark.asyncio
     async def test_apitimeout_read_cause_reraised(self, monkeypatch):
         """Slow-but-healthy primary (APITimeoutError wrapping ReadTimeout) → do NOT degrade."""
-        import openai
         import httpx
+        import openai
         primary = AsyncMock(); fallback = AsyncMock()
         primary.chat.side_effect = self._apitimeout(httpx.ReadTimeout("slow"))
         w = self._wrapper(monkeypatch, primary, fallback)

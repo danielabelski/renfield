@@ -7,8 +7,6 @@ reset_fact_tier clears the override back to the document tier. Real PG.
 """
 from __future__ import annotations
 
-import datetime as dt
-
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -110,7 +108,7 @@ class TestPerFactTierOverride:
         _commit_as_flush(pg_db_session, monkeypatch)
         owner = await _make_user(pg_db_session, "ov_policy")
         doc, doc_atom = await _make_doc(pg_db_session, owner, tier=0)
-        issuer_id, issuer_atom = await _make_fact(pg_db_session, owner, doc, kind="issuer", tier=0)
+        _issuer_id, issuer_atom = await _make_fact(pg_db_session, owner, doc, kind="issuer", tier=0)
         svc = AtomService(pg_db_session)
         await svc.update_tier(issuer_atom, {"tier": 4})
         await svc.update_tier(doc_atom, {"tier": 1})
@@ -122,7 +120,7 @@ class TestPerFactTierOverride:
     async def test_reset_clears_override_to_doc_tier(self, pg_db_session, monkeypatch):
         _commit_as_flush(pg_db_session, monkeypatch)
         owner = await _make_user(pg_db_session, "ov_reset")
-        doc, doc_atom = await _make_doc(pg_db_session, owner, tier=2)
+        doc, _doc_atom = await _make_doc(pg_db_session, owner, tier=2)
         fid, fatom = await _make_fact(pg_db_session, owner, doc, kind="issuer", tier=2)
         svc = AtomService(pg_db_session)
         await svc.update_tier(fatom, {"tier": 4})
@@ -152,6 +150,7 @@ class TestResetRoute:
         monkeypatch.setattr(settings, "auth_enabled", True)
         _commit_as_flush(pg_db_session, monkeypatch)
         from fastapi import HTTPException
+
         from api.routes.atoms import reset_fact_tier as reset_route
         owner = await _make_user(pg_db_session, "rr_owner")
         peer = await _make_user(pg_db_session, "rr_peer")

@@ -8,7 +8,6 @@ import time
 from types import SimpleNamespace
 
 import pytest
-
 from renfield_satellite.ble.scanner import BLEScanner
 
 

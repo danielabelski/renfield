@@ -6,7 +6,6 @@ and context preparation for LLM queries.
 """
 import asyncio
 import os
-from collections import defaultdict
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -160,7 +159,7 @@ class RAGService(AtomOwnerResolverMixin):
             )
             # ollama>=0.4.0 uses Pydantic models with .embedding attribute
             return response.embedding
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error(f"Embedding-Timeout nach {settings.rag_embedding_timeout}s")
             raise
         except Exception as e:
@@ -501,7 +500,7 @@ class RAGService(AtomOwnerResolverMixin):
                                 doc.content_embedding = np.mean(
                                     np.array(embs, dtype=float), axis=0
                                 ).tolist()
-                    except Exception as e:  # noqa: BLE001 — non-essential
+                    except Exception as e:
                         logger.warning(f"content_embedding mean failed for doc {doc.id}: {e}")
 
                     doc.status = DOC_STATUS_COMPLETED
@@ -527,7 +526,7 @@ class RAGService(AtomOwnerResolverMixin):
                             owner_user_id=_owner if _owner is not None else user_id,
                             db=self.db, document=doc,
                         )
-                    except Exception:  # noqa: BLE001 — never break ingest on an event
+                    except Exception:
                         pass
 
                     # Record metrics on the history handle. The track() context
@@ -974,7 +973,7 @@ class RAGService(AtomOwnerResolverMixin):
             from services.user_events import resolve_document_owner
 
             _deleted_owner = await resolve_document_owner(self.db, doc)
-        except Exception:  # noqa: BLE001
+        except Exception:
             _deleted_owner = None
 
         # Lösche auch die Datei
@@ -1025,7 +1024,7 @@ class RAGService(AtomOwnerResolverMixin):
                 await emit_documents_changed(
                     get_redis(), reason="deleted", owner_user_id=_deleted_owner,
                 )
-            except Exception:  # noqa: BLE001 — never break delete on an event
+            except Exception:
                 pass
         return deleted
 

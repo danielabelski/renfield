@@ -6,15 +6,14 @@ bundled satellite source and forwards them verbatim in the update_request; with
 """
 from __future__ import annotations
 
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
-from ha_glue.services.satellite_update_service import SatelliteUpdateService
-from ha_glue.services.satellite_manager import UpdateStatus
 import ha_glue.services.satellite_update_service as svc_mod
+from ha_glue.services.satellite_manager import UpdateStatus
+from ha_glue.services.satellite_update_service import SatelliteUpdateService
 from ha_glue.utils.config import ha_glue_settings
 
 

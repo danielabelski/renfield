@@ -34,7 +34,6 @@ from loguru import logger
 
 from utils.config import settings
 
-
 # Cold-start window for the LLM-metadata confirm flow: the first N archives
 # require an explicit confirm; after that the system trusts itself and archives
 # silently. Sourced from settings (default 3) so it's tunable without a code
@@ -135,9 +134,7 @@ def _should_auto_skip_metadata(filename: str, file_size: int) -> bool:
     if _SCREENSHOT_FILENAME_RE.match(filename):
         return True
     mime, _ = mimetypes.guess_type(filename)
-    if mime and mime.startswith("image/") and file_size < _IMAGE_AUTOSKIP_SIZE_BYTES:
-        return True
-    return False
+    return bool(mime and mime.startswith("image/") and file_size < _IMAGE_AUTOSKIP_SIZE_BYTES)
 
 
 async def forward_attachment_to_paperless(

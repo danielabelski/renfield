@@ -19,7 +19,6 @@ from models.database import (
 )
 from services import simba_ingest_review as review
 
-
 # --------------------------------------------------------------------------
 # Hook gating (mocked DB)
 # --------------------------------------------------------------------------
@@ -757,7 +756,6 @@ async def test_document_period_prefers_rechnungsdatum_fact(db_session):
     """The booking period comes from the Schicht-A rechnungsdatum fact (not now,
     and preferred over other date facts)."""
     from models.database import Atom, Document, DocumentFact
-
     from tests.backend.dbrows import ensure_user
 
     await ensure_user(db_session, 1)   # the fact atom below needs a real owner
@@ -787,7 +785,6 @@ async def test_document_period_prefers_rechnungsdatum_fact(db_session):
 async def test_document_period_falls_back_to_title(db_session):
     """No date facts → parse the date out of the generated title."""
     from models.database import Document
-
     from tests.backend.dbrows import ensure_user
 
     await ensure_user(db_session, 1)   # the fact atom below needs a real owner
@@ -804,7 +801,6 @@ async def test_document_period_ignores_obligation_and_deadline_dates(db_session)
     """A payment deadline's month is not the booking period: obligation facts and
     deadline kinds never count, so the period comes from the document date."""
     from models.database import Atom, Document, DocumentFact
-
     from tests.backend.dbrows import ensure_user
 
     await ensure_user(db_session, 1)   # the fact atom below needs a real owner
@@ -835,7 +831,6 @@ async def test_document_period_ignores_obligation_and_deadline_dates(db_session)
 async def test_document_period_none_when_no_date(db_session):
     """No derivable date → (None, None) so the UI falls back to the current month."""
     from models.database import Document
-
     from tests.backend.dbrows import ensure_user
 
     await ensure_user(db_session, 1)   # the fact atom below needs a real owner

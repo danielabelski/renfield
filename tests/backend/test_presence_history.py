@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from models.database import PresenceEvent, Role, Room, User
 from ha_glue.services.presence_analytics import PresenceAnalyticsService
+from models.database import PresenceEvent, Role, Room, User
 
 # ---------------------------------------------------------------------------
 # Helpers (same shape as test_presence_analytics.py)

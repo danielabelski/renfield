@@ -115,6 +115,6 @@ async def create_reminder(
     except ValueError as e:
         # Unparseable time or a time in the past — a user-actionable message, not a crash.
         return {"success": False, "message": str(e), "action_taken": False}
-    except Exception as e:  # noqa: BLE001 — surface any unexpected failure as a tool error
+    except Exception as e:
         logger.error(f"Error in create_reminder tool: {e}")
         return {"success": False, "message": f"Reminder error: {e!s}", "action_taken": False}

@@ -21,14 +21,12 @@ Approach:
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from services.rag_retrieval import RAGRetrieval
 from services.rag_service import RAGService
-
 
 # =============================================================================
 # Helpers (mirror tests/backend/test_rag_hybrid_search.py for parity)

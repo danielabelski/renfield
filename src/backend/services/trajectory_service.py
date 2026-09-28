@@ -32,7 +32,7 @@ on its presence.
 from __future__ import annotations
 
 from collections.abc import AsyncIterable
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from loguru import logger
@@ -40,13 +40,12 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
-    AgentTrajectory,
     TRAJECTORY_OUTCOME_ABORT,
     TRAJECTORY_OUTCOME_SUCCESS,
     TRAJECTORY_OUTCOME_TOOL_FAIL,
+    AgentTrajectory,
 )
 from utils.config import settings
-
 
 _OUTCOME_CHOICES = {
     TRAJECTORY_OUTCOME_SUCCESS,

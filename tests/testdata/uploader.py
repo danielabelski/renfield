@@ -7,8 +7,9 @@ Usage:
 
 import os
 import time
-import requests
 import warnings
+
+import requests
 
 warnings.filterwarnings("ignore")
 

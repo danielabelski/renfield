@@ -10,12 +10,12 @@ Public surface:
           returns the resolution outcome for ``/auth/login``.
 """
 
+from auth.login_flow import LoginOutcome, resolve_login
 from auth.provider_contract import (
     PROVIDER_RESULT_CONTRACT_VERSION,
     AuthProvider,
     ProviderResult,
 )
-from auth.login_flow import LoginOutcome, resolve_login
 from auth.registry import (
     ProviderRegistry,
     build_default_registry,
@@ -26,11 +26,11 @@ from auth.registry import (
 __all__ = [
     "PROVIDER_RESULT_CONTRACT_VERSION",
     "AuthProvider",
-    "ProviderResult",
+    "LoginOutcome",
     "ProviderRegistry",
+    "ProviderResult",
     "build_default_registry",
     "get_registry",
-    "set_registry",
-    "LoginOutcome",
     "resolve_login",
+    "set_registry",
 ]

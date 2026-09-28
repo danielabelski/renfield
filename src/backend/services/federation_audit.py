@@ -129,7 +129,7 @@ async def write_federation_audit(
             )
             session.add(row)
             await session.commit()
-    except Exception as e:  # noqa: BLE001 — best-effort write
+    except Exception as e:
         logger.warning(
             f"Federation audit write failed (peer={peer_pubkey_snapshot[:12]}…, "
             f"status={final_status}): {e}"
@@ -163,7 +163,7 @@ async def prune_old_audit_rows(
                     f"older than {retention_days} days"
                 )
             return deleted
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"Federation audit retention prune failed: {e}")
         return 0
 

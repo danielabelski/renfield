@@ -348,7 +348,7 @@ class TestNoIdentityFailsClosed:
         """Device / unrecognised voice. The legacy predicate would fall through
         to `user_id IS NULL` — the ownerless entities this item exists to stop
         being everyone's."""
-        anna, _ = two_users
+        _anna, _ = two_users
         ownerless = await _person(db_session, None, "Mama")
         await db_session.commit()
 

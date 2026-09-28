@@ -13,7 +13,7 @@ is ``process_existing_document`` ↔ ``history.track()`` ↔ DB row.
 from __future__ import annotations
 
 import os
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -26,7 +26,6 @@ from services.document_processing_history import (
     ProcessingTrigger,
 )
 from services.rag_service import RAGService
-
 
 pytestmark = [
     pytest.mark.database,

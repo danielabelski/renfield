@@ -19,7 +19,6 @@ from services.knowledge_graph_service import (
     kg_post_document_ingest_hook,
 )
 
-
 # ==========================================================================
 # §2 Phase 0 — speaker-pseudonym stripping for meeting transcripts
 # ==========================================================================
@@ -486,7 +485,7 @@ class TestExtractAndSave:
         kg_service._find_similar_entity = AsyncMock(return_value=None)
 
         # Note: "Hans Filbinger" is NOT in the dialog text below.
-        entities, relations = await kg_service.extract_and_save(
+        _entities, relations = await kg_service.extract_and_save(
             "Eduard lives in Berlin. Anna is my mother.",
             "Noted.",
             user_id=None,
@@ -517,7 +516,7 @@ class TestExtractAndSave:
         kg_service._chat_client = mock_client
         kg_service._find_similar_entity = AsyncMock(return_value=None)
 
-        entities, relations = await kg_service.extract_and_save(
+        _entities, relations = await kg_service.extract_and_save(
             "Anna wohnt in Kleinenbroich.",  # both names grounded
             "Notiert.",
             user_id=None,

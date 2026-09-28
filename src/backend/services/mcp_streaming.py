@@ -29,7 +29,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-
 # Locked vocabulary. Add labels here, not at call sites — keeps the
 # side-channel surface auditable.
 #

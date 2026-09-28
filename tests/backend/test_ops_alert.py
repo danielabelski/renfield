@@ -199,10 +199,10 @@ class TestPersistedSinceMatchesEnrichedRows:
 
     async def test_original_message_counts_as_persisted(self, db_session, monkeypatch):
         from contextlib import asynccontextmanager
-        from datetime import datetime, timedelta, UTC
+        from datetime import UTC, datetime, timedelta
 
-        from models.database import Notification
         import services.database as db_mod
+        from models.database import Notification
 
         @asynccontextmanager
         async def _session():

@@ -14,7 +14,6 @@ from pathlib import Path
 
 import pytest
 
-
 # Discover the runner script. Mirrors the baseline test's
 # MEMORY_BASELINE_RUNNER_DIR pattern — local dev finds it at
 # parents[2]/bin/, .159 docker container finds it via the env var
@@ -33,8 +32,7 @@ if not (_runner_dir / "run_memory_extraction_eval.py").exists():
 if str(_runner_dir) not in sys.path:
     sys.path.insert(0, str(_runner_dir))
 
-import run_memory_extraction_eval as runner  # noqa: E402
-
+import run_memory_extraction_eval as runner
 
 # ---------------------------------------------------------------------------
 # Fake ops-list type used in the tests — mirrors MemoryOpsList.ops shape
@@ -256,10 +254,10 @@ class _FakeService:
         self._llm_returns = llm_returns
         self.llm_called = False
 
-    def should_extract_memories(self, user_msg, assistant_response):  # noqa: ARG002
+    def should_extract_memories(self, user_msg, assistant_response):
         return self._gate
 
-    async def _call_extract_v2_llm(self, **kwargs):  # noqa: ARG002
+    async def _call_extract_v2_llm(self, **kwargs):
         self.llm_called = True
         return self._llm_returns
 
@@ -276,7 +274,6 @@ class TestRunOneCase:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_gate_blocked_returns_empty_ops_without_llm_call(self):
-        import asyncio
         service = _FakeService(gate_returns=False, llm_returns="should not be reached")
         case = {
             "id": "case-blocked",

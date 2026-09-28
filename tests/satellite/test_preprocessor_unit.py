@@ -12,7 +12,6 @@ Tests for renfield_satellite.audio.preprocessor.AudioPreprocessor:
 
 import numpy as np
 import pytest
-
 from renfield_satellite.audio.preprocessor import AudioPreprocessor
 
 

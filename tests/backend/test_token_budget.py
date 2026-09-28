@@ -1,7 +1,7 @@
 """Tests for Token Budget Enforcement -- progressive prompt reduction."""
 
 import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -10,7 +10,7 @@ import pytest
 if "ollama" not in sys.modules:
     try:
         import ollama  # noqa: F401
-    except Exception:  # noqa: BLE001
+    except Exception:
         sys.modules["ollama"] = MagicMock()
 
 from services.agent_service import AgentContext, AgentService, AgentStep
@@ -85,7 +85,7 @@ class TestEnforceTokenBudget:
                 short_prompt, ctx, "test", None,
                 memory_context="", document_context="", lang="de",
             )
-            prompt, mem, doc, hist = result
+            prompt, mem, doc, _hist = result
             assert prompt == short_prompt
             assert mem == ""
             assert doc == ""
@@ -130,7 +130,7 @@ class TestEnforceTokenBudget:
                 document_context="big doc " * 1000,
                 lang="de",
             )
-            prompt, mem, doc, hist = result
+            prompt, _mem, _doc, _hist = result
             # Memory or document context should have been dropped
             assert len(prompt) < len(large_prompt)
 

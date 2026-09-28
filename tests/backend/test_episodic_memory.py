@@ -5,7 +5,7 @@ Uses in-memory SQLite (no pgvector). Embedding generation is mocked.
 Actual similarity search requires PostgreSQL and is covered by e2e tests.
 """
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import func, select
@@ -18,7 +18,6 @@ from models.database import (
     EpisodicMemory,
 )
 from services.episodic_memory_service import EpisodicMemoryService
-
 
 # ==========================================================================
 # Fixtures
@@ -187,7 +186,7 @@ class TestRetrieveRecent:
     @pytest.mark.unit
     async def test_retrieve_recent_excludes_inactive(self, ep_service, db_session, test_user):
         """Inactive episodes are not returned."""
-        ep = await ep_service.create_episode(
+        _ep = await ep_service.create_episode(
             user_id=test_user.id,
             session_id="session-1",
             summary="Active episode",
@@ -272,7 +271,7 @@ class TestSummarizeOld:
 
             # Create 5 episodes with same topic
             for i in range(5):
-                ep = await ep_service.create_episode(
+                _ep = await ep_service.create_episode(
                     user_id=test_user.id,
                     session_id=f"session-{i}",
                     summary=f"Episode {i} about releases",

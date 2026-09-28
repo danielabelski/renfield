@@ -19,7 +19,6 @@ from services.paperless_example_retriever import (
     fetch_relevant_examples,
 )
 
-
 # ---------------------------------------------------------------------------
 # fetch_relevant_examples — input guards
 # ---------------------------------------------------------------------------

@@ -12,8 +12,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from services.memory_list_tool import (
-    MEMORY_LIST_MAX_LIMIT,
     _VALID_CATEGORIES,
+    MEMORY_LIST_MAX_LIMIT,
     list_my_memories,
 )
 

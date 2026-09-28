@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import time
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
@@ -31,7 +31,6 @@ from services.federation_identity import (
 )
 from services.federation_query_asker import (
     FederationQueryAsker,
-    _final_error,
     _select_endpoint,
 )
 from services.federation_query_schemas import (
@@ -45,14 +44,12 @@ from services.federation_query_schemas import (
     complete_canonical_payload,
 )
 from services.mcp_streaming import (
-    PROGRESS_LABEL_COMPLETE,
     PROGRESS_LABEL_RETRIEVING,
     PROGRESS_LABEL_SYNTHESIZING,
     PROGRESS_LABEL_TOOL_RUNNING,
     ProgressChunk,
 )
 from services.pairing_service import _canonical_bytes
-
 
 # =============================================================================
 # Fixtures

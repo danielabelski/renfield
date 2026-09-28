@@ -70,7 +70,7 @@ class TestConfigSettings:
         with patch.dict(os.environ, {"OLLAMA_MODEL": "custom-model"}):
             from utils.config import Settings
 
-            settings = Settings()
+            _settings = Settings()
             # Note: May need to reload module for this to work
             # This test demonstrates the pattern
 
@@ -153,8 +153,8 @@ class TestSecretsAndDatabaseUrl:
         ``newsapi_key`` were removed entirely (those integrations are now
         configured via MCP servers, not platform Settings fields).
         """
-        from utils.config import Settings
         from ha_glue.utils.config import HaGlueSettings
+        from utils.config import Settings
 
         settings = Settings(database_url=None)
 

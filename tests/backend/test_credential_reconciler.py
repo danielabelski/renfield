@@ -8,7 +8,6 @@ pushes 403'd until re-synced by hand. The reconciler re-seeds the DB token from
 from contextlib import asynccontextmanager
 
 import pytest
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import services.credential_reconciler as cr

@@ -53,7 +53,7 @@ async def _sync_links_best_effort(db: AsyncSession, note: Note, owner_id: int | 
     try:
         async with db.begin_nested():
             await sync_note_links(db, note, owner_id=owner_id)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"note {note.id}: [[link]] sync failed (note saved anyway): {e}")
 
 
@@ -86,7 +86,7 @@ async def embed_note_by_id(note_id: int) -> None:
             resp = await client.embeddings(model=settings.ollama_embed_model, prompt=text_in)
             note.embedding = resp.embedding
             await db.commit()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"note {note_id}: background embedding failed (FTS still covers it): {e}")
 
 
@@ -209,7 +209,7 @@ async def delete_note(db: AsyncSession, note: Note) -> None:
         async with db.begin_nested():
             from services.note_links import deactivate_note_links
             await deactivate_note_links(db, note, owner_id=note.owner_user_id)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"note {note.id}: link teardown failed (deleting anyway): {e}")
 
     atom_id = note.atom_id

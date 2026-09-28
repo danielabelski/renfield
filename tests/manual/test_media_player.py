@@ -14,7 +14,7 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src" / "backend"))
 
 from services.ollama_service import OllamaService
-from utils.config import settings
+
 
 async def test_media_player_intent():
     """Test if media player can be detected"""
@@ -39,7 +39,7 @@ async def test_media_player_intent():
             intent = await ollama.extract_intent(message)
 
             if intent:
-                print(f"✅ Intent erkannt:")
+                print("✅ Intent erkannt:")
                 print(f"   Type: {intent.get('type')}")
                 print(f"   Action: {intent.get('action')}")
                 print(f"   Entity ID: {intent.get('entity_id')}")

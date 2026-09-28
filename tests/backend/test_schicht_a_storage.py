@@ -16,23 +16,24 @@ _missing_stubs = ["asyncpg", "whisper", "piper", "piper.voice", "speechbrain",
                   "speechbrain.inference", "speechbrain.inference.speaker",
                   "openwakeword", "openwakeword.model"]
 import importlib as _importlib
+
 for _mod in _missing_stubs:
     if _mod in sys.modules:
         continue
     try:
         _importlib.import_module(_mod)
-    except Exception:  # noqa: BLE001
+    except Exception:
         sys.modules[_mod] = MagicMock()
 
-from sqlalchemy import select  # noqa: E402
+from sqlalchemy import select
 
-from models.database import (  # noqa: E402
+from models.database import (
     ATOM_TYPE_DOCUMENT_FACT,
     ATOM_TYPE_KB_DOCUMENT,
     Atom,
     DocumentFact,
 )
-from services.atom_service import AtomService  # noqa: E402
+from services.atom_service import AtomService
 
 
 @pytest.mark.asyncio
@@ -41,7 +42,6 @@ class TestFactAtomRoundTrip:
         """create_with_source → DocumentFact insert → finalize_source_id yields a
         fact wrapped by an atom carrying the document's tier."""
         from models.database import Document
-
         from tests.backend.dbrows import ensure_user
 
         await ensure_user(db_session, 1)   # the atom's owner is a foreign key

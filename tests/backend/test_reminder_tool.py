@@ -147,7 +147,7 @@ async def test_missing_trigger_rejected():
 
 @pytest.mark.asyncio
 async def test_parse_error_surfaces_as_tool_failure():
-    svc, p_sess, p_svc = _patches(side_effect=ValueError("Could not parse trigger time: 'bald'"))
+    _svc, p_sess, p_svc = _patches(side_effect=ValueError("Could not parse trigger time: 'bald'"))
     with _enabled(), p_sess, p_svc:
         result = await create_reminder(
             {"message": "x", "trigger_at": "bald"}, user_id=1
@@ -158,7 +158,7 @@ async def test_parse_error_surfaces_as_tool_failure():
 
 @pytest.mark.asyncio
 async def test_unexpected_error_is_caught():
-    svc, p_sess, p_svc = _patches(side_effect=RuntimeError("db down"))
+    _svc, p_sess, p_svc = _patches(side_effect=RuntimeError("db down"))
     with _enabled(), p_sess, p_svc:
         result = await create_reminder(
             {"message": "x", "trigger_at": "in 1 hour"}, user_id=1

@@ -36,7 +36,7 @@ import json
 import secrets
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from loguru import logger
@@ -45,16 +45,14 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.federation_cert_pin import probe_peer_cert_fingerprint
-
 from models.database import (
     Circle,
     CircleMembership,
     PeerUser,
     User,
 )
+from services.federation_cert_pin import probe_peer_cert_fingerprint
 from services.federation_identity import get_federation_identity
-
 
 OFFER_TTL_SECONDS = 600  # 10 minutes — enough to scan + accept, short
                          # enough that a leaked QR code doesn't outlive its usefulness
@@ -145,9 +143,7 @@ def _pop_cached_nonce(nonce: str, initiator_user_id: int) -> bool:
         return False
     if cached.initiator_user_id != initiator_user_id:
         return False
-    if cached.expires_at < int(time.time()):
-        return False
-    return True
+    return cached.expires_at >= int(time.time())
 
 
 def _clear_nonce_cache_for_tests() -> None:

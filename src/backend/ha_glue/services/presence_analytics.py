@@ -12,9 +12,8 @@ from loguru import logger
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import PresenceEvent, Room
-from utils.config import settings
 from ha_glue.utils.config import ha_glue_settings
+from models.database import PresenceEvent, Room
 from utils.hooks import register_hook
 
 

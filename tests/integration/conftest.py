@@ -7,10 +7,10 @@ Provides fixtures for cross-component integration testing:
 - End-to-end test utilities
 """
 
-import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
 import asyncio
+from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 
 # ============================================================================
 # Full System Fixtures

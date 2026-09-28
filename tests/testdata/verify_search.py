@@ -10,9 +10,9 @@ Usage:
 
 import os
 import sys
-import json
-import requests
 import warnings
+
+import requests
 
 warnings.filterwarnings("ignore")
 
@@ -248,7 +248,7 @@ def run_tests():
     print(f"Results: {passed} passed, {failed} failed out of {len(SEARCH_TESTS)}")
 
     if errors:
-        print(f"\nFailure details:")
+        print("\nFailure details:")
         for e in errors:
             print(e)
 
@@ -259,7 +259,7 @@ def run_tests():
         )
         kbs = resp.json()
         total_docs = 0
-        print(f"\nKnowledge Base Stats:")
+        print("\nKnowledge Base Stats:")
         for kb in kbs:
             doc_count = kb.get("document_count", 0)
             total_docs += doc_count

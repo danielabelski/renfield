@@ -137,7 +137,7 @@ async def resolve_meeting_fingerprints(db, meeting, raw_segments: list[dict]) ->
     for fp in existing:
         try:
             u = _unit(SpeakerService.embedding_from_base64(fp.centroid_b64).astype(np.float32))
-        except Exception:  # noqa: BLE001 — a corrupt centroid must not sink matching
+        except Exception:
             u = None
         if u is not None and u.shape == (_DIM,):
             candidates.append((fp, u))

@@ -17,8 +17,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import Atom as AtomModel
 from models.database import DOC_SPLIT_OWNED_STATUSES, Document, KnowledgeBase, User
+from models.database import Atom as AtomModel
 from models.permissions import Permission, has_permission
 from services.atom_service import AtomService
 from services.auth_service import get_optional_user
@@ -26,17 +26,14 @@ from services.database import get_db
 from services.progress import DocumentProgress
 from services.rag_service import DuplicateDocumentError, RAGService
 from services.redis_client import get_redis
-from services.task_queue import DocumentTaskQueue
-from utils.config import settings
 
 # Worker liveness moved to services/task_queue.py (document_worker_is_alive) —
 # it had grown four underscore-private cross-module importers. The local names
 # stay as thin delegates so those importers (chat_upload, folder_ingest,
 # kb_maintenance_tool, pdf-split) and the tests keep working unchanged.
-from services.task_queue import (  # noqa: E402
-    DOCUMENT_WORKER_HEARTBEAT_KEY as _WORKER_HEARTBEAT_KEY,
-)
+from services.task_queue import DocumentTaskQueue
 from services.task_queue import document_worker_is_alive as _worker_is_alive
+from utils.config import settings
 
 
 async def _augment_with_progress(
@@ -1575,7 +1572,7 @@ async def share_knowledge_base(
     if kb.owner_id and target_user.id == kb.owner_id:
         raise HTTPException(status_code=400, detail="User is already the owner")
 
-    from services.kb_shares_service import share_kb, list_kb_shares
+    from services.kb_shares_service import list_kb_shares, share_kb
     await share_kb(
         db, kb_id,
         target_user_id=data.user_id,

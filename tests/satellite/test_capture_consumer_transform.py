@@ -12,7 +12,6 @@ import queue
 import threading
 
 import numpy as np
-
 from renfield_satellite.audio.capture import AudioCapture
 
 

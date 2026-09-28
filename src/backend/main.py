@@ -24,8 +24,8 @@ from api.routes import (
     auth,
     chat,
     chat_upload,
-    simba_ingest,
     circles,
+    document_dedupe,
     email_ingest,
     federation_audit,
     federation_pairing,
@@ -36,19 +36,19 @@ from api.routes import (
     ingest_credentials,
     intents,
     internal_auth,
-    document_dedupe,
     knowledge,
     mcp_health,
     meetings,
     memory,
+    notes,
     notifications,
     pdf_split,
     preferences,
-    notes,
     projects,
     roles,
     scanner_jobs,
     scheduled_tasks,
+    simba_ingest,
     skills,
     speakers,
     tasks,
@@ -62,6 +62,7 @@ from api.routes import mcp as mcp_routes
 from api.routes import settings as settings_routes
 from api.routes import wissensbasis as wissensbasis_routes
 from api.websocket import chat_router, kg_live_router, kiosk_router, user_events_router
+
 # NOTE: device_router, satellite_router, and the HA-specific REST routers
 # (camera, homeassistant, paperless_audit, presence, rooms, satellites)
 # all moved to ha_glue.api.* and are mounted via the register_routes hook
@@ -72,7 +73,6 @@ from services.api_rate_limiter import setup_rate_limiter
 from services.auth_service import get_current_user, require_permission
 from services.database import AsyncSessionLocal
 from services.ollama_service import OllamaService
-from services.websocket_auth import get_token_store
 from utils.config import settings
 from utils.metrics import setup_metrics
 

@@ -21,7 +21,6 @@ import json
 
 from loguru import logger
 
-
 # Keep chips short + scannable; drop anything that's really a sentence/paragraph.
 _MAX_CHIP_CHARS = 80
 
@@ -81,7 +80,10 @@ def _parse_followups(raw: str, count: int) -> list[str]:
     # Fallback: line-based (strip bullets / numbering / quotes).
     if not candidates:
         for line in text.splitlines():
-            s = line.strip().lstrip("-*•0123456789.)• ").strip().strip('"').strip()
+            # Bewusst ein ZEICHENSATZ, kein Praefix: fuehrende Aufzaehlungs-
+            # und Nummerierungszeichen sollen einzeln fallen. (`•` stand hier
+            # doppelt im Satz — wirkungslos, aber irritierend.)
+            s = line.strip().lstrip("-*•0123456789.) ").strip().strip('"').strip()
             if s:
                 candidates.append(s)
 
@@ -170,6 +172,6 @@ async def generate_followups(
         )
         raw = extract_response_content(response) or ""
         return _parse_followups(raw, count)
-    except Exception as e:  # noqa: BLE001 — best-effort; no chips on any failure
+    except Exception as e:
         logger.debug(f"follow-up chip generation skipped: {e}")
         return []

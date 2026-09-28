@@ -26,7 +26,11 @@ from services.turn_extraction import (
     # used to live here, and moved to services/turn_extraction.py so the
     # SATELLITE voice path runs the same extraction instead of a second copy.
     extract_memories_background as _extract_memories_background,  # noqa: F401
+)
+from services.turn_extraction import (
     extract_structured_background as _extract_structured_background,  # noqa: F401
+)
+from services.turn_extraction import (
     spawn_memory_extraction,
     spawn_post_message_hooks,
 )
@@ -534,7 +538,7 @@ async def _route_chat_tts_output(
                 f"⚠️  route_chat_tts_to_device_output handler returned "
                 f"unexpected shape (type={type(result).__name__}); ignoring"
             )
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error(f"❌ Chat TTS routing hook failed: {e}")
     return False
 
@@ -566,7 +570,7 @@ async def _followup_chips_background(
         )
         if chips:
             await websocket.send_json({"type": "followups", "suggested_followups": chips})
-    except Exception as e:  # noqa: BLE001 — best-effort; chips are optional
+    except Exception as e:
         logger.debug(f"follow-up chips skipped: {e}")
 
 
@@ -628,7 +632,7 @@ async def _pending_paperless_confirm(session_id: str) -> str | None:
                 .limit(1)
             )).scalar_one_or_none()
             return str(row.confirm_token) if row else None
-    except Exception as e:  # noqa: BLE001 — bridge is best-effort, never block chat
+    except Exception as e:
         logger.warning(f"⚠️ Pending-confirm lookup failed: {e}")
         return None
 
@@ -1063,7 +1067,7 @@ async def websocket_endpoint(
                         f"📎 Paperless confirm card → commit token "
                         f"{str(confirm_token)[:8]} (session {confirm_sid})"
                     )
-                except Exception as e:  # noqa: BLE001
+                except Exception as e:
                     logger.warning(f"⚠️ Paperless confirm card handoff failed: {e}")
                     await send_ws_error(
                         websocket, WSErrorCode.INTERNAL_ERROR,
@@ -1122,6 +1126,7 @@ async def websocket_endpoint(
                     if da_user_id is not None:
                         from sqlalchemy import select as _select
                         from sqlalchemy.orm import selectinload as _sel
+
                         from models.database import User as _User
                         async with AsyncSessionLocal() as _db:
                             _u = (await _db.execute(
@@ -1165,7 +1170,7 @@ async def websocket_endpoint(
                     if "targetTemp" in _rdata:
                         _frame["targetTemp"] = _rdata["targetTemp"]
                     await websocket.send_json(_frame)
-                except Exception as e:  # noqa: BLE001
+                except Exception as e:
                     logger.warning(f"⚠️ device_action failed: {e}")
                     await websocket.send_json({
                         "type": "device_action_result",
@@ -1355,9 +1360,9 @@ async def websocket_endpoint(
             if user_id is not None:
                 try:
                     from sqlalchemy import select
+                    from sqlalchemy.orm import selectinload
 
                     from models.database import User
-                    from sqlalchemy.orm import selectinload
                     async with AsyncSessionLocal() as db_session:
                         result = await db_session.execute(
                             select(User).options(selectinload(User.role)).where(User.id == int(user_id))
@@ -1438,7 +1443,7 @@ async def websocket_endpoint(
                     validate_artifacts,
                 )
                 for art in validate_artifacts(raw_artifacts):
-                    turn_artifacts.append(art)
+                    turn_artifacts.append(art)  # noqa: B023 — lebt nur in dieser Runde, s. 1427/2404
                     await websocket.send_json(build_artifact_frame(art))
 
             media_shortcut_handled = False
@@ -1523,7 +1528,7 @@ async def websocket_endpoint(
                             f"📎 Paperless confirm handoff → commit token "
                             f"{pending_confirm_token[:8]} (session {msg_session_id})"
                         )
-                    except Exception as e:  # noqa: BLE001 — fall through to agent
+                    except Exception as e:
                         logger.warning(f"⚠️ Paperless confirm handoff failed: {e}")
 
             # Retrieve memory + document context (skipped for transport shortcuts)
@@ -1604,7 +1609,7 @@ async def websocket_endpoint(
                 # Entity ID recognition (pre-routing)
                 _resolved = None
                 try:
-                    from services.reference_resolver import resolve_references, _compiled
+                    from services.reference_resolver import _compiled, resolve_references
                     if _compiled:
                         _resolved = resolve_references(content)
                 except Exception as _e:
@@ -2147,13 +2152,13 @@ async def websocket_endpoint(
                     _fed_sink_lock = asyncio.Lock()
 
                     async def _federation_progress_sink(payload: dict) -> None:
-                        async with _fed_sink_lock:
+                        async with _fed_sink_lock:  # noqa: B023 — Schloss dieser Runde, s. 2147/2183
                             try:
                                 await websocket.send_json({
                                     "type": "agent_federation_progress",
                                     **payload,
                                 })
-                            except Exception as send_err:  # noqa: BLE001
+                            except Exception as send_err:
                                 logger.warning(
                                     f"agent_federation_progress send failed "
                                     f"(peer={str(payload.get('peer_pubkey', '?'))[:12]}…, "
@@ -2537,7 +2542,7 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                                     ).recompute_memory_activation(_conv)
                                     if _changed:
                                         await db_session.commit()
-                            except Exception as _re:  # noqa: BLE001
+                            except Exception as _re:
                                 logger.warning(
                                     f"⚠️ Fork memory recompute failed: {_re}"
                                 )
@@ -2584,7 +2589,7 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                             msg_session_id = _replacement_sid
                             session_state.db_session_id = _replacement_sid
                             register_ws_connection(_replacement_sid, websocket)
-                    except Exception as e:  # noqa: BLE001 — never break the turn
+                    except Exception as e:
                         logger.warning(
                             f"⚠️ Failed to open a replacement conversation: {e}"
                         )

@@ -19,18 +19,18 @@ _missing_stubs = [
     "speechbrain.inference", "speechbrain.inference.speaker",
     "openwakeword", "openwakeword.model",
 ]
-import importlib as _importlib  # noqa: E402
+import importlib as _importlib
 
 for _mod in _missing_stubs:
     if _mod in sys.modules:
         continue
     try:
         _importlib.import_module(_mod)
-    except Exception:  # noqa: BLE001
+    except Exception:
         sys.modules[_mod] = MagicMock()
 
-from services.document_ingest_hooks import register_document_ingest_hooks  # noqa: E402
-from utils.hooks import _hooks, clear_hooks, register_hook  # noqa: E402
+from services.document_ingest_hooks import register_document_ingest_hooks
+from utils.hooks import _hooks, clear_hooks, register_hook
 
 _EVENT = "post_document_ingest"
 

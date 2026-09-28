@@ -26,18 +26,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
     EMBEDDING_DIMENSION,
-    CircleMembership,
-    ProceduralSkill,
-    Role,
     SKILL_SOURCE_AUTO_EXTRACTED,
     SKILL_SOURCE_SEED,
     TIER_HOUSEHOLD,
     TIER_PUBLIC,
     TIER_SELF,
+    CircleMembership,
+    ProceduralSkill,
+    Role,
     User,
 )
 from services.skill_service import SkillService
-
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
 
@@ -97,7 +96,7 @@ async def _membership(
 def _patch_embed(vec: list[float]):
     """Force SkillService._embed to return a fixed query vector so the SQL
     runs against a known embedding (no Ollama round-trip)."""
-    async def _fake(self, _text):  # noqa: ANN001
+    async def _fake(self, _text):
         return vec
     return patch.object(SkillService, "_embed", _fake)
 

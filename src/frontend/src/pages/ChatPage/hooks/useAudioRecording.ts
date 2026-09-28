@@ -202,7 +202,7 @@ export function useAudioRecording({
       const bufferLength = analyserRef.current ? analyserRef.current.frequencyBinCount : 0;
       const dataArray = bufferLength > 0 ? new Uint8Array(bufferLength) : null;
 
-      let recordingStartTime = Date.now();
+      const recordingStartTime = Date.now();
       let lastSoundTime = Date.now();
       let hasSoundDetected = false;
       let checkCount = 0;

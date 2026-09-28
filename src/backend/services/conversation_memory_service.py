@@ -701,7 +701,7 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
             if not memory.subject_name:
                 memory.subject_name = subject
             await self.db.commit()
-        except Exception as e:  # noqa: BLE001 — bridge is best-effort; never break extraction
+        except Exception as e:
             await self.db.rollback()
             logger.warning(
                 f"Memory KG bridge failed for memory #{getattr(memory, 'id', '?')} "
@@ -783,7 +783,7 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
             # canonical_id IS NULL is filtered above, so row[0] is the survivor;
             # keep the tombstone-follow defensively in case the filter is relaxed.
             return row[1] or row[0]
-        except Exception as e:  # noqa: BLE001 — fail-safe to "keep the fact flat"
+        except Exception as e:
             logger.warning(
                 f"Subsume subject resolution failed for subject={subject!r}: {e}"
             )
@@ -933,7 +933,7 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
                 .limit(1)
             )
             return rel.first() is not None
-        except Exception as e:  # noqa: BLE001 — guard is best-effort, fail-safe to flat
+        except Exception as e:
             logger.warning(
                 f"Subsume KG-representability probe failed for subject={subject!r}: {e}"
             )
@@ -1120,6 +1120,7 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
         back to v1.
         """
         import pydantic as _p
+
         from services.memory_ops import MemoryOpsList
         from services.prompt_manager import prompt_manager
         from utils.llm_client import extract_response_content, get_classification_chat_kwargs

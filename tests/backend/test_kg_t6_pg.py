@@ -8,10 +8,9 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import KGEntity, KGRelation, Role, User
+from models.database import KGEntity, Role, User
 from services.knowledge_graph_service import KnowledgeGraphService
 
 

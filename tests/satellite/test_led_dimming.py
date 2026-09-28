@@ -14,8 +14,9 @@ exercised as an unbound method against a lightweight fake `self` holding only
 a fake LED controller (duck-typing matches the real attribute access).
 """
 
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
 
 
 class FakeAPA102LEDs:

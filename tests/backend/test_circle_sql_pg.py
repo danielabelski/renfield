@@ -61,7 +61,6 @@ from services.circle_sql import (
     kg_entities_circles_filter,
 )
 
-
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
 
 

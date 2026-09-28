@@ -83,7 +83,8 @@ async def _user(db_session, uid: int):
     name users that existed nowhere — the ownership gate they assert was a
     comparison between two phantoms.
     """
-    from models.database import Role, User as _U
+    from models.database import Role
+    from models.database import User as _U
 
     role = (await db_session.execute(
         select(Role).where(Role.name == "branching-role")
@@ -275,7 +276,7 @@ class TestActivePathPostgres:
         self, pg_db_session: AsyncSession, branch_user
     ):
         # u0 → a1 → u2 → a3 (a chain). Abandon from a1 → {a1, u2, a3}.
-        conv, ids = await _linear_conv(pg_db_session, "pg-sub", branch_user, 4)
+        _conv, ids = await _linear_conv(pg_db_session, "pg-sub", branch_user, 4)
         svc = ConversationService(pg_db_session)
         subtree = await svc._abandoned_subtree_message_ids(ids[1])
         assert set(subtree) == {ids[1], ids[2], ids[3]}
@@ -284,7 +285,7 @@ class TestActivePathPostgres:
     async def test_deactivate_memories_for_abandoned_subtree(
         self, pg_db_session: AsyncSession, branch_user
     ):
-        conv, ids = await _linear_conv(pg_db_session, "pg-mem", branch_user, 4)
+        _conv, ids = await _linear_conv(pg_db_session, "pg-mem", branch_user, 4)
         # A memory sourced from a message in the abandoned subtree (a3) + one
         # from a kept message (u0).
         mem_abandoned = ConversationMemory(
@@ -462,7 +463,7 @@ class TestCrossConversationIsolationPostgres:
         self, pg_db_session: AsyncSession, two_branch_users
     ):
         ua, ub = two_branch_users
-        conv_a, conv_b, a_root, a_leaf, b_secret = (
+        conv_a, _conv_b, _a_root, a_leaf, b_secret = (
             await self._build_two_conversations_with_cross_pointer(
                 pg_db_session, ua, ub
             )
@@ -484,7 +485,7 @@ class TestCrossConversationIsolationPostgres:
         self, pg_db_session: AsyncSession, messages_fts_installed_branch, two_branch_users
     ):
         ua, ub = two_branch_users
-        conv_a, conv_b, a_root, a_leaf, b_secret = (
+        _conv_a, _conv_b, _a_root, _a_leaf, _b_secret = (
             await self._build_two_conversations_with_cross_pointer(
                 pg_db_session, ua, ub
             )
@@ -629,7 +630,7 @@ class TestRecomputeMemoryActivationPostgres:
     async def test_recompute_is_symmetric_deactivate_then_reactivate(
         self, pg_db_session: AsyncSession, branch_user
     ):
-        conv, u0, a_x, a_y = await _fork_tree(pg_db_session, "pg-recompute", branch_user)
+        conv, _u0, a_x, a_y = await _fork_tree(pg_db_session, "pg-recompute", branch_user)
         mem_x = ConversationMemory(
             user_id=branch_user, content="fact x",
             source_message_id=a_x.id, is_active=True, circle_tier=0,
@@ -694,7 +695,7 @@ class TestDeepestLeafPostgres:
     async def test_deepest_leaf_returns_subtree_tip(
         self, pg_db_session: AsyncSession, branch_user
     ):
-        conv, ids = await _linear_conv(pg_db_session, "pg-deep", branch_user, 4)
+        _conv, ids = await _linear_conv(pg_db_session, "pg-deep", branch_user, 4)
         svc = ConversationService(pg_db_session)
         # Subtree tip of the root = the last message; a leaf resolves to itself.
         assert await svc._deepest_leaf_message_id(ids[0]) == ids[3]
@@ -703,7 +704,7 @@ class TestDeepestLeafPostgres:
     async def test_deepest_leaf_picks_latest_when_subtree_forks(
         self, pg_db_session: AsyncSession, branch_user
     ):
-        conv, u0, a_x, a_y = await _fork_tree(pg_db_session, "pg-deep-fork", branch_user)
+        _conv, u0, _a_x, a_y = await _fork_tree(pg_db_session, "pg-deep-fork", branch_user)
         svc = ConversationService(pg_db_session)
         # u0's subtree {u0, a_x, a_y}; tip = a_y (latest timestamp).
         assert await svc._deepest_leaf_message_id(u0.id) == a_y.id
@@ -736,7 +737,7 @@ class TestBranchMetadataPostgres:
     async def test_branch_metadata_linear_is_empty(
         self, pg_db_session: AsyncSession, branch_user
     ):
-        conv, ids = await _linear_conv(pg_db_session, "pg-meta-lin", branch_user, 4)
+        conv, _ids = await _linear_conv(pg_db_session, "pg-meta-lin", branch_user, 4)
         svc = ConversationService(pg_db_session)
         active = await svc.active_path_message_ids(conv)
         assert await svc.branch_metadata(conv, active) == {}
@@ -752,7 +753,7 @@ class TestDeleteBranchGuardsPostgres:
     async def test_delete_active_path_message_refused(
         self, pg_db_session: AsyncSession, branch_user
     ):
-        conv, ids = await _linear_conv(pg_db_session, "pg-del-active", branch_user, 4)
+        _conv, ids = await _linear_conv(pg_db_session, "pg-del-active", branch_user, 4)
         svc = ConversationService(pg_db_session)
         # ids[2] is on the (linear) active path → "active": refused, no commit.
         status = await svc.delete_branch("pg-del-active", ids[2], user_id=branch_user)
@@ -765,7 +766,7 @@ class TestDeleteBranchGuardsPostgres:
     async def test_delete_foreign_or_unowned_not_found(
         self, pg_db_session: AsyncSession, branch_user
     ):
-        conv, ids = await _linear_conv(pg_db_session, "pg-del-foreign", branch_user, 2)
+        _conv, ids = await _linear_conv(pg_db_session, "pg-del-foreign", branch_user, 2)
         svc = ConversationService(pg_db_session)
         assert await svc.delete_branch("pg-del-foreign", 99999999, user_id=branch_user) == "not_found"
         assert await svc.delete_branch("pg-del-foreign", ids[0], user_id=424242) == "not_found"

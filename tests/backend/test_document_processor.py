@@ -16,6 +16,7 @@ _missing_stubs = [
     "docling.datamodel.base_models",
 ]
 import importlib as _importlib
+
 for _mod in _missing_stubs:
     # Stub ONLY when genuinely unimportable — unconditional stubbing
     # poisons sys.modules for the rest of the session, breaking later
@@ -24,7 +25,7 @@ for _mod in _missing_stubs:
         continue
     try:
         _importlib.import_module(_mod)
-    except Exception:  # noqa: BLE001
+    except Exception:
         sys.modules[_mod] = MagicMock()
 
 from unittest.mock import patch
@@ -574,7 +575,7 @@ def test_ocr_engine_tesseract_falls_back_to_binding_without_cli():
 @pytest.mark.unit
 def test_ocr_engine_tesseract_cli_missing_langs_fails_safe():
     # CLI binary present but deu/eng traineddata missing AND no binding -> EasyOcr.
-    label, kwargs = _build_ocr_opts(
+    label, _kwargs = _build_ocr_opts(
         "tesseract", cli_present=True, cli_langs_ok=False, tesserocr_present=False
     )
     assert label == "easyocr"
@@ -599,7 +600,7 @@ def test_ocr_engine_easyocr_legacy():
 
 # ── VLM re-OCR fallback (rotated/poor scans that Tesseract garbles) ──────────
 
-import pytest as _pytest  # noqa: E402
+import pytest as _pytest
 
 _VLM_GARBLE = (
     "Rechnung KIJ Betrag Bez:-ihl unq Maa KNr lUGB Datum i;5.Lei "

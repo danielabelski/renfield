@@ -320,9 +320,9 @@ class TestTick:
 
         registry.register_handler("h", _h)
         now = _naive_now()
-        due = await _mk(session_factory, name="due", handler_key="h", next_run_at=now - timedelta(seconds=1), params={"id": "due"})
-        future = await _mk(session_factory, name="future", handler_key="h", next_run_at=now + timedelta(hours=1), params={"id": "future"})
-        null_next = await _mk(session_factory, name="null", handler_key="h", next_run_at=None, params={"id": "null"})
+        _due = await _mk(session_factory, name="due", handler_key="h", next_run_at=now - timedelta(seconds=1), params={"id": "due"})
+        _future = await _mk(session_factory, name="future", handler_key="h", next_run_at=now + timedelta(hours=1), params={"id": "future"})
+        _null_next = await _mk(session_factory, name="null", handler_key="h", next_run_at=None, params={"id": "null"})
 
         await engine.run_engine_tick(SimpleNamespace(state=SimpleNamespace()))
         await _drain()
@@ -701,7 +701,6 @@ class TestBatchBCHandlers:
         """The real seed list resolves (every settings.*_interval exists), every
         seed's handler is registered, and no seed is below the engine-tick floor."""
         from services.scheduled_tasks import builtins, engine, registry
-        from utils.config import settings
 
         registry.clear_handlers()
         builtins.register_builtin_handlers()
@@ -786,8 +785,8 @@ class TestRunHistory:
         assert "unknown handler_key" in (runs[0].detail or "")
 
     async def test_retention_prunes_to_limit(self, session_factory, monkeypatch):
-        from utils.config import settings
         from services.scheduled_tasks import engine, registry
+        from utils.config import settings
 
         monkeypatch.setattr(settings, "scheduled_tasks_run_history_limit", 3)
 

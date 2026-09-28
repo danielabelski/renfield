@@ -15,9 +15,8 @@ Coverage:
 from __future__ import annotations
 
 import hashlib
-import ssl
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -25,7 +24,6 @@ from services.federation_cert_pin import (
     _normalize_fingerprint,
     verify_peer_cert_fingerprint,
 )
-
 
 # =============================================================================
 # Pure helpers
@@ -220,7 +218,6 @@ class TestAskerCertPinIntegration:
             reset_federation_identity_for_tests,
         )
         from services.federation_query_asker import FederationQueryAsker
-        from services.mcp_streaming import ProgressChunk
 
         reset_federation_identity_for_tests()
         init_federation_identity(tmp_path / "key")

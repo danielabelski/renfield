@@ -339,7 +339,7 @@ async def test_rerank_reorders_and_reduces(rag_retrieval):
     }
 
     async def mock_embeddings_fn(model, prompt):
-        key = prompt[:20].strip()
+        _key = prompt[:20].strip()
         for k, v in mock_embeddings.items():
             if k in prompt[:50]:
                 resp = MagicMock()

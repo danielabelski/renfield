@@ -27,7 +27,6 @@ from services.federation_query_schemas import (
     QueryBrainRetrieveResponse,
 )
 
-
 router = APIRouter()
 
 

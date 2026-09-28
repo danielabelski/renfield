@@ -82,7 +82,7 @@ async def _check(client: httpx.AsyncClient, target: WatchdogTarget) -> str | Non
     """
     try:
         response = await client.get(target.url)
-    except Exception as e:  # noqa: BLE001 — unreachable in any form is the signal
+    except Exception as e:
         return f"{type(e).__name__}"
     if response.status_code >= 300:
         return f"HTTP {response.status_code}"

@@ -11,7 +11,6 @@ import pytest
 
 from utils.content_quality import filter_low_quality, is_low_quality_text
 
-
 # Real garbage chunks pulled from the production document_chunks table
 # (Paperless failed-OCR output) on 2026-05-26.
 # Note: the heuristic intentionally targets the truly-broken cases

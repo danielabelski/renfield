@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 import pytest
 
 import services.paperless_filing_hook as pfh
-from models.database import PAPERLESS_STATE_DONE, PAPERLESS_STATE_FAILED, PAPERLESS_STATE_PENDING
+from models.database import PAPERLESS_STATE_FAILED, PAPERLESS_STATE_PENDING
 
 
 def _doc(**kw):

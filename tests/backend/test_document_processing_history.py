@@ -11,7 +11,7 @@ Two test layers:
 from __future__ import annotations
 
 import os
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 import pytest
 from sqlalchemy import text
@@ -25,7 +25,6 @@ from services.document_processing_history import (
     ProcessingStatus,
     ProcessingTrigger,
 )
-
 
 pytestmark = [
     pytest.mark.database,

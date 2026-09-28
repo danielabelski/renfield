@@ -5,9 +5,8 @@ Tests that verify the API responses match what the frontend expects.
 These tests ensure backend changes don't break the frontend.
 """
 
-import pytest
-from unittest.mock import patch, AsyncMock
 
+import pytest
 
 # ============================================================================
 # Rooms API Contract Tests
@@ -146,7 +145,7 @@ class TestWebSocketMessageContract:
     @pytest.mark.frontend
     def test_state_values(self, mock_websocket_messages):
         """Test: state values are valid"""
-        valid_states = ["idle", "listening", "processing", "speaking"]
+        _valid_states = ["idle", "listening", "processing", "speaking"]
 
         assert mock_websocket_messages["state_idle"]["state"] == "idle"
         assert mock_websocket_messages["state_listening"]["state"] == "listening"

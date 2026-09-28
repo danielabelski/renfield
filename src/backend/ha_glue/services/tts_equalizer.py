@@ -137,6 +137,6 @@ def apply_profile(wav_bytes: bytes, profile_name: str | None) -> bytes:
             writer.writeframes(np.round(processed).astype("<i2").tobytes())
         return out.getvalue()
 
-    except Exception as e:  # noqa: BLE001 — fail-safe by design, see module docstring
+    except Exception as e:
         logger.warning(f"TTS sound profile {profile_name!r} failed — playing unprocessed: {e}")
         return wav_bytes

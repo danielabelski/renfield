@@ -30,7 +30,6 @@ from services.conversation_memory_service import ConversationMemoryService
 from services.memory_ops import MemoryOp, MemoryOpsList, OpType, validate_against_candidates
 from utils.config import settings
 
-
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
 # ---------------------------------------------------------------------------

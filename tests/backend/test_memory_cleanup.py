@@ -6,7 +6,6 @@ Covers:
 - Prometheus metrics calls from cleanup()
 - Background scheduler creation based on memory_enabled flag
 """
-import asyncio
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 

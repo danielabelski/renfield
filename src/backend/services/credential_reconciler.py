@@ -64,7 +64,7 @@ async def _reconcile_ingest_tokens() -> list[str]:
                     f"🔧 credential-reconciler: {label} token seeded from secret "
                     "(DB token was empty — fresh install or DB wipe)"
                 )
-            except Exception as e:  # noqa: BLE001 - never block startup
+            except Exception as e:
                 logger.warning(f"credential-reconciler: {label} check failed: {e}")
     return actions
 
@@ -75,7 +75,7 @@ async def reconcile_credentials() -> list[str]:
     actions: list[str] = []
     try:
         actions += await _reconcile_ingest_tokens()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"credential-reconciler: ingest-token pass failed: {e}")
     if actions:
         logger.info(f"✅ credential-reconciler healed {len(actions)} token(s): {actions}")

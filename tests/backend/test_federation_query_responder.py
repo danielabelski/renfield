@@ -14,7 +14,6 @@ Coverage:
 """
 from __future__ import annotations
 
-import asyncio
 import time
 from unittest.mock import AsyncMock, MagicMock
 
@@ -33,9 +32,9 @@ from services.federation_pending_store import (
     reset_store_for_tests,
 )
 from services.federation_query_responder import (
+    MAX_PROGRESS_UPDATES,
     FederationQueryError,
     FederationQueryResponder,
-    MAX_PROGRESS_UPDATES,
     _clear_state_for_tests,
 )
 from services.federation_query_schemas import (
@@ -47,7 +46,6 @@ from services.federation_query_schemas import (
     QueryBrainRetrieveRequest,
     complete_canonical_payload,
     initiate_canonical_payload,
-    retrieve_canonical_payload,
 )
 from services.mcp_streaming import (
     PROGRESS_LABEL_COMPLETE,
@@ -56,7 +54,6 @@ from services.mcp_streaming import (
 )
 from services.pairing_service import _canonical_bytes
 from utils.config import settings
-
 
 # =============================================================================
 # Fixtures
@@ -325,7 +322,7 @@ class TestDepthAndCycleDetection:
         # Sign with a path that omits the asker's own pubkey.
         req = _sign_initiate(asker_identity, path=["c" * 64])
 
-        with pytest.raises(FederationQueryError, match="path|asker_pubkey"):
+        with pytest.raises(FederationQueryError, match=r"path|asker_pubkey"):
             await responder.handle_initiate(req)
 
     @pytest.mark.asyncio
@@ -485,7 +482,7 @@ class TestBackgroundTaskSession:
         from services import federation_query_responder as fqr
 
         factory_calls = 0
-        real_factory = fqr.AsyncSessionLocal
+        _real_factory = fqr.AsyncSessionLocal
 
         class _TrackedSession:
             """Minimal async-ctx-mgr stand-in for AsyncSession."""
@@ -539,7 +536,6 @@ class TestBackgroundTaskSession:
         anything), the outer try/except must still mark the pending
         as STATUS_FAILED + set answered_at so the asker sees a
         terminal status instead of polling into TTL."""
-        from services import federation_query_responder as fqr
 
         pending = _PendingRequest(
             request_id="bg-test-fail",
@@ -582,7 +578,7 @@ class TestProgressRateLimit:
             initiated_at=time.time(),
         )
         await get_pending_store().put(pending)
-        for i in range(10):
+        for _i in range(10):
             await FederationQueryResponder._emit_progress(pending, PROGRESS_LABEL_SYNTHESIZING)
         assert pending.progress_count == MAX_PROGRESS_UPDATES
 
@@ -597,8 +593,8 @@ class TestEnforceCirclesOnRetrieve:
     @pytest.mark.asyncio
     @pytest.mark.unit
     async def test_retrieve_forces_enforce_circles_true(self, responder_identity, monkeypatch):
-        from services.federation_pending_store import _PendingRequest
         import services.polymorphic_atom_store as pas
+        from services.federation_pending_store import _PendingRequest
 
         captured = {}
 

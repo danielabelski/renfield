@@ -20,10 +20,10 @@ for _mod in ("asyncpg", "whisper", "piper", "piper.voice", "speechbrain",
     if _mod not in sys.modules:
         try:
             __import__(_mod)
-        except Exception:  # noqa: BLE001
+        except Exception:
             sys.modules[_mod] = MagicMock()
 
-from services.schicht_a_extractor import extract_identifiers  # noqa: E402
+from services.schicht_a_extractor import extract_identifiers
 
 _CASES = yaml.safe_load(
     (Path(__file__).parent / "synthetic_cases.yaml").read_text(encoding="utf-8")

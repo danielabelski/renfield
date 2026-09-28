@@ -15,7 +15,6 @@ import asyncio
 import time
 
 import pytest
-
 from renfield_satellite.network.websocket_client import WebSocketClient
 
 

@@ -215,7 +215,7 @@ class RedisPendingStore:
     cross-worker correctness silently — better to fail loud and let
     the operator fix Redis."""
 
-    def __init__(self, redis: "Redis"):
+    def __init__(self, redis: Redis):
         self._r = redis
 
     @staticmethod

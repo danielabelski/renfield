@@ -10,19 +10,19 @@ Tests for renfield_satellite.config.load_config() and config dataclasses:
 """
 
 import os
-import pytest
 from unittest.mock import patch
 
+import pytest
 from renfield_satellite.config import (
-    load_config,
+    AudioConfig,
+    ButtonConfig,
     Config,
+    LEDConfig,
     SatelliteConfig,
     ServerConfig,
-    AudioConfig,
-    WakeWordConfig,
     VADConfig,
-    LEDConfig,
-    ButtonConfig,
+    WakeWordConfig,
+    load_config,
 )
 
 

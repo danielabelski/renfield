@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.input_guard import sanitize_user_input as _sanitize_user_input
 from services.prompt_manager import prompt_manager
 from utils.circuit_breaker import llm_circuit_breaker
 from utils.config import settings
@@ -24,9 +25,6 @@ from utils.llm_client import (
     get_default_client,
     get_embed_client,
 )
-
-from services.input_guard import sanitize_user_input as _sanitize_user_input
-
 
 _VALID_PERSONALITY_STYLES = {"freundlich", "direkt", "formell", "casual"}
 
@@ -306,7 +304,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             content = _re.sub(r"<think>.*?</think>", "", content, flags=_re.DOTALL | _re.IGNORECASE)
             nums = _re.findall(r"\d+", content)
             return int(nums[-1]) if nums else None
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             await llm_circuit_breaker.record_failure()
             logger.warning(f"Vision occupancy count failed: {e}")
             return None
@@ -359,7 +357,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             if "READABLE" in content:
                 return False
             return None
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             await llm_circuit_breaker.record_failure()
             logger.warning(f"OCR gibberish check failed: {e}")
             return None
@@ -411,7 +409,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             content = (resp.message.content if resp and resp.message else "") or ""
             content = _re.sub(r"<think>.*?</think>", "", content, flags=_re.DOTALL | _re.IGNORECASE)
             return content.strip()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             await llm_circuit_breaker.record_failure()
             logger.warning(f"VLM OCR extraction failed: {e}")
             return None

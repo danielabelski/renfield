@@ -22,8 +22,6 @@ punctuation, glyphs, and 1-2 char runs with very few real words.
 """
 from __future__ import annotations
 
-import re
-
 # A MEANINGFUL token carries real content: a word OR a structured/numeric datum.
 # The garbage we filter is glyph noise — single-char runs, punctuation, control
 # glyphs from broken OCR (``- r . : ■ { - n ; ;``). A token is meaningful when it

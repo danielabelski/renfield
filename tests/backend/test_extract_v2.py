@@ -18,7 +18,6 @@ import pytest
 
 from services.conversation_memory_service import ConversationMemoryService
 
-
 # ---------------------------------------------------------------------------
 # _user_lock_key — pure function, no DB / async
 # ---------------------------------------------------------------------------
@@ -148,6 +147,7 @@ class TestExtractV2Gating:
         """v2_shadow=True (authoritative=False) → v1 result returned,
         v2 fired as a background task."""
         import asyncio
+
         from utils.config import settings
         service = self._make_service()
         service._extract_and_save_v1_impl = AsyncMock(return_value=["v1"])

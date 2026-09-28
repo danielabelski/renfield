@@ -25,7 +25,6 @@ from utils.llm_client import (
     use_openai_for_tier,
 )
 
-
 # Strip "_Quelle: ..._" / "_Source: ..._" lines that synthesizer LLMs
 # sometimes write alongside the actual answer. Transports/plugins that
 # attach their own canonical source footer (Reva's transport.py) expect
@@ -142,7 +141,7 @@ def _parse_plan(response_text: str) -> list | None:
 
 if TYPE_CHECKING:
     from services.action_executor import ActionExecutor
-    from services.agent_router import AgentRole, AgentRouter
+    from services.agent_router import AgentRouter
     from services.agent_service import AgentStep
     from services.mcp_client import MCPManager
     from services.ollama_service import OllamaService
@@ -379,7 +378,7 @@ class QueryOrchestrator:
             )
             return valid
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 f"Orchestrator detection timed out after "
                 f"{settings.agent_router_timeout}s — falling back to single-role"
@@ -713,7 +712,7 @@ class QueryOrchestrator:
         # reaches the user. Without this, the UI would render 1 + N
         # answers each with their own greeting.
         sub_results: list[dict] = sub_results_out if sub_results_out is not None else []
-        for sq, result in zip(sub_queries, raw_results):
+        for sq, result in zip(sub_queries, raw_results, strict=True):
             if isinstance(result, BaseException):
                 # Defensive: _run_sub_agent shouldn't raise. If it ever does,
                 # fall back to a canonical-shape failure record so post_orchestration
@@ -850,7 +849,7 @@ class QueryOrchestrator:
         try:
             from utils.metrics import record_orchestrator_render
             record_orchestrator_render(len(sub_results), len(answer_sources))
-        except Exception:  # noqa: BLE001 — metrics must never break the turn
+        except Exception:
             pass
         _dropped = [
             r.get("role", "?") for r in sub_results if r not in answer_sources
@@ -952,14 +951,14 @@ class QueryOrchestrator:
                     if rendered:
                         return rendered
                     reason = "empty_render"
-            except Exception as e:  # noqa: BLE001 — a buggy contract must not break the turn
+            except Exception as e:
                 logger.warning(f"domain contract '{role}' raised, demoting to Tier 2: {e}")
                 reason = "error"
             if reason:
                 try:
                     from utils.metrics import record_contract_demotion
                     record_contract_demotion(role, reason)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
         # Tier 2 — the sub-agent's own answer, verbatim.
         return (sub_result.get("answer") or "").strip()
@@ -1072,7 +1071,7 @@ class QueryOrchestrator:
             answer = extract_response_content(raw_response) or None
             return _strip_source_line(answer) if answer else None
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             # str(TimeoutError()) is empty — log the configured timeout
             # explicitly so ops can see why the fallback triggered.
             logger.warning(

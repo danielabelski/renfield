@@ -7,10 +7,8 @@ Tests complete user scenarios across all components:
 - Multi-device scenarios
 """
 
-import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
-import asyncio
 
+import pytest
 
 # ============================================================================
 # Voice Command Flow Tests
@@ -52,8 +50,8 @@ class TestVoiceCommandFlow:
         # Simulating a command without explicit room
         # "Schalte das Licht ein" → should use device's room
 
-        transcription = "Schalte das Licht ein"
-        room_context = {"room_name": "Wohnzimmer", "room_id": 1}
+        _transcription = "Schalte das Licht ein"
+        _room_context = {"room_name": "Wohnzimmer", "room_id": 1}
 
         # System should resolve to light.wohnzimmer based on room context
         expected_entity = "light.wohnzimmer"

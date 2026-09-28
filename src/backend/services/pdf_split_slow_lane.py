@@ -71,7 +71,7 @@ async def _hand_back_single(db, doc: Document, user_id: int | None) -> None:
         try:
             doc.status = DOC_STATUS_SPLIT_PENDING
             await db.commit()
-        except Exception as re_e:  # noqa: BLE001 - revert is best-effort
+        except Exception as re_e:
             logger.error(
                 f"pdf-split[slow]: hand-back revert failed for doc {doc.id}: {re_e}"
             )

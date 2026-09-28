@@ -46,9 +46,9 @@ def test_presence_read_endpoint_requires_auth_dependency(func_name):
 def test_history_target_guard_blocks_cross_user_without_manage():
     """A ROOMS_READ user may not resolve another user's presence target."""
     from fastapi import HTTPException
-    from models.permissions import Permission
 
     from ha_glue.api.routes.presence import _resolve_history_target
+    from models.permissions import Permission
 
     class _U:
         id = 7

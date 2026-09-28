@@ -74,7 +74,7 @@ class NoteRetrieval:
         except (OperationalError, ProgrammingError):
             logger.error("🔍 Note search: operational DB error — re-raising (not masking as empty)")
             raise
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"🔍 Note search failed (ignored): {e}")
             return []
 
@@ -161,7 +161,7 @@ class NoteRetrieval:
             client = get_embed_client()
             resp = await client.embeddings(model=settings.ollama_embed_model, prompt=query)
             return resp.embedding
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"🔍 Note search: query embed failed, FTS-only: {e}")
             return None
 

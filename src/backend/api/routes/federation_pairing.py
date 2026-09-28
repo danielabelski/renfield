@@ -40,7 +40,6 @@ from services.pairing_service import (
 )
 from utils.config import settings
 
-
 router = APIRouter()
 
 

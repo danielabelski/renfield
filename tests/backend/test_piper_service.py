@@ -5,7 +5,7 @@ in-process via `piper.voice.PiperVoice.load(...)` instead of shelling out to
 the `piper` CLI per request. These tests mock the in-process API.
 """
 import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 # Pre-mock modules not available in test environment. piper.voice is imported
 # at module-load time by piper_service so a real stub must answer attribute

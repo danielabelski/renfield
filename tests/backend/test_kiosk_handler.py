@@ -23,8 +23,8 @@ import pytest
 
 import api.websocket.kiosk_handler as kiosk
 from api.websocket.kiosk_data import (
-    INTERNAL_SUBSYSTEM_LABELS,
     _MAX_SUBSYSTEMS_PER_TURN,
+    INTERNAL_SUBSYSTEM_LABELS,
     broadcast_turn_activity,
     extract_subsystems_used,
 )

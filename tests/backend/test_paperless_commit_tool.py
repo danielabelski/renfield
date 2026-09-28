@@ -23,19 +23,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from services.paperless_commit_tool import (
-    _ABORT_TOKENS,
-    _APPROVE_TOKENS,
-    _MAX_EDIT_ROUNDS,
-    _finalize_paperless_commit,
-    paperless_commit_upload,
-)
-
 # Side-effect import — some tests patch
 # ``services.paperless_metadata_extractor._invalidate_taxonomy_cache``.
 # The attribute is resolved at patch time, so the module must be loaded
 # before ``unittest.mock.patch`` runs or it raises AttributeError.
 import services.paperless_metadata_extractor  # noqa: F401  # side-effect
+from services.paperless_commit_tool import (
+    _ABORT_TOKENS,
+    _APPROVE_TOKENS,
+    _finalize_paperless_commit,
+    paperless_commit_upload,
+)
 
 
 class _NoopSavepoint:

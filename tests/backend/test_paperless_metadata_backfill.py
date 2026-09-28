@@ -12,6 +12,7 @@ What this encodes:
 * the batch is capped and resumable.
 """
 import importlib.util
+import itertools
 import json
 from contextlib import asynccontextmanager
 from datetime import date
@@ -70,8 +71,11 @@ def _factory(session):
     return _cm
 
 
-async def _doc(session, *, pid, doc_date, state=PAPERLESS_STATE_DONE, n=[0]):
-    n[0] += 1
+_DOC_SEQ = itertools.count(1)
+
+
+async def _doc(session, *, pid, doc_date, state=PAPERLESS_STATE_DONE):
+    n = [next(_DOC_SEQ)]
     session.add(Document(
         filename=f"f{n[0]}.pdf", file_path=f"/tmp/f{n[0]}.pdf", status="completed",
         paperless_state=state, paperless_document_id=pid, document_date=doc_date,

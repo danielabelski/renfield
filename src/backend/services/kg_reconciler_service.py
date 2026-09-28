@@ -503,7 +503,7 @@ class KgReconcilerService:
                 if emb:
                     ent.embedding = emb
                     n += 1
-            except Exception as e:  # noqa: BLE001 — leave NULL, retry next pass
+            except Exception as e:
                 logger.warning(
                     f"KG reconciler: embed backfill failed for #{ent.id} {ent.name!r}: {e}"
                 )
@@ -585,7 +585,7 @@ class KgReconcilerService:
                     touched.add(c.loser_id)
                     touched.add(c.winner_id)
                     report.proposed += 1
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 report.notes.append(
                     f"reconcile failed loser={c.loser_id} winner={c.winner_id}: {e}"
                 )

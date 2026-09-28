@@ -19,12 +19,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
     EMBEDDING_DIMENSION,
+    SKILL_SOURCE_SEED,
+    TIER_PUBLIC,
     ProceduralSkill,
     Role,
-    SKILL_SOURCE_AUTO_EXTRACTED,
-    SKILL_SOURCE_SEED,
-    SKILL_SOURCE_USER_CREATED,
-    TIER_PUBLIC,
     User,
 )
 from services.skill_service import SkillService
@@ -62,8 +60,8 @@ async def _load_with_role(db_session: AsyncSession, user_id: int) -> User:
     """Re-select the user with the role eagerly loaded. Without this,
     ``require_permission`` trips MissingGreenlet when it traverses
     ``user.role.has_permission(...)`` in the route's request session."""
-    from sqlalchemy.orm import selectinload
     from sqlalchemy import select as _select
+    from sqlalchemy.orm import selectinload
     row = (await db_session.execute(
         _select(User).where(User.id == user_id).options(selectinload(User.role))
     )).scalar_one()

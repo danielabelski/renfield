@@ -60,11 +60,10 @@ from loguru import logger
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import KGEntity
+from models.database import EMBEDDING_DIMENSION, KGEntity
 from utils.config import settings
 from utils.llm_client import get_default_client, get_embed_client
 from utils.prompt_safety import neutralize_delimiters
-from models.database import EMBEDDING_DIMENSION
 
 
 class KGRetrieval:

@@ -12,7 +12,6 @@ from unittest.mock import AsyncMock
 import pytest
 
 from ha_glue.services.output_providers import (
-    CAP_POWER,
     MediaRef,
     OutputProviderError,
     OutputTarget,
@@ -23,7 +22,6 @@ from ha_glue.services.output_providers import (
     _render_value,
     build_mcp_output_providers,
 )
-
 
 # --- helpers ---------------------------------------------------------------
 

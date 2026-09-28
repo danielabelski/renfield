@@ -159,7 +159,7 @@ async def _hand_back_as_single(
              "skip_split": True}
         )
         return True
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"pdf-split[slow]: hand-back failed for doc {document_id}: {e}")
         return False
 
@@ -172,7 +172,7 @@ async def _heartbeat_loop(
             await redis.set(
                 PDF_SPLIT_WORKER_HEARTBEAT_KEY, consumer_id, ex=HEARTBEAT_TTL_S
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"heartbeat write failed: {e}")
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=HEARTBEAT_INTERVAL_S)
@@ -188,7 +188,7 @@ async def _row_heartbeat_loop(document_id, stop_event: asyncio.Event) -> None:
                 if doc is not None:
                     doc.split_heartbeat_at = datetime.utcnow()
                     await db.commit()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.debug(f"row heartbeat write failed for doc {document_id}: {e}")
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=ROW_HEARTBEAT_REFRESH_S)
@@ -212,7 +212,7 @@ async def _clear_transient(redis: aioredis.Redis, entry_id: str) -> None:
     try:
         await redis.delete(_transient_key(entry_id))
         await redis.delete(_flagpark_key(entry_id))
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.debug(f"transient-counter cleanup failed for {entry_id}: {e}")
 
 
@@ -266,7 +266,7 @@ async def _process_entry(
             # a rollback longer than 7d may single-ingest parked docs — the
             # safe fail-safe outcome, not data loss.
             await redis.expire(fkey, 604_800)
-        except Exception as ie:  # noqa: BLE001
+        except Exception as ie:
             logger.debug(f"flagpark-counter incr failed: {ie}")
         logger.warning(
             f"doc {document_id}: PDF_SPLIT_ENABLED is off — parking entry "
@@ -280,11 +280,11 @@ async def _process_entry(
     if delivery_count > 1:
         try:
             transient_leaves = int(await redis.get(_transient_key(entry.entry_id)) or 0)
-        except Exception:  # noqa: BLE001
+        except Exception:
             transient_leaves = 0
         try:
             flagpark_leaves = int(await redis.get(_flagpark_key(entry.entry_id)) or 0)
-        except Exception:  # noqa: BLE001
+        except Exception:
             flagpark_leaves = 0
         crash_count = delivery_count - transient_leaves - flagpark_leaves
         give_up = None
@@ -326,7 +326,7 @@ async def _process_entry(
                 tkey = _transient_key(entry.entry_id)
                 await redis.incr(tkey)
                 await redis.expire(tkey, 604_800)  # 7d — see flagpark TTL note
-            except Exception as ie:  # noqa: BLE001
+            except Exception as ie:
                 logger.debug(f"transient-counter incr failed: {ie}")
             logger.warning(
                 f"doc {document_id}: transient {type(e).__name__} — leaving in PEL"
@@ -350,7 +350,7 @@ async def _process_entry(
                 logger.error(
                     f"doc {document_id}: terminal {type(e).__name__} — marked failed"
                 )
-            except Exception as me:  # noqa: BLE001
+            except Exception as me:
                 logger.error(
                     f"doc {document_id}: could not record terminal failure ({me}) "
                     f"— leaving in PEL"
@@ -403,7 +403,7 @@ async def main() -> None:
                 try:
                     for stale in await queue.reclaim_stale(min_idle_ms=_RECLAIM_MIN_IDLE_MS):
                         await _process_entry(redis, queue, stale)
-                except Exception as e:  # noqa: BLE001
+                except Exception as e:
                     logger.warning(f"periodic reclaim failed: {e}")
             entry = await queue.read_one(block_ms=5_000)
             if entry is None:

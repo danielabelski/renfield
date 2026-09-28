@@ -12,10 +12,9 @@ from loguru import logger
 
 
 async def ha_announce_in_room(*, room_id: int, text: str) -> dict:
-    from services.database import AsyncSessionLocal
-
     from ha_glue.services.internal_tools import InternalToolService
     from ha_glue.services.room_service import RoomService
+    from services.database import AsyncSessionLocal
 
     async with AsyncSessionLocal() as db:
         room = await RoomService(db).get_room(room_id)

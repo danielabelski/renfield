@@ -2,9 +2,10 @@
 
 Tests all major pages and core chat functionality after Phase 1-4 fixes.
 """
-from playwright.sync_api import sync_playwright, expect
 import os
 import time
+
+from playwright.sync_api import sync_playwright
 
 BASE_URL = "https://renfield.local"
 SCREENSHOTS = os.path.join(os.path.dirname(__file__), "test-screenshots")

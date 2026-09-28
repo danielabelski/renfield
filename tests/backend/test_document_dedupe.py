@@ -12,7 +12,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-import services.document_dedupe_service as dd
 import services.document_dedupe_tool as tool
 from services.document_dedupe_service import DedupeReport, DocumentDedupeService
 
@@ -237,14 +236,14 @@ async def test_resolve_supersede_sets_column_and_approves():
 
 @pytest.mark.asyncio
 async def test_resolve_survivor_override_flips_loser():
-    svc, db = _resolve_session([_rc(), _rc(1)])
+    svc, _db = _resolve_session([_rc(), _rc(1)])
     out = await svc.resolve_proposal(_proposal_obj(), user_id=7, resolution="supersede", survivor_id=45)
     assert out["survivor_id"] == 45 and out["loser_id"] == 44
 
 
 @pytest.mark.asyncio
 async def test_resolve_invalid_survivor_falls_back_to_suggested():
-    svc, db = _resolve_session([_rc(), _rc(1)])
+    svc, _db = _resolve_session([_rc(), _rc(1)])
     out = await svc.resolve_proposal(_proposal_obj(sid=44), user_id=7, resolution="supersede", survivor_id=999)
     assert out["survivor_id"] == 44  # 999 not in the pair → suggested
 
@@ -260,7 +259,7 @@ async def test_resolve_supersede_double_resolve_is_noop(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_resolve_delete_calls_delete_document(monkeypatch):
-    svc, db = _resolve_session([_rc(1)])  # only the proposal claim
+    svc, _db = _resolve_session([_rc(1)])  # only the proposal claim
     rag = MagicMock()
     rag.delete_document = AsyncMock(return_value=True)
     monkeypatch.setattr("services.rag_service.RAGService", MagicMock(return_value=rag))
@@ -272,7 +271,7 @@ async def test_resolve_delete_calls_delete_document(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_resolve_delete_double_resolve_noop(monkeypatch):
-    svc, db = _resolve_session([_rc(0)])  # claim finds 0 rows
+    svc, _db = _resolve_session([_rc(0)])  # claim finds 0 rows
     rag = MagicMock()
     rag.delete_document = AsyncMock(return_value=True)
     monkeypatch.setattr("services.rag_service.RAGService", MagicMock(return_value=rag))

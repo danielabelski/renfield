@@ -10,13 +10,12 @@ Provides endpoints for managing users:
 - Reset password (admin)
 - Link/unlink speaker (admin)
 """
+import re
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from loguru import logger
 from pydantic import BaseModel, EmailStr, Field
-import re
-
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,7 +27,6 @@ from models.permissions import (
     has_permission,
     missing_grantable_permissions,
 )
-from utils.hooks import run_hooks
 from services.auth_service import (
     acquire_last_admin_guard_lock,
     active_admin_ids,
@@ -39,6 +37,7 @@ from services.auth_service import (
 )
 from services.database import get_db
 from services.login_lockout import LockoutStoreUnavailable, login_lockout
+from utils.hooks import run_hooks
 
 router = APIRouter()
 

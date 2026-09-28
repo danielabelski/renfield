@@ -179,7 +179,7 @@ async def test_resave_does_not_duplicate_link_entities_with_seeded_user(
     _enable(monkeypatch, auth=False)
     await _persist_user(db_session, 1, "owner")
 
-    def _note_entity_count() -> "object":
+    def _note_entity_count() -> object:
         return select(func.count()).select_from(KGEntity).where(KGEntity.entity_type == "note")
 
     alpha = (await async_client.post(
@@ -263,7 +263,8 @@ async def test_dense_and_fts_branches_apply_identical_circle_filter(monkeypatch)
 
     (fts_sql, fts_params), (dense_sql, dense_params) = captured[0], captured[1]
     branch_only = {"limit", "or_query", "qemb"}
-    circle = lambda p: {k: v for k, v in p.items() if k not in branch_only}
+    def circle(p):
+        return {k: v for k, v in p.items() if k not in branch_only}
     assert circle(fts_params) == circle(dense_params) and circle(fts_params)  # non-empty + equal
     assert "circle_tier" in fts_sql and "circle_tier" in dense_sql
 

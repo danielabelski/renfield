@@ -12,8 +12,8 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
+from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import AsyncGenerator
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -25,7 +25,6 @@ from services.document_processing_history import (
     DocumentProcessingHistoryService,
     ProcessingTrigger,
 )
-
 
 # Load the script as a module (it's outside the ``src/backend`` package).
 # Path resolution: env var override (used in the .159 container where bin/
@@ -173,7 +172,7 @@ async def _make_doc_with_chunks(
 
 
 @pytest.mark.parametrize("_marker", pgmark)
-class _Skip:  # noqa: D401 — pytest paramaterize-mark workaround
+class _Skip:
     """Decorator carrier so the marks below apply once at class scope."""
 
 

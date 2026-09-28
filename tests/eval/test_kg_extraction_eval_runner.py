@@ -25,7 +25,7 @@ if not (_runner_dir / "run_kg_extraction_eval.py").exists():
 if str(_runner_dir) not in sys.path:
     sys.path.insert(0, str(_runner_dir))
 
-import run_kg_extraction_eval as R  # noqa: E402
+import run_kg_extraction_eval as R
 
 _CORPUS = Path(__file__).resolve().parent / "kg_extraction_eval.yaml"
 

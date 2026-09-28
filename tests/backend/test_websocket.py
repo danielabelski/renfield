@@ -180,11 +180,18 @@ class TestWebSocketMessageParsing:
 
     @pytest.mark.unit
     def test_parse_invalid_json(self):
-        """Test: Ungültiges JSON"""
+        """Test: ein Nicht-dict wird nicht stillschweigend verarbeitet.
+
+        🛑 Der Test hiess „Ungültiges JSON" und prüfte etwas anderes:
+        `parse_ws_message` nimmt ein `dict` (der Aufrufer macht
+        `receive_json`), sie parst nie JSON. Hier kommt eine Zeichenkette an
+        und `data.get("type")` scheitert — das ist ein `AttributeError`, und
+        genau der muss dastehen. Ein blankes `raises(Exception)` haette auch
+        einen Namensfehler im Test bestanden.
+        """
         data = "not valid json"
 
-        # Should handle gracefully
-        with pytest.raises(Exception):
+        with pytest.raises(AttributeError):
             parse_ws_message(data)
 
 
@@ -456,7 +463,7 @@ class TestWebSocketRateLimiting:
 
         # Send 10 messages (should be allowed)
         for _ in range(10):
-            allowed, reason = limiter.check("test-client")
+            allowed, _reason = limiter.check("test-client")
             assert allowed is True
 
     @pytest.mark.unit
@@ -469,16 +476,19 @@ class TestWebSocketRateLimiting:
         # First 5 connections should be allowed (need to add them)
         for i in range(5):
             device_id = f"device-{i}"
-            allowed, reason = limiter.can_connect("192.168.1.1", device_id)
+            allowed, _reason = limiter.can_connect("192.168.1.1", device_id)
             assert allowed is True
             limiter.add_connection("192.168.1.1", device_id)
 
         # 6th connection should be denied
         allowed, reason = limiter.can_connect("192.168.1.1", "device-5")
         assert allowed is False
+        # Der Grund wurde bisher weggeworfen. Er geht an den Client — eine
+        # Ablehnung ohne Begruendung ist im Betrieb nicht diagnostizierbar.
+        assert "max: 5" in reason
 
         # Different IP should be allowed
-        allowed, reason = limiter.can_connect("192.168.1.2", "device-other")
+        allowed, _reason = limiter.can_connect("192.168.1.2", "device-other")
         assert allowed is True
 
 
@@ -856,16 +866,16 @@ class TestWebSocketAuthentication:
         if the token doesn't decode as a JWT, the device-token store
         gets a chance to validate it.
         """
+        from unittest.mock import MagicMock
+
+        # Replace the module singleton with a fresh one for isolation.
+        import services.websocket_auth as ws_auth_mod
         from services.websocket_auth import (
             WSTokenStore,
             authenticate_websocket,
             get_token_store,
         )
         from utils.config import settings
-        from unittest.mock import MagicMock
-
-        # Replace the module singleton with a fresh one for isolation.
-        import services.websocket_auth as ws_auth_mod
         original_store = ws_auth_mod._token_store
         ws_auth_mod._token_store = WSTokenStore()
         try:

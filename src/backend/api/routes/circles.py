@@ -26,13 +26,14 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from loguru import logger
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
     Atom as AtomModel,
+)
+from models.database import (
     Circle,
     CircleMembership,
     Conversation,

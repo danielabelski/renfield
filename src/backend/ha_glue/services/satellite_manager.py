@@ -1052,7 +1052,7 @@ class SatelliteManager:
                 "type": "capture_snapshot", "request_id": request_id,
             })
             return await asyncio.wait_for(fut, timeout=timeout)
-        except (asyncio.TimeoutError, Exception):  # noqa: BLE001
+        except (TimeoutError, Exception):
             return None
         finally:
             self._pending_snapshots.pop(request_id, None)
@@ -1084,7 +1084,7 @@ class SatelliteManager:
                 "params": params or {},
             })
             return await asyncio.wait_for(fut, timeout=timeout)
-        except (asyncio.TimeoutError, Exception):  # noqa: BLE001
+        except (TimeoutError, Exception):
             return None
         finally:
             self._pending_bt_scans.pop(request_id, None)
@@ -1121,9 +1121,9 @@ class SatelliteManager:
                 "params": {"label": label, "window_seconds": window_seconds},
             })
             return await asyncio.wait_for(fut, timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return {"error": "timed out waiting for the satellite"}
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             return {"error": str(e)}
         finally:
             self._pending_irk_captures.pop(request_id, None)
@@ -1233,7 +1233,7 @@ class SatelliteManager:
                 # reconnect-with-backoff loop.
                 try:
                     await websocket.close(code=1001, reason="heartbeat timeout")
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
 
             # Time-bound a stuck OTA run (#1209). The handler now terminates the

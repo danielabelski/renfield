@@ -24,7 +24,6 @@ _VERSION_VALUE_RE = re.compile(r"^\d+(\.\d+)*$")
 from loguru import logger
 
 from ha_glue.services.satellite_manager import UpdateStatus, get_satellite_manager
-from utils.config import settings
 from ha_glue.utils.config import ha_glue_settings
 
 

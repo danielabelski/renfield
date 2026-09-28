@@ -3,7 +3,26 @@ Datenbank Models
 """
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, BigInteger, Boolean, CheckConstraint, Column, Date, DateTime, FetchedValue, Float, ForeignKey, Index, Integer, Numeric, SmallInteger, String, Text, UniqueConstraint, text as sa_text
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    Column,
+    Date,
+    DateTime,
+    FetchedValue,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    SmallInteger,
+    String,
+    Text,
+    UniqueConstraint,
+)
+from sqlalchemy import text as sa_text
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship

@@ -4,7 +4,7 @@ service IRK helpers, and identity-based presence routing.
 """
 import pytest
 
-from services.secret_encryption import decrypt_secret, encrypt_secret, InvalidToken
+from services.secret_encryption import InvalidToken, decrypt_secret, encrypt_secret
 
 IRK_HEX = "3a66fe43118690229991659536ef9a4b"
 

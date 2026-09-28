@@ -274,7 +274,7 @@ class SchichtAExtractor:
                 ) in seen_ident:
                     continue
                 facts.append(f)
-        except Exception as e:  # noqa: BLE001 — extraction is best-effort
+        except Exception as e:
             logger.warning(f"Schicht A LLM extraction failed: {e}")
             error = "llm_extraction_failed"
 
@@ -419,7 +419,7 @@ async def generate_document_title(
         if isinstance(title, str):
             title = " ".join(title.split()).strip().strip('"').strip()[:_MAX_TITLE_LEN]
             return title or None
-    except Exception as e:  # noqa: BLE001 — title synthesis never breaks ingest
+    except Exception as e:
         logger.warning(f"Schicht A title synthesis failed: {e}")
     return None
 
@@ -708,7 +708,7 @@ async def _reindex_lock(bind: Any, document_id: int | None):
         lock_conn = await asyncio.wait_for(
             lock_engine.connect(), timeout=_LOCK_CONN_ACQUIRE_TIMEOUT_S
         )
-    except Exception as e:  # noqa: BLE001 — TimeoutError / pool / connect failure
+    except Exception as e:
         # Degrade to unlocked rather than block or fail the ingest: the guard is
         # best-effort, and a rare duplicate is reconciled by the next reindex.
         logger.warning(
@@ -734,7 +734,7 @@ async def _reindex_lock(bind: Any, document_id: int | None):
                         text("SELECT pg_advisory_unlock(:ns, :doc)"),
                         {"ns": _SCHICHT_A_REINDEX_LOCK_NS, "doc": int(document_id)},
                     )
-                except Exception as e:  # noqa: BLE001
+                except Exception as e:
                     logger.warning(
                         f"Schicht A: advisory unlock failed for doc {document_id} "
                         f"({e!r}); checkin backstop will release it"
@@ -949,7 +949,7 @@ async def schicht_a_post_document_ingest_hook(
                 if title:
                     doc.generated_title = title
                     await db.commit()
-            except Exception as e:  # noqa: BLE001 — title is non-essential
+            except Exception as e:
                 logger.warning(f"Schicht A: title synthesis failed for doc {document_id}: {e}")
 
             # #881: rename the archived folder-ingest copy in the share's
@@ -965,7 +965,7 @@ async def schicht_a_post_document_ingest_hook(
                     filename=doc.filename,
                     generated_title=doc.generated_title,
                 )
-            except Exception as e:  # noqa: BLE001 — archive rename is non-essential
+            except Exception as e:
                 logger.warning(
                     f"Schicht A: processed rename failed for doc {document_id}: {e}"
                 )
@@ -996,7 +996,7 @@ async def schicht_a_post_document_ingest_hook(
                 if ddate is not None and doc.document_date != ddate:
                     doc.document_date = ddate
                     await db.commit()
-            except Exception as e:  # noqa: BLE001 — document_date is non-essential
+            except Exception as e:
                 logger.warning(f"Schicht A: document_date derivation failed for doc {document_id}: {e}")
-    except Exception as e:  # noqa: BLE001 — never fail the ingest on a fact miss
+    except Exception as e:
         logger.warning(f"Schicht A post_document_ingest hook failed: {e}")

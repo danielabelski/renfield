@@ -43,7 +43,7 @@ class TaskSeed:
 # Handlers
 # ---------------------------------------------------------------------------
 
-async def _paperless_dedupe_handler(app: "FastAPI", params: dict) -> str | None:
+async def _paperless_dedupe_handler(app: FastAPI, params: dict) -> str | None:
     """Autonomously drain the Paperless duplicate backlog by calling
     ``mcp.paperless.dedupe_documents`` (recoverable trash, keep-lowest-id). The
     job re-runs each interval until ``remaining`` reaches 0, then idles (a clean
@@ -92,7 +92,7 @@ async def _paperless_dedupe_handler(app: "FastAPI", params: dict) -> str | None:
     return f"deleted={deleted} remaining={remaining} complete={complete}"
 
 
-async def _paperless_index_health_handler(app: "FastAPI", params: dict) -> str | None:
+async def _paperless_index_health_handler(app: FastAPI, params: dict) -> str | None:
     """Fix B: check the Paperless search index for documents it lacks and (with
     ``paperless_index_heal_enabled``) re-index them by a non-destructive re-save.
 
@@ -110,7 +110,7 @@ async def _paperless_index_health_handler(app: "FastAPI", params: dict) -> str |
     return await run_index_health_check(mcp_manager)
 
 
-async def _federation_audit_cleanup_handler(app: "FastAPI", params: dict) -> str | None:
+async def _federation_audit_cleanup_handler(app: FastAPI, params: dict) -> str | None:
     """F4d — retention prune of the federation query audit log (no runtime gate;
     matches the legacy always-on scheduler)."""
     from services.federation_audit import prune_old_audit_rows
@@ -119,7 +119,7 @@ async def _federation_audit_cleanup_handler(app: "FastAPI", params: dict) -> str
     return None
 
 
-async def _upload_cleanup_handler(app: "FastAPI", params: dict) -> str | None:
+async def _upload_cleanup_handler(app: FastAPI, params: dict) -> str | None:
     """Prune old non-indexed chat uploads. Re-asserts the runtime gate (Review
     H4) — the legacy scheduler simply didn't start when the flag was off."""
     if not settings.chat_upload_cleanup_enabled:
@@ -146,7 +146,7 @@ async def _upload_cleanup_handler(app: "FastAPI", params: dict) -> str | None:
 _daypart_watcher_state: dict[str, str | None] = {"last": None}
 
 
-async def _daypart_watcher_handler(app: "FastAPI", params: dict) -> str | None:
+async def _daypart_watcher_handler(app: FastAPI, params: dict) -> str | None:
     """Fire the ``daypart_changed`` hook on a day/evening/night transition (e.g.
     for satellite LED dimming). No runtime gate — always runs; stateless apart
     from the module-level last-seen daypart."""
@@ -166,7 +166,7 @@ async def _daypart_watcher_handler(app: "FastAPI", params: dict) -> str | None:
     return f"{previous} -> {current}"
 
 
-async def _paperless_finalize_reconciler_handler(app: "FastAPI", params: dict) -> str | None:
+async def _paperless_finalize_reconciler_handler(app: FastAPI, params: dict) -> str | None:
     """Restart-safe backstop for the interactive Paperless-commit finalize (#658):
     re-run finalizes still pending past the grace via a live mcp_manager. No gate
     — a cheap no-op when idle (empty query) or when mcp_manager is None."""
@@ -176,7 +176,7 @@ async def _paperless_finalize_reconciler_handler(app: "FastAPI", params: dict) -
     return None
 
 
-async def _mcp_health_monitor_handler(app: "FastAPI", params: dict) -> str | None:
+async def _mcp_health_monitor_handler(app: FastAPI, params: dict) -> str | None:
     """MCP health self-detection: poll the MCP fleet + alert on a new degraded/down
     server. ``monitor_tick`` re-checks ``mcp_health_monitor_enabled`` internally,
     but re-assert it here too (H4 discipline) so the runtime flag fully gates the
@@ -189,7 +189,7 @@ async def _mcp_health_monitor_handler(app: "FastAPI", params: dict) -> str | Non
     return None
 
 
-async def _watchdog_handler(app: "FastAPI", params: dict) -> str | None:
+async def _watchdog_handler(app: FastAPI, params: dict) -> str | None:
     """External HTTP watchdog (A3): probe the configured peers/endpoints.
 
     Deliberately has no alerting of its own — it RAISES on an unreachable target
@@ -210,7 +210,7 @@ async def _watchdog_handler(app: "FastAPI", params: dict) -> str | None:
 # with the flag off. Seeded enabled + in-handler gate (M7) so a ConfigMap flag
 # flip controls the work at runtime, preserving the legacy behavior.
 
-async def _notification_cleanup_handler(app: "FastAPI", params: dict) -> str | None:
+async def _notification_cleanup_handler(app: FastAPI, params: dict) -> str | None:
     if not settings.proactive_enabled:
         return "skipped: proactive_enabled is off"
     from services.database import AsyncSessionLocal
@@ -221,7 +221,7 @@ async def _notification_cleanup_handler(app: "FastAPI", params: dict) -> str | N
     return None
 
 
-async def _memory_cleanup_handler(app: "FastAPI", params: dict) -> str | None:
+async def _memory_cleanup_handler(app: FastAPI, params: dict) -> str | None:
     if not settings.memory_enabled:
         return "skipped: memory_enabled is off"
     from services.conversation_memory_service import ConversationMemoryService
@@ -260,7 +260,7 @@ async def _memory_cleanup_handler(app: "FastAPI", params: dict) -> str | None:
     return None
 
 
-async def _meeting_retention_handler(app: "FastAPI", params: dict) -> str | None:
+async def _meeting_retention_handler(app: FastAPI, params: dict) -> str | None:
     if not settings.meeting_transcription_enabled:
         return "skipped: meeting_transcription_enabled is off"
     from services.meeting_retention import cleanup_meetings
@@ -272,7 +272,7 @@ async def _meeting_retention_handler(app: "FastAPI", params: dict) -> str | None
     return None
 
 
-async def _trajectory_cleanup_handler(app: "FastAPI", params: dict) -> str | None:
+async def _trajectory_cleanup_handler(app: FastAPI, params: dict) -> str | None:
     if not settings.trajectory_capture_enabled:
         return "skipped: trajectory_capture_enabled is off"
     from services.database import AsyncSessionLocal
@@ -283,7 +283,7 @@ async def _trajectory_cleanup_handler(app: "FastAPI", params: dict) -> str | Non
     return None
 
 
-async def _kg_conflation_monitor_handler(app: "FastAPI", params: dict) -> str | None:
+async def _kg_conflation_monitor_handler(app: FastAPI, params: dict) -> str | None:
     if not settings.kg_conflation_monitor_enabled:
         return "skipped: kg_conflation_monitor_enabled is off"
     from services.database import AsyncSessionLocal
@@ -294,7 +294,7 @@ async def _kg_conflation_monitor_handler(app: "FastAPI", params: dict) -> str | 
     return None
 
 
-async def _paperless_reconciler_handler(app: "FastAPI", params: dict) -> str | None:
+async def _paperless_reconciler_handler(app: FastAPI, params: dict) -> str | None:
     if not (settings.folder_ingest_to_paperless or settings.email_ingest_to_paperless):
         return "skipped: folder/email ingest-to-Paperless is off"
     from services.paperless_reconciler import reenqueue_pending_paperless
@@ -305,7 +305,7 @@ async def _paperless_reconciler_handler(app: "FastAPI", params: dict) -> str | N
 
 # --- Phase 3 Batch C: compound-gated / per-user / special --------------------
 
-async def _obligation_deadline_notifier_handler(app: "FastAPI", params: dict) -> str | None:
+async def _obligation_deadline_notifier_handler(app: FastAPI, params: dict) -> str | None:
     # Compound gate (H4): running with proactive off would CONSUME the ledger
     # (mark milestones sent) without delivering — elapsed reminders lost. Require BOTH.
     if not (settings.obligation_notifier_enabled and settings.proactive_enabled):
@@ -316,7 +316,7 @@ async def _obligation_deadline_notifier_handler(app: "FastAPI", params: dict) ->
     return None
 
 
-async def _obligation_digest_handler(app: "FastAPI", params: dict) -> str | None:
+async def _obligation_digest_handler(app: FastAPI, params: dict) -> str | None:
     if not (settings.obligation_digest_enabled and settings.proactive_enabled):
         return "skipped: obligation_digest_enabled AND proactive_enabled required"
     from services.obligation_digest import scan_all_users
@@ -325,7 +325,7 @@ async def _obligation_digest_handler(app: "FastAPI", params: dict) -> str | None
     return None
 
 
-async def _obligation_calendar_sync_handler(app: "FastAPI", params: dict) -> str | None:
+async def _obligation_calendar_sync_handler(app: FastAPI, params: dict) -> str | None:
     if not settings.obligation_calendar_sync_enabled:
         return "skipped: obligation_calendar_sync_enabled is off"
     from services.obligation_calendar_sync import reconcile_all_users
@@ -337,7 +337,7 @@ async def _obligation_calendar_sync_handler(app: "FastAPI", params: dict) -> str
     return None
 
 
-async def _speaker_vocab_rebuild_handler(app: "FastAPI", params: dict) -> str | None:
+async def _speaker_vocab_rebuild_handler(app: FastAPI, params: dict) -> str | None:
     # The legacy scheduler ran only under the OUTER lifespan gate features["voice"]
     # AND speaker_vocab_capture_enabled — re-assert BOTH (the voice flag is easy to miss).
     if not (settings.features.get("voice") and settings.speaker_vocab_capture_enabled):
@@ -351,7 +351,7 @@ async def _speaker_vocab_rebuild_handler(app: "FastAPI", params: dict) -> str | 
     return None
 
 
-async def _skill_curator_handler(app: "FastAPI", params: dict) -> str | None:
+async def _skill_curator_handler(app: FastAPI, params: dict) -> str | None:
     if not (settings.skills_enabled and settings.skill_curator_enabled):
         return "skipped: skills_enabled AND skill_curator_enabled required"
     from services.database import AsyncSessionLocal
@@ -365,12 +365,12 @@ async def _skill_curator_handler(app: "FastAPI", params: dict) -> str | None:
         try:
             async with AsyncSessionLocal() as per_user_db:
                 await SkillCuratorService(per_user_db).run_for_user(uid)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"Skill curator failed for user {uid}: {e}")
     return f"users={len(user_ids)}" if user_ids else None
 
 
-async def _kg_reconciler_handler(app: "FastAPI", params: dict) -> str | None:
+async def _kg_reconciler_handler(app: FastAPI, params: dict) -> str | None:
     if not settings.kg_reconciler_enabled:
         return "skipped: kg_reconciler_enabled is off"
     from services.database import AsyncSessionLocal
@@ -384,12 +384,12 @@ async def _kg_reconciler_handler(app: "FastAPI", params: dict) -> str | None:
         try:
             async with AsyncSessionLocal() as per_user_db:
                 await KgReconcilerService(per_user_db).run_for_user(uid)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"KG reconciler failed for user {uid}: {e}")
     return f"users={len(user_ids)}" if user_ids else None
 
 
-async def _document_dedupe_handler(app: "FastAPI", params: dict) -> str | None:
+async def _document_dedupe_handler(app: FastAPI, params: dict) -> str | None:
     """Autonomous KB near-duplicate DOCUMENT scan (#1170 P3). Per-user; the
     advisory lock (ns 0x4444) lives INSIDE run_for_user on its own dedicated
     connection, so the handler must NOT re-wrap it. Self-gates on the runtime flag
@@ -407,12 +407,12 @@ async def _document_dedupe_handler(app: "FastAPI", params: dict) -> str | None:
             async with AsyncSessionLocal() as per_user_db:
                 report = await DocumentDedupeService(per_user_db).run_for_user(uid)
                 proposed += report.proposed
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"Document dedupe failed for user {uid}: {e}")
     return f"users={len(user_ids)} proposed={proposed}" if user_ids else None
 
 
-async def _low_coverage_reindex_handler(app: "FastAPI", params: dict) -> str | None:
+async def _low_coverage_reindex_handler(app: FastAPI, params: dict) -> str | None:
     """Autonomous self-healing sweep: re-enqueue completed LOW-COVERAGE docs so
     the ingest-time VLM coverage trigger recovers them on re-processing. Self-gates
     on the runtime flag (M7). Drains the pre-fix backlog + future stragglers, then
@@ -428,7 +428,7 @@ async def _low_coverage_reindex_handler(app: "FastAPI", params: dict) -> str | N
     return f"enqueued={report['enqueued']} skipped_attempted={report['skipped_attempted']}"
 
 
-async def _skill_shadow_log_cleanup_handler(app: "FastAPI", params: dict) -> str | None:
+async def _skill_shadow_log_cleanup_handler(app: FastAPI, params: dict) -> str | None:
     if not (settings.skills_enabled and settings.skill_shadow_log_enabled):
         return "skipped: skills_enabled AND skill_shadow_log_enabled required"
     from datetime import UTC, datetime, timedelta
@@ -455,7 +455,7 @@ async def _skill_shadow_log_cleanup_handler(app: "FastAPI", params: dict) -> str
     return f"pruned={deleted}" if deleted else None
 
 
-async def _paperless_ui_edit_sweep_handler(app: "FastAPI", params: dict) -> str | None:
+async def _paperless_ui_edit_sweep_handler(app: FastAPI, params: dict) -> str | None:
     # No enabled flag; needs mcp_manager (skips until it's wired).
     mgr = getattr(app.state, "mcp_manager", None)
     if mgr is None:
@@ -466,7 +466,7 @@ async def _paperless_ui_edit_sweep_handler(app: "FastAPI", params: dict) -> str 
     return None
 
 
-async def _paperless_abandoned_confirm_sweep_handler(app: "FastAPI", params: dict) -> str | None:
+async def _paperless_abandoned_confirm_sweep_handler(app: FastAPI, params: dict) -> str | None:
     # No gate; DB-only (drop stale pending_confirms).
     from services.paperless_ui_edit_sweeper import run_abandoned_confirm_sweep
 
@@ -474,7 +474,7 @@ async def _paperless_abandoned_confirm_sweep_handler(app: "FastAPI", params: dic
     return None
 
 
-async def _placeholder_atom_reaper_handler(app: "FastAPI", params: dict) -> str | None:
+async def _placeholder_atom_reaper_handler(app: FastAPI, params: dict) -> str | None:
     # No gate; DB-only. Reaps orphaned __pending__ placeholder atoms left by a
     # crash between the placeholder INSERT and finalize_source_id (#446). Only
     # rows older than older_than_seconds are reaped so an in-flight create is safe.
@@ -490,7 +490,7 @@ async def _placeholder_atom_reaper_handler(app: "FastAPI", params: dict) -> str 
     return None
 
 
-async def _satellite_fleet_watchdog_handler(app: "FastAPI", params: dict) -> str | None:
+async def _satellite_fleet_watchdog_handler(app: FastAPI, params: dict) -> str | None:
     # Kein Tor; nur Lesen. Vergleicht eingebuchte gegen verbundene Satelliten und
     # meldet die Fehlenden. NICHT `last_authenticated_at` allein: deren Alter
     # misst "Zeit seit dem letzten Neuverbinden", nicht "seit dem letzten
@@ -502,7 +502,7 @@ async def _satellite_fleet_watchdog_handler(app: "FastAPI", params: dict) -> str
     return await check_satellite_fleet()
 
 
-async def _vector_index_threshold_handler(app: "FastAPI", params: dict) -> str | None:
+async def _vector_index_threshold_handler(app: FastAPI, params: dict) -> str | None:
     # Kein Tor; nur Lesen, und nur EXPLAIN (keine Ausfuehrung). Fragt den PLANER,
     # ob er den HNSW-Index naehme, wenn die Abfrage auf halfvec castete — und
     # meldet nur dann. ZAEHLT KEINE ZEILEN: die sagen es nicht vorher (xidra nutzt

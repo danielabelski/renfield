@@ -231,7 +231,7 @@ class TestFrigateClient:
     @pytest.fixture
     def frigate_client(self):
         """Create FrigateClient with test settings"""
-        with patch('ha_glue.integrations.frigate.settings') as mock_settings:
+        with patch('ha_glue.integrations.frigate.ha_glue_settings') as mock_settings:
             mock_settings.frigate_url = "http://frigate.local:5000"
 
             from ha_glue.integrations.frigate import FrigateClient
@@ -276,7 +276,7 @@ class TestFrigateClient:
             )
             mock_get.return_value.raise_for_status = MagicMock()
 
-            result = await frigate_client.get_events(camera="front_door")
+            _result = await frigate_client.get_events(camera="front_door")
 
             mock_get.assert_called_once()
             call_args = mock_get.call_args
@@ -346,7 +346,7 @@ class TestIntegrationEdgeCases:
     @pytest.mark.unit
     async def test_ha_client_timeout(self):
         """Test: HA Client Timeout"""
-        with patch('ha_glue.integrations.homeassistant.settings') as mock_settings:
+        with patch('ha_glue.integrations.homeassistant.ha_glue_settings') as mock_settings:
             mock_settings.home_assistant_url = "http://slow.server"
             mock_settings.home_assistant_token = "token"
 
@@ -362,7 +362,7 @@ class TestIntegrationEdgeCases:
     @pytest.mark.unit
     async def test_frigate_client_not_configured(self):
         """Test: Frigate Client ohne Konfiguration"""
-        with patch('ha_glue.integrations.frigate.settings') as mock_settings:
+        with patch('ha_glue.integrations.frigate.ha_glue_settings') as mock_settings:
             mock_settings.frigate_url = None
 
             from ha_glue.integrations.frigate import FrigateClient

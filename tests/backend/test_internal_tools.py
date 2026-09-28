@@ -248,7 +248,7 @@ class TestResolveRoomPlayer:
         mock_scalars_result = MagicMock()
         mock_scalars_result.scalar_one_or_none.return_value = mock_busy_device
 
-        with _patch_resolve_deps(mock_room_service, mock_routing_service) as ctx:
+        with _patch_resolve_deps(mock_room_service, mock_routing_service) as _ctx:
             # The mock_db from _patch_resolve_deps is an AsyncMock.
             # We need db.execute() to return our mock result for the busy device query.
             # _patch_resolve_deps uses mock_session() which yields mock_db.
@@ -985,7 +985,7 @@ class TestInternalToolServiceExecute:
         with patch.object(internal_tools, "_play_in_room", new_callable=AsyncMock) as mock:
             mock.return_value = {"success": True}
             params = {"media_url": "http://x", "room_name": "Test"}
-            result = await internal_tools.execute("internal.play_in_room", params)
+            _result = await internal_tools.execute("internal.play_in_room", params)
             mock.assert_called_once_with(params)
 
 
@@ -1024,8 +1024,9 @@ class TestGetUserLocation:
     @pytest.mark.unit
     async def test_user_found_in_room(self, internal_tools):
         """User with active presence returns room info."""
-        from ha_glue.services.presence_service import UserPresence
         import time
+
+        from ha_glue.services.presence_service import UserPresence
 
         mock_presence_service = MagicMock()
         mock_presence_service.find_user_by_name.return_value = 1
@@ -1099,8 +1100,9 @@ class TestGetAllPresence:
     @pytest.mark.unit
     async def test_users_present(self, internal_tools):
         """Returns all currently present users."""
-        from ha_glue.services.presence_service import UserPresence
         import time
+
+        from ha_glue.services.presence_service import UserPresence
 
         now = time.time()
         mock_presence_service = MagicMock()
@@ -3474,6 +3476,7 @@ class TestAnnounceInRoom:
                     camera_sat=False, snapshot=None, people=None, fail_closed=False):
         import sys
         from types import ModuleType
+
         from ha_glue.utils.config import ha_glue_settings
 
         mock_db = AsyncMock()
@@ -4228,6 +4231,7 @@ class TestRegisterMediaFollowPresenceFallback:
     @pytest.mark.unit
     def test_presence_room_user_single_vs_ambiguous(self, internal_tools, monkeypatch):
         from types import SimpleNamespace
+
         import ha_glue.services.presence_service as ps
 
         class _PS:
@@ -4245,8 +4249,8 @@ class TestRegisterMediaFollowPresenceFallback:
         assert internal_tools._presence_room_user(2) is None
 
     def _wire(self, internal_tools, monkeypatch, presence_user, captured):
-        from ha_glue.utils.config import ha_glue_settings
         import ha_glue.services.media_follow_service as mfs
+        from ha_glue.utils.config import ha_glue_settings
         monkeypatch.setattr(ha_glue_settings, "media_follow_enabled", True)
         monkeypatch.setattr(internal_tools, "_get_room_id", AsyncMock(return_value=2))
         monkeypatch.setattr(internal_tools, "_presence_room_user", lambda rid: presence_user)

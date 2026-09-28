@@ -8,17 +8,17 @@ reading.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import Message
 import api.websocket.kiosk_data as kiosk_data
 from api.websocket.kiosk_data import (
     compute_kiosk_weather,
     recent_role_activity_entries,
 )
+from models.database import Message
 
 
 async def _make_message(

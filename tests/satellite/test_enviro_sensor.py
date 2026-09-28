@@ -7,9 +7,10 @@ Tests for renfield_satellite.hardware.enviro.EnviroSensor:
 - Lifecycle (open/close)
 """
 
-import pytest
-from unittest.mock import patch, MagicMock
 import sys
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 
 class TestEnviroSensorInit:

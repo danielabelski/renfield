@@ -758,9 +758,9 @@ class TestTier2AuthHardening:
         """#1116: /api/roles/permissions/all is gated on ROLES_VIEW — the gate
         denies an unauthenticated caller when auth is ON, and allows when auth
         is OFF (single-user household unaffected)."""
+        from models.permissions import Permission
         from services import auth_service
         from services.auth_service import require_permission
-        from models.permissions import Permission
 
         checker = require_permission(Permission.ROLES_VIEW)
 

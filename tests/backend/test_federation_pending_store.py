@@ -19,12 +19,12 @@ import pytest
 
 from services.atom_types import Provenance
 from services.federation_pending_store import (
-    InMemoryPendingStore,
     NONCE_WINDOW_SECONDS,
     REQUEST_TTL_SECONDS,
+    InMemoryPendingStore,
     RedisPendingStore,
-    _PendingRequest,
     _from_jsonable,
+    _PendingRequest,
     _to_jsonable,
 )
 from services.federation_query_schemas import (
@@ -32,7 +32,6 @@ from services.federation_query_schemas import (
     STATUS_EXPIRED,
     STATUS_PROCESSING,
 )
-
 
 # =============================================================================
 # Helpers
@@ -396,6 +395,7 @@ class TestRedisErrorTranslation:
         # Build a syntactically valid request (signature must verify so
         # we reach the nonce-record step where the store is touched).
         from cryptography.hazmat.primitives.asymmetric import ed25519
+
         from services.federation_identity import FederationIdentity
         from services.pairing_service import _canonical_bytes
         asker = FederationIdentity(ed25519.Ed25519PrivateKey.generate())

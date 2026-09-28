@@ -18,7 +18,7 @@ for _mod in ("asyncpg", "whisper", "piper", "piper.voice", "speechbrain",
         continue
     try:
         __import__(_mod)
-    except Exception:  # noqa: BLE001
+    except Exception:
         sys.modules[_mod] = MagicMock()
 
 import pytest

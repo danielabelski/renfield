@@ -271,8 +271,15 @@ class TestCheckToolPermission:
         assert result is None
 
     @pytest.mark.unit
-    def test_empty_permissions_denied(self):
-        """Empty user_permissions list → denied."""
+    def test_empty_permissions_denied_without_auth(self):
+        """Empty user_permissions list → denied, auch mit ausgeschalteter Anmeldung.
+
+        🛑 Diese Methode hiess bis 2026-09-27 wie die bei Zeile 178 und stand in
+        DERSELBEN Klasse — Python behaelt die letzte, also hat die andere nie
+        gelaufen. Verdeckt war ausgerechnet die Fail-Closed-Pruefung aus #690
+        (mit `auth_enabled=True`). Ein verdeckter Test ist schlimmer als ein
+        fehlender: er steht in der Liste und zaehlt als Abdeckung.
+        """
         manager, tool = _make_manager_with_tool()
         result = manager._check_tool_permission(tool, [])
         assert result is not None

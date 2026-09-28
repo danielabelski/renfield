@@ -62,16 +62,18 @@ async def _name_candidates(
             params: dict[str, Any] = {"q": q, "n": _CANDIDATES}
             where = [f"d.search_vector @@ ({tsq})"]
             if kb_id is not None:
-                where.append("d.knowledge_base_id = :kb"); params["kb"] = kb_id
+                where.append("d.knowledge_base_id = :kb")
+                params["kb"] = kb_id
             if status:
-                where.append("d.status = :status"); params["status"] = status
+                where.append("d.status = :status")
+                params["status"] = status
             sql = text(
                 "SELECT d.id FROM documents d "
                 f"WHERE {' AND '.join(where)} "
                 f"ORDER BY ts_rank(d.search_vector, ({tsq})) DESC LIMIT :n"
             )
             fts_ids = [r[0] for r in (await db.execute(sql, params)).fetchall()]
-        except Exception as e:  # noqa: BLE001 — a signal never fails the search
+        except Exception as e:
             logger.warning(f"document_search: name FTS failed: {e}")
             fts_ids = []
     ilike_ids = await _name_ilike(db, q, kb_id, status)
@@ -108,7 +110,7 @@ async def _fact_candidates(
             q, asker_id=asker_id, top_k=_CANDIDATES, enforce_circles=enforce_circles
         )
         return _dedup_doc_ids(hits)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"document_search: fact signal failed: {e}")
         return []
 
@@ -123,7 +125,7 @@ async def _chunk_candidates(
             q, top_k=_CANDIDATES, knowledge_base_id=kb_id, user_id=asker_id
         )
         return _dedup_doc_ids(hits)  # best-first by similarity; first hit per doc
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"document_search: chunk signal failed: {e}")
         return []
 
@@ -134,7 +136,8 @@ def _dedup_doc_ids(hits: list[dict[str, Any]]) -> list[int]:
     for h in hits:
         did = h.get("document_id")
         if isinstance(did, int) and did not in seen:
-            seen.add(did); out.append(did)
+            seen.add(did)
+            out.append(did)
     return out
 
 

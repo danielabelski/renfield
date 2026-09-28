@@ -15,11 +15,11 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker
-from unittest.mock import AsyncMock
 
 from services.schicht_a_extractor import (
     _SCHICHT_A_REINDEX_LOCK_NS,
@@ -29,7 +29,6 @@ from services.schicht_a_extractor import (
     _resolve_lock_engine,
     schicht_a_post_document_ingest_hook,
 )
-
 
 # ============================================================================
 # Unit: the helper's non-Postgres no-op path (no DB)

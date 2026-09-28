@@ -8,10 +8,9 @@ control — is gone with the second flag itself: AUTH_ENABLED is now the single
 auth posture. What remains of that check (a leftover, contradicting
 WS_AUTH_ENABLED key) lives in test_config_single_auth_flag.py.
 """
+import pytest
 from loguru import logger as loguru_logger
 from pydantic import SecretStr
-
-import pytest
 
 from utils.config import Settings
 

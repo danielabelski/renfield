@@ -152,7 +152,7 @@ async def evaluate_credential(db: AsyncSession, satellite_id: str, psk: str | No
         # best-effort hardening, never load-bearing for correctness.
         try:
             await asyncio.to_thread(pwd_context.dummy_verify)
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
         return VERDICT_BAD
 

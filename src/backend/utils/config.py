@@ -10,7 +10,6 @@ from loguru import logger
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings
 
-
 # W13 — Names of fields whose Settings-class default is a placeholder
 # meant to fail loudly when running against any real environment. The
 # `Settings.warn_on_changeme_defaults()` validator reads each name's

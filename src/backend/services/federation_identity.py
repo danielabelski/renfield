@@ -31,7 +31,6 @@ from pathlib import Path
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from loguru import logger
 
-
 # Path is overridable for tests via `init_federation_identity(path=...)` and in
 # production via the `federation_identity_key_path` setting (so an operator can
 # point it at a PERSISTED secret mount — the default /app/secrets is ephemeral
@@ -131,7 +130,7 @@ def _resolve_key_path() -> Path:
         if persisted and Path(persisted).is_file():
             return Path(persisted)
         return Path(settings.federation_identity_key_path or _DEFAULT_KEY_PATH)
-    except Exception:  # noqa: BLE001 — config import must never break identity load
+    except Exception:
         return _DEFAULT_KEY_PATH
 
 

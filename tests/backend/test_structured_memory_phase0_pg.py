@@ -32,7 +32,6 @@ from models.database import (
     User,
 )
 
-
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
 
 

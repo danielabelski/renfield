@@ -36,7 +36,6 @@ from __future__ import annotations
 import re
 from collections import Counter
 from datetime import datetime, timedelta
-from typing import Optional
 
 from loguru import logger
 from sqlalchemy import delete, select
@@ -48,6 +47,7 @@ from models.database import (
     SpeakerVocabularyCorpus,
     User,
 )
+
 # Re-exported at module level so tests can patch the symbol directly. The
 # capture + handler functions resolve `AsyncSessionLocal` from this module's
 # namespace, which means a `patch("services.speaker_vocabulary_service.AsyncSessionLocal", ...)`
@@ -74,8 +74,7 @@ _STOPWORDS_DE = frozenset({
     "einer", "eines", "kein", "keine", "keinen", "nicht", "doch", "noch", "nur",
     "auch", "auf", "aus", "bei", "für", "mit", "nach", "über", "unter", "vor",
     "von", "zu", "zur", "zum", "in", "im", "an", "am", "als", "wie", "wo",
-    "ich", "du", "er", "sie", "wir", "ihr", "mein", "dein", "sein", "ihr",
-    "mich", "dich", "uns", "euch", "sich", "diese", "diesem", "diesen", "dieses",
+    "ich", "du", "er", "sie", "wir", "ihr", "mein", "dein", "sein", "mich", "dich", "uns", "euch", "sich", "diese", "diesem", "diesen", "dieses",
 })
 _STOPWORDS_EN = frozenset({
     "the", "and", "but", "for", "with", "from", "this", "that", "these", "those",
@@ -235,7 +234,7 @@ async def vocab_initial_prompt_handler(
     user_id: int | None,
     room_id: int | None,
     language: str,
-) -> Optional[str]:
+) -> str | None:
     """Hook handler that returns a vocab-biased prompt or None.
 
     Falls through to the platform default whenever:

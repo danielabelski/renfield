@@ -17,7 +17,6 @@ import os
 
 import numpy as np
 import pytest
-
 from renfield_satellite.audio.vad import SileroVADLite
 
 CHUNK = 1280  # Aufnahme-Chunk des Satelliten (80 ms @ 16 kHz)

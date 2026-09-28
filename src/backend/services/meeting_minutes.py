@@ -155,7 +155,7 @@ class MinutesExtractor:
             if payload is None:
                 raise ValueError("unparseable minutes response")
             return _normalize_minutes(payload)
-        except Exception as e:  # noqa: BLE001 — best-effort; never break the request
+        except Exception as e:
             logger.warning(f"meeting minutes extraction failed: {e}")
             return empty_minutes()
 

@@ -11,8 +11,8 @@ import asyncio
 
 import pytest
 
-from utils.hooks import clear_hooks, register_hook
 from services.agent_service import _apply_agent_system_prompt_hook
+from utils.hooks import clear_hooks, register_hook
 
 _BASE = "Antworte nur mit JSON."
 

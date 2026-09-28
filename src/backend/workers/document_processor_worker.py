@@ -143,7 +143,7 @@ async def _mark_document_failed(doc_id, error: BaseException) -> bool:
                 doc.error_message = str(error)[:2000]
                 await db.commit()
             return True
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"could not mark doc {doc_id} failed: {e}")
         return False
 
@@ -161,7 +161,7 @@ async def _heartbeat_loop(
             logger.warning(f"heartbeat write failed: {e}")
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=HEARTBEAT_INTERVAL_S)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             continue
 
 
@@ -177,7 +177,7 @@ async def _clear_transient(redis: aioredis.Redis, entry_id: str) -> None:
     """Drop the transient-leave counter once the entry reaches a terminal state."""
     try:
         await redis.delete(_transient_key(entry_id))
-    except Exception as e:  # noqa: BLE001 - cleanup is best-effort
+    except Exception as e:
         logger.debug(f"transient-counter cleanup failed for {entry_id}: {e}")
 
 
@@ -209,7 +209,7 @@ async def _process_entry(
         # (an OOM-kill can't record a leave) should count.
         try:
             transient_leaves = int(await redis.get(_transient_key(entry.entry_id)) or 0)
-        except Exception:  # noqa: BLE001 - a redis hiccup must not misfire the guard
+        except Exception:
             transient_leaves = 0
         crash_count = delivery_count - transient_leaves
         if crash_count > settings.worker_max_deliveries:
@@ -246,7 +246,7 @@ async def _process_entry(
             from services.paperless_filing_hook import refile_document_paperless
 
             await refile_document_paperless(doc_id, user_id=user_id)
-        except Exception as e:  # noqa: BLE001 - never let a refile crash the loop
+        except Exception as e:
             logger.warning(f"paperless_refile for doc {doc_id} failed: {e}")
         await queue.ack(entry.entry_id)
         logger.info(f"paperless_refile doc {doc_id} (entry {entry.entry_id})")
@@ -300,7 +300,7 @@ async def _process_entry(
                         tkey = _transient_key(entry.entry_id)
                         await redis.incr(tkey)
                         await redis.expire(tkey, 86_400)
-                    except Exception as ie:  # noqa: BLE001 - best-effort
+                    except Exception as ie:
                         logger.debug(
                             f"transient-counter incr failed for {entry.entry_id}: {ie}"
                         )
@@ -414,7 +414,7 @@ async def _process_entry(
                 tkey = _transient_key(entry.entry_id)
                 await redis.incr(tkey)
                 await redis.expire(tkey, 86_400)
-            except Exception as ie:  # noqa: BLE001 - best-effort
+            except Exception as ie:
                 logger.debug(f"transient-counter incr failed for {entry.entry_id}: {ie}")
             logger.warning(
                 f"task {entry.entry_id} for doc {doc_id}: transient "
@@ -519,7 +519,7 @@ async def main() -> None:
                 try:
                     for stale in await queue.reclaim_stale():
                         await _process_entry(redis, queue, stale)
-                except Exception as e:  # noqa: BLE001 - reclaim must never kill the loop
+                except Exception as e:
                     logger.warning(f"periodic reclaim failed: {e}")
             entry = await queue.read_one(block_ms=5_000)
             if entry is None:

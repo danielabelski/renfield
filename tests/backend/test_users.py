@@ -290,7 +290,7 @@ class TestUserQueries:
     ):
         """Testet Filterung nach Aktivstatus"""
         result = await db_session.execute(
-            select(User).where(User.is_active == True)
+            select(User).where(User.is_active)
         )
         users = result.scalars().all()
 
@@ -573,8 +573,9 @@ class TestDeleteRefusesToTakeKnowledgeWithIt:
     async def test_refuses_with_409_when_the_account_owns_atoms(
         self, db_session: AsyncSession, test_role: Role
     ):
-        from api.routes import users as users_routes
         from fastapi import HTTPException
+
+        from api.routes import users as users_routes
 
         victim = await self._victim(db_session, "hat-wissen")
         await self._atom_for(db_session, victim.id)
@@ -600,8 +601,9 @@ class TestDeleteRefusesToTakeKnowledgeWithIt:
         PAIRWISE circle_memberships row for every family member, so an account
         can hold nothing but a membership — and `circle_memberships` has three
         blocking FKs to `users.id` of its own."""
-        from api.routes import users as users_routes
         from fastapi import HTTPException
+
+        from api.routes import users as users_routes
         from models.database import CircleMembership
 
         owner = await self._victim(db_session, "kreis-eigner")

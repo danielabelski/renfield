@@ -20,7 +20,6 @@ from models.database import User
 from services.auth_service import get_user_or_default
 from services.federation_audit import list_audit_for_user
 
-
 router = APIRouter()
 
 

@@ -44,7 +44,6 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, TypedDict
 
-
 # =============================================================================
 # Per-source payload shapes
 # =============================================================================
@@ -147,7 +146,7 @@ class Atom:
         created_at: datetime,
         updated_at: datetime,
         payload: dict[str, Any] | None = None,
-    ) -> "Atom":
+    ) -> Atom:
         """
         Construct an Atom from mutable input dicts, deep-copying policy and
         payload so subsequent mutations of the source dicts don't affect this
@@ -200,7 +199,7 @@ class Provenance:
     display_label: str      # e.g., "from Granny's recipes (2024-03)"
     score: float
 
-    def redacted_for_remote(self) -> "Provenance":
+    def redacted_for_remote(self) -> Provenance:
         """
         Returns a copy safe to ship over MCP federation.
 

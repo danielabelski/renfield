@@ -17,7 +17,7 @@ import pytest
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import EMBEDDING_DIMENSION, KGEntity, KGRelation, ConversationMemory, Role, User
+from models.database import EMBEDDING_DIMENSION, ConversationMemory, KGEntity, KGRelation, Role, User
 from services.knowledge_graph_service import KnowledgeGraphService
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]

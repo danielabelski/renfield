@@ -12,7 +12,6 @@ import asyncio
 import json
 
 import pytest
-
 from renfield_satellite.config import ServerConfig, load_config
 from renfield_satellite.network.websocket_client import (
     ConnectionState,

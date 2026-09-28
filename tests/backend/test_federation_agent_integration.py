@@ -12,15 +12,12 @@ Coverage:
 """
 from __future__ import annotations
 
-import time
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from cryptography.hazmat.primitives.asymmetric import ed25519
 
 from services.federation_identity import (
-    FederationIdentity,
     init_federation_identity,
     reset_federation_identity_for_tests,
 )
@@ -33,13 +30,11 @@ from services.mcp_client import (
 )
 from services.mcp_streaming import ProgressChunk
 from services.peer_mcp_registry import (
-    FEDERATION_SERVER_PREFIX,
     QUERY_BRAIN_TOOL_NAME,
     _namespaced_query_brain,
     _server_name_for,
     sync_peers,
 )
-
 
 # =============================================================================
 # F3c.1 — federation routing in MCPManager

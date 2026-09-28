@@ -89,7 +89,7 @@ async def probe_peer_cert_fingerprint(
             asyncio.open_connection(host, port, ssl=ctx),
             timeout=timeout,
         )
-    except (OSError, asyncio.TimeoutError) as e:
+    except (TimeoutError, OSError) as e:
         logger.warning(
             f"Federation cert-pin: could not connect to {host}:{port} for "
             f"pre-flight: {e}"
@@ -116,7 +116,7 @@ async def probe_peer_cert_fingerprint(
         writer.close()
         try:
             await writer.wait_closed()
-        except Exception:  # noqa: BLE001
+        except Exception:
             # Tearing down the probe socket cleanly is best-effort;
             # any error here doesn't affect the verification result.
             pass

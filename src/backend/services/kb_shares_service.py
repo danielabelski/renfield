@@ -38,7 +38,6 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-
 _PERM_RANK = {"read": 1, "write": 2, "admin": 3}
 
 

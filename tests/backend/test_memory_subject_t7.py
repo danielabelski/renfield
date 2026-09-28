@@ -15,9 +15,8 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import ConversationMemory, EMBEDDING_DIMENSION, Role, User
+from models.database import EMBEDDING_DIMENSION, ConversationMemory, Role, User
 from services.conversation_memory_service import ConversationMemoryService
 
 

@@ -31,14 +31,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
     CURATOR_RUN_TYPE_MANUAL,
-    ProceduralSkill,
     SKILL_STATUS_APPROVED,
     SKILL_STATUS_ARCHIVED,
     SKILL_STATUS_DRAFT,
     SKILL_STATUS_REJECTED,
     SKILL_STATUSES,
-    SkillCuratorRun,
     TIER_PUBLIC,
+    ProceduralSkill,
+    SkillCuratorRun,
     User,
 )
 from models.permissions import Permission

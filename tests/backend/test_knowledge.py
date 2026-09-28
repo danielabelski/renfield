@@ -317,7 +317,7 @@ class TestKnowledgeBaseQueries:
         await db_session.commit()
 
         result = await db_session.execute(
-            select(KnowledgeBase).where(KnowledgeBase.is_public == True)
+            select(KnowledgeBase).where(KnowledgeBase.is_public)
         )
         bases = result.scalars().all()
 
@@ -394,10 +394,11 @@ class TestKnowledgeBaseAPI:
         permissions for N KBs, `get_user_kb_permission_levels` is called at
         most ONCE — not N times (the pre-fix behavior that fired one
         atom_explicit_grants query per KB in the response loop)."""
-        from api.routes import knowledge as route_mod
-        from services import kb_shares_service
         from types import SimpleNamespace
         from unittest.mock import AsyncMock, MagicMock
+
+        from api.routes import knowledge as route_mod
+        from services import kb_shares_service
 
         call_counter = {"n": 0}
 
@@ -449,9 +450,7 @@ class TestKnowledgeBaseAPI:
             # Reject KB_ALL so the code reaches the batched grant lookup;
             # reject KB_NONE so it doesn't early-return empty. Anything else
             # (KB_SHARED, KB_OWN) — allow.
-            if perm in (perms_mod.Permission.KB_ALL, perms_mod.Permission.KB_NONE):
-                return False
-            return True
+            return perm not in (perms_mod.Permission.KB_ALL, perms_mod.Permission.KB_NONE)
 
         monkeypatch.setattr(route_mod, "has_permission", grant_all)
 

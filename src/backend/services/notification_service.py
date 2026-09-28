@@ -700,7 +700,7 @@ class NotificationService:
                     f"⚠️  deliver_notification handler returned unexpected "
                     f"shape (type={type(result).__name__}); ignoring"
                 )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"deliver_notification hook failed: {e}")
         return []
 

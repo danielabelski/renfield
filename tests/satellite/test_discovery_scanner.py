@@ -8,12 +8,10 @@ Covers the no-filter BLE scan (every advertising device returned), the Classic
 - a missing hcitool (shutil.which None) falls back to BLE-only.
 """
 
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-
 from renfield_satellite.ble import discovery_scanner
 from renfield_satellite.ble.discovery_scanner import BTDiscoveryScanner
 
@@ -40,7 +38,7 @@ def _hcitool_proc(stdout: bytes = b"", returncode: int = 0, raise_timeout: bool 
 
         async def communicate(self):
             if raise_timeout:
-                raise asyncio.TimeoutError()
+                raise TimeoutError()
             return stdout, b""
 
         async def wait(self):

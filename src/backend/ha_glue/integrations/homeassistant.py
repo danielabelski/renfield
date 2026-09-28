@@ -12,7 +12,6 @@ from typing import Any
 import httpx
 from loguru import logger
 
-from utils.config import settings
 from ha_glue.utils.config import ha_glue_settings
 
 _shared_http_client: httpx.AsyncClient | None = None

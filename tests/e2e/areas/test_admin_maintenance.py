@@ -11,13 +11,11 @@ import re
 
 import pytest
 
-from tests.e2e.helpers import api
 from tests.e2e.helpers.asserts import (
     assert_body_not_blank,
     assert_no_critical_console_errors,
 )
 from tests.e2e.helpers.page import BASE_URL, capture_console_errors
-
 
 pytestmark = pytest.mark.e2e
 

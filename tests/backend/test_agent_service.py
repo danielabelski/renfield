@@ -348,7 +348,7 @@ class TestExtractBlobs:
     def test_handles_list_input(self):
         blob_store = {}
         data = [{"content_base64": "B" * 600}, {"content_base64": "C" * 600}]
-        result = _extract_blobs(data, 5, blob_store)
+        _result = _extract_blobs(data, 5, blob_store)
         assert len(blob_store) == 2
 
 
@@ -947,7 +947,7 @@ class TestAgentServiceRun:
         ollama.client.chat = capturing_chat
         _shared_agent_client.chat = capturing_chat
 
-        steps = await collect_steps(
+        _steps = await collect_steps(
             agent, message="Und morgen?", ollama=ollama, executor=executor,
             conversation_history=history
         )
@@ -1520,7 +1520,7 @@ class TestAgentCircuitBreakerIntegration:
         # Run multiple times to open the circuit
         for _ in range(3):
             try:
-                steps = await collect_steps(
+                _steps = await collect_steps(
                     agent, message="Test", ollama=ollama, executor=executor
                 )
             except Exception:
@@ -1789,7 +1789,7 @@ class TestExtractBlobsMeta:
             "mime_type": "application/pdf",
             "content_base64": "A" * 600,
         }
-        result = _extract_blobs(data, 2, blob_store, blob_meta)
+        _result = _extract_blobs(data, 2, blob_store, blob_meta)
         assert "$blob:step2_content_base64" in blob_store
         assert 2 in blob_meta
         assert blob_meta[2]["filename"] == "invoice.pdf"
@@ -1801,7 +1801,7 @@ class TestExtractBlobsMeta:
         """Blob extraction without blob_meta param should not crash."""
         blob_store = {}
         data = {"content_base64": "A" * 600}
-        result = _extract_blobs(data, 2, blob_store)
+        _result = _extract_blobs(data, 2, blob_store)
         assert "$blob:step2_content_base64" in blob_store
 
 

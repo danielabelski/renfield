@@ -18,10 +18,12 @@ from typing import NamedTuple
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from loguru import logger
 
+from api.websocket.shared import get_whisper_service, send_ws_error
 from ha_glue.services.opus_transport import (
     BinaryFrameError,
     parse_audio_frame,
 )
+from ha_glue.utils.config import ha_glue_settings
 from models.websocket_messages import WSErrorCode
 from services.database import AsyncSessionLocal
 from services.turn_extraction import (
@@ -33,9 +35,6 @@ from services.wakeword_config_manager import get_wakeword_config_manager
 from services.websocket_auth import WSAuthError, authenticate_websocket
 from services.websocket_rate_limiter import get_connection_limiter, get_rate_limiter
 from utils.config import settings
-from ha_glue.utils.config import ha_glue_settings
-
-from api.websocket.shared import get_whisper_service, send_ws_error
 
 router = APIRouter()
 
@@ -195,7 +194,7 @@ def _spawn_satellite_extraction(
                 lang=lang,
             )
         return spawn
-    except Exception as e:  # noqa: BLE001 — extraction must never break the turn
+    except Exception as e:
         logger.warning(f"⚠️ Satellite-Extraktion konnte nicht gestartet werden: {e}")
         return None
 
@@ -294,7 +293,7 @@ async def _reject_derostered_heartbeat(websocket, satellite_id: str, manager) ->
     )
     try:
         await websocket.close(code=1001, reason="re-register required")
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
     return True
 
@@ -405,7 +404,7 @@ async def _load_device_account() -> tuple[int, list[str]] | None:
             global _device_account_warned
             _device_account_warned = False
             return usr.id, usr.get_permissions()
-    except Exception as e:  # noqa: BLE001 — a DB hiccup must not fail open
+    except Exception as e:
         logger.warning(f"⚠️ Gerätekonto konnte nicht geladen werden: {e}")
         return None
 
@@ -1351,7 +1350,7 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                             _subs,
                             action_result.get("success") if action_result else None,
                         )
-                    except Exception as e:  # noqa: BLE001 — never break the turn on a push
+                    except Exception as e:
                         logger.debug(f"kiosk turn_activity (voice) broadcast failed: {e}")
 
                     # Update in-memory conversation history (keep max 5 exchanges = 10 messages)

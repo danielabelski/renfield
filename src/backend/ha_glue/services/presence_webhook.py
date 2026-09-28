@@ -3,7 +3,6 @@
 import httpx
 from loguru import logger
 
-from utils.config import settings
 from ha_glue.utils.config import ha_glue_settings
 from utils.hooks import register_hook
 

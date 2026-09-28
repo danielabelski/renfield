@@ -45,9 +45,8 @@ concat trigger sets and let the winner's body win.
 """
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 
 from loguru import logger
 from sqlalchemy import case, func, select, text, update
@@ -61,10 +60,10 @@ from models.database import (
     CURATOR_RUN_TYPE_MANUAL,
     CURATOR_RUN_TYPE_SCHEDULED,
     EMBEDDING_DIMENSION,
-    ProceduralSkill,
     SKILL_SOURCE_SEED,
     SKILL_STATUS_APPROVED,
     SKILL_STATUS_ARCHIVED,
+    ProceduralSkill,
     SkillCuratorRun,
 )
 from services.skill_service import SkillService
@@ -123,7 +122,7 @@ class SkillCuratorService:
                 await self.merge_pair(pair.loser_id, pair.winner_id)
                 merged_ids.add(pair.loser_id)
                 report.merges_applied += 1
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 report.notes.append(
                     f"merge failed loser={pair.loser_id} winner={pair.winner_id}: {e}"
                 )
@@ -131,7 +130,7 @@ class SkillCuratorService:
         try:
             archived = await self.archive_stale(user_id=user_id)
             report.stale_archived = archived
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             report.notes.append(f"stale archive failed: {e}")
 
         if report.merges_applied or report.stale_archived:
@@ -527,7 +526,7 @@ class SkillCuratorService:
                 totals["duplicate_pairs_merged"] += report.merges_applied
                 totals["stale_skills_archived"] += report.stale_archived
                 notes.extend(report.notes)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 notes.append(f"user={uid} run_for_user failed: {e}")
 
         # ``skills_examined`` = approved skills considered (rough count

@@ -84,7 +84,7 @@ async def _load_cursor() -> int:
     try:
         raw = await get_redis().get(CURSOR_KEY)
         page = int(raw) if raw is not None else 1
-    except Exception as e:  # noqa: BLE001 — a lost cursor only restarts the walk
+    except Exception as e:
         logger.debug(f"paperless-index-health: cursor read failed ({e}); page 1")
         return 1
     return page if page >= 1 else 1
@@ -93,28 +93,28 @@ async def _load_cursor() -> int:
 async def _save_cursor(page: int) -> None:
     try:
         await get_redis().set(CURSOR_KEY, str(page))
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.debug(f"paperless-index-health: cursor write failed ({e})")
 
 
 async def _probe_proven() -> bool:
     try:
         return bool(await get_redis().get(PROOF_KEY))
-    except Exception:  # noqa: BLE001 — no proof on record = the conservative default
+    except Exception:
         return False
 
 
 async def _remember_proof() -> None:
     try:
         await get_redis().set(PROOF_KEY, "1", ex=PROOF_TTL_SECONDS)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.debug(f"paperless-index-health: proof write failed ({e})")
 
 
 async def _exhausted_ids() -> set[int]:
     try:
         return set(_ids(await get_redis().smembers(EXHAUSTED_KEY)))
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.debug(f"paperless-index-health: ledger read failed ({e})")
         return set()
 
@@ -128,7 +128,7 @@ async def _clear_ledger(ids: list[int]) -> None:
         keys = [str(i) for i in ids]
         await r.hdel(ATTEMPTS_KEY, *keys)
         await r.srem(EXHAUSTED_KEY, *keys)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.debug(f"paperless-index-health: ledger clear failed ({e})")
 
 
@@ -147,7 +147,7 @@ async def _record_failures(ids: list[int]) -> list[int]:
                 newly.append(i)
         await r.expire(ATTEMPTS_KEY, LEDGER_TTL_SECONDS)
         await r.expire(EXHAUSTED_KEY, LEDGER_TTL_SECONDS)
-    except Exception as e:  # noqa: BLE001 — without a ledger the heal just retries
+    except Exception as e:
         logger.warning(f"paperless-index-health: ledger write failed ({e})")
     return newly
 

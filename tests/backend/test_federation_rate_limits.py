@@ -32,7 +32,6 @@ from services.federation_rate_limits import (
     reset_for_tests,
 )
 
-
 # =============================================================================
 # Unit — registries in isolation
 # =============================================================================
@@ -293,7 +292,7 @@ class TestResponderSideIntegration:
         assert resp.request_id
 
         # Second call exhausts → rejected with rate-limit error.
-        with pytest.raises(FederationQueryError, match="[Rr]ate limit"):
+        with pytest.raises(FederationQueryError, match=r"[Rr]ate limit"):
             await responder.handle_initiate(build_req(secrets.token_hex(16)))
 
         reset_federation_identity_for_tests()

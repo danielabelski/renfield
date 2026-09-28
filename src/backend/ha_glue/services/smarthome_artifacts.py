@@ -343,7 +343,7 @@ def _devperroom_prose(room_labels: list[str], counts_for_rooms: list[int],
         )
     # A compact "Raum (n)" legend so the bar order is self-describing.
     legend = ", ".join(
-        f"{r} ({c})" for r, c in zip(room_labels, counts_for_rooms)
+        f"{r} ({c})" for r, c in zip(room_labels, counts_for_rooms, strict=True)
     )
     if is_de:
         base = f"Geräte pro Raum (von links nach rechts): {legend}."
@@ -365,6 +365,6 @@ async def _safe_entity_map(producer: str) -> list[dict]:
     try:
         from ha_glue.integrations.homeassistant import HomeAssistantClient
         return await HomeAssistantClient().get_entity_map()
-    except Exception as e:  # noqa: BLE001 — HA down must degrade to prose, not crash
+    except Exception as e:
         logger.warning(f"smarthome_artifacts[{producer}]: HA entity map fetch failed: {e}")
         return []

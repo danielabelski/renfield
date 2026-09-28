@@ -29,7 +29,6 @@ from models.database import (
     WBRetrospectiveAnnotation,
 )
 
-
 # ---------------------------------------------------------------------------
 # Unit: model declarations match design
 # ---------------------------------------------------------------------------
@@ -116,7 +115,7 @@ async def test_atom_purge_archives_legal_hold_rows(db_session):
       - atoms row gone
       - returned count == 1 (the archived row)
     """
-    from services.atom_purge_service import AtomPurgeService, ARCHIVE_REASON_GDPR_PURGE
+    from services.atom_purge_service import ARCHIVE_REASON_GDPR_PURGE, AtomPurgeService
 
     # The shared Postgres test database, not a private sqlite engine: the
     # models declare Postgres-only column types (TSVECTOR), and the PRAGMA

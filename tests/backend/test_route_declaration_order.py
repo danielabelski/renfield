@@ -61,7 +61,7 @@ def _shadows(static_path: str, param_path: str) -> bool:
     p_parts = param_path.strip("/").split("/")
     if len(s_parts) != len(p_parts):
         return False
-    for s_seg, p_seg in zip(s_parts, p_parts):
+    for s_seg, p_seg in zip(s_parts, p_parts, strict=True):
         if p_seg.startswith("{"):
             # ``{name}``  → matches anything → shadow risk
             # ``{name:int}`` → only digits

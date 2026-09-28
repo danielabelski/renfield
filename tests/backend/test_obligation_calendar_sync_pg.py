@@ -279,7 +279,8 @@ class TestCalendarPrefRoutes:
     async def test_put_pref_validates_and_persists(self, pg_db_session, monkeypatch):
         _commit_as_flush(pg_db_session, monkeypatch)
         from fastapi import HTTPException
-        from api.routes.atoms import set_calendar_pref, get_calendar_pref, SetCalendarPrefRequest
+
+        from api.routes.atoms import SetCalendarPrefRequest, get_calendar_pref, set_calendar_pref
         owner = await _make_user(pg_db_session, "pref_put")
         req = self._req(FakeMcp())
         # invalid calendar → 400
@@ -303,7 +304,7 @@ class TestCalendarPrefRoutes:
         # F2: turning sync off must remove the user's already-synced events
         # (not orphan them in the calendar forever).
         _commit_as_flush(pg_db_session, monkeypatch)
-        from api.routes.atoms import set_calendar_pref, SetCalendarPrefRequest
+        from api.routes.atoms import SetCalendarPrefRequest, set_calendar_pref
         owner = await _make_user(pg_db_session, "cal_teardown")
         await _set_pref(pg_db_session, owner.id, "family")
         await _mk_obligation(pg_db_session, owner, ob_date=TODAY + dt.timedelta(days=10))

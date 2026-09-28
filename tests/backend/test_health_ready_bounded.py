@@ -184,7 +184,6 @@ async def test_liveness_touches_no_dependency(monkeypatch):
     """k8s liveness points at /health/live. If it ever grew a DB check, a DB outage
     would restart every replica — so a dead DB must not change its answer."""
     import main
-
     from services import health_check
 
     def _boom():

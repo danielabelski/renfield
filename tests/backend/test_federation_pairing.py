@@ -13,11 +13,9 @@ Coverage:
 from __future__ import annotations
 
 import time
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.federation_identity import (
     FederationIdentity,
@@ -31,10 +29,9 @@ from services.pairing_service import (
     PairingOffer,
     PairingResponse,
     PairingService,
-    _clear_nonce_cache_for_tests,
     _canonical_bytes,
+    _clear_nonce_cache_for_tests,
 )
-
 
 # =============================================================================
 # Fixtures
@@ -276,6 +273,7 @@ class TestCompleteHandshake:
         """Replay: use the same valid response twice. Second call fails
         because the nonce was consumed on the first call."""
         from unittest.mock import AsyncMock
+
         from services import pairing_service as ps
 
         svc = PairingService(db=MagicMock())
@@ -298,6 +296,7 @@ class TestCompleteHandshake:
     @pytest.mark.unit
     async def test_bad_tier_rejected(self, tmp_identity, mock_user, monkeypatch):
         from unittest.mock import AsyncMock
+
         from services import pairing_service as ps
 
         svc = PairingService(db=MagicMock())
@@ -321,6 +320,7 @@ class TestCompleteHandshake:
         before the nonce pop — a forged attempt leaves the nonce
         available for the real responder's follow-up."""
         from unittest.mock import AsyncMock
+
         from services import pairing_service as ps
 
         svc = PairingService(db=MagicMock())
@@ -358,14 +358,16 @@ class TestFullHandshakeRoundtrip:
     @pytest.mark.unit
     async def test_full_roundtrip(self, tmp_path, monkeypatch):
         from unittest.mock import AsyncMock
+
+        from cryptography.hazmat.primitives.asymmetric import ed25519
+
         from services import pairing_service as ps
         from services.federation_identity import (
             FederationIdentity,
-            reset_federation_identity_for_tests,
-            init_federation_identity,
             get_federation_identity,
+            init_federation_identity,
+            reset_federation_identity_for_tests,
         )
-        from cryptography.hazmat.primitives.asymmetric import ed25519
 
         _clear_nonce_cache_for_tests()
 

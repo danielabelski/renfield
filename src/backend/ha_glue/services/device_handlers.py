@@ -25,7 +25,6 @@ from typing import Any
 
 from loguru import logger
 
-
 # ---------------------------------------------------------------------------
 # /health device count
 # ---------------------------------------------------------------------------
@@ -45,7 +44,7 @@ async def ha_get_connected_device_summary() -> dict | None:
             "connected": len(dm.devices),
             "active_sessions": len(dm.sessions),
         }
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.debug(f"ha_glue get_connected_device_summary failed: {e}")
         return None
 
@@ -110,7 +109,7 @@ async def ha_deliver_notification(
                 if isinstance(r, bool):
                     surface_allowed = r
                     break
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"Privacy gate error, suppressing delivery: {e}")
             surface_allowed = False
 
@@ -129,7 +128,7 @@ async def ha_deliver_notification(
                 try:
                     await device.websocket.send_json(ws_message)
                     delivered_ids.append(device.device_id)
-                except Exception as e:  # noqa: BLE001
+                except Exception as e:
                     logger.warning(f"⚠️ Notification delivery failed for {device.device_id}: {e}")
         logger.info(f"📤 Notification #{notification.id} an {len(delivered_ids)} Geräte gesendet")
     else:
@@ -168,8 +167,8 @@ async def _deliver_notification_tts(notification: Any) -> bool:
             # NOTE: audio_output_service + output_routing_service still live
             # in services/ until Phase B.3. Imports update in that sweep.
             from ha_glue.services.audio_output_service import get_audio_output_service
-            from services.database import AsyncSessionLocal
             from ha_glue.services.output_routing_service import OutputRoutingService
+            from services.database import AsyncSessionLocal
 
             async with AsyncSessionLocal() as db_session:
                 routing_service = OutputRoutingService(db_session)
@@ -211,11 +210,11 @@ async def _deliver_notification_tts(notification: Any) -> bool:
                     })
                     logger.info(f"🔊 TTS an {device.device_id} gesendet")
                     return True
-                except Exception as e:  # noqa: BLE001
+                except Exception as e:
                     logger.warning(f"⚠️ TTS delivery to {device.device_id} failed: {e}")
 
         return False
 
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error(f"❌ TTS delivery failed for notification #{notification.id}: {e}")
         return False

@@ -24,7 +24,6 @@ Coverage here (pure unit, no DB / Ollama / network):
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import MagicMock
 
 import pytest
 

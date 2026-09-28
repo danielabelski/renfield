@@ -14,13 +14,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ha_glue.services.presence_service import get_presence_service
+from ha_glue.utils.config import ha_glue_settings
 from models.database import User
 from models.permissions import Permission
 from services.auth_service import require_permission
 from services.database import get_db
-from ha_glue.services.presence_service import get_presence_service
-from utils.config import settings
-from ha_glue.utils.config import ha_glue_settings
 
 router = APIRouter(prefix="/api/presence")
 
@@ -414,7 +413,8 @@ async def create_irk(
     current_user: User = Depends(require_permission(Permission.ADMIN)),
 ):
     """Register a per-person IRK (stored encrypted, pushed to satellites)."""
-    from models.database import User as DBUser, UserBleIrk
+    from models.database import User as DBUser
+    from models.database import UserBleIrk
     from services.secret_encryption import encrypt_secret
 
     if not (await db.execute(select(DBUser).where(DBUser.id == body.user_id))).scalar_one_or_none():
@@ -458,9 +458,10 @@ async def capture_irk(
     """Drive the UI pairing flow: open a one-time pairing window on a satellite,
     capture the phone's IRK when it bonds, and store it (encrypted) for `user_id`.
     The caller shows the user the 'pair to Renfield <room>' prompt meanwhile."""
-    from models.database import User as DBUser, UserBleIrk
-    from services.secret_encryption import encrypt_secret
     from ha_glue.services.satellite_manager import get_satellite_manager
+    from models.database import User as DBUser
+    from models.database import UserBleIrk
+    from services.secret_encryption import encrypt_secret
 
     if not (await db.execute(select(DBUser).where(DBUser.id == body.user_id))).scalar_one_or_none():
         raise HTTPException(status_code=404, detail="User not found")

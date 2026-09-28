@@ -30,10 +30,10 @@ def test_paperless_read_write_separation():
 def test_paperless_stanza_maps_tools():
     """The committed stanza actually carries the split (guards against someone
     dropping tool_permissions)."""
-    import yaml
     from pathlib import Path
 
     import pytest
+    import yaml
     candidates = [
         Path("config/mcp_servers.yaml"),
         Path("/app/config/mcp_servers.yaml"),
