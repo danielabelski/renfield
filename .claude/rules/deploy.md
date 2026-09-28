@@ -49,3 +49,13 @@ reload after a frontend deploy.
 ## Probes
 Backend readiness `/health/ready` (DB reachability), liveness `/health/live` (dependency-free — a DB-dependent liveness
 would restart-storm every replica during a DB outage). A rollout against a dead DB waits at NotReady; that is intended.
+
+## Bildmarken in den Manifesten
+🛑 `kubectl set image` ändert die LIVE-Objekte, NICHT die Dateien — ohne Nachziehen wirft ein späteres
+`kubectl apply -f` die Instanz auf das alte Bild zurück. `bin/deploy-production.sh` ruft dafür
+`bin/k8s-write-image-tags.sh` **vor** der Drift-Prüfung und schreibt die Marken selbst; **committet
+aber nicht** (die Manifeste einer privaten Instanz liegen in einem zweiten Repo — der Hinweis nennt das
+richtige). Vorher war das Handarbeit nach jedem Deploy, und dreimal in Folge hieß der nächste x-ren-Commit
+„Bildmarken auf den Live-Stand".
+🛑 Ersetzt wird **nur die Marke hinter `renfield/<bild>:`**, nie der Registry-Name: das öffentliche Repo
+trägt dort absichtlich den Platzhalter `your-registry.example`.
