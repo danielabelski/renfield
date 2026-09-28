@@ -70,7 +70,16 @@ export default function VoiceSecondFactorStep({ ticket, onVerified, onCancel }: 
       const form = new FormData();
       form.append('ticket', ticket);
       form.append('audio_file', rec.blob, 'second-factor.webm');
-      const { data } = await apiClient.post('/api/auth/voice', form);
+      // 🛑 Der Kopf MUSS gesetzt werden. `apiClient` traegt
+      // `Content-Type: application/json` als Voreinstellung (`utils/axios.ts`),
+      // und axios entfernt den bei FormData nur, wenn er NICHT explizit gesetzt
+      // ist. Ohne diese Zeile ist der Koerper multipart, der Kopf behauptet
+      // JSON, und FastAPI antwortet 422 — die Aufnahme wird nie geprueft.
+      // Alle vier anderen Uploads im Projekt machen es genauso
+      // (`api/resources/speakers.ts`, `useAudioRecording`, `useDocumentUpload`).
+      const { data } = await apiClient.post('/api/auth/voice', form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
       if (data?.success) {
         await onVerified();
         return;
