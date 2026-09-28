@@ -30,14 +30,21 @@ den Faktor als Einzige nie benutzen.
 biometrische Verarbeitung (Art. 9 DSGVO), und die gibt eine Person über die
 Oberfläche für sich selbst ab, nicht ein Betreiber über die Kommandozeile.
 
-Aufruf (im Backend-Pod, oder mit gesetztem ``RENFIELD_BACKEND_DIR``):
+🛑 Das Skript liegt NICHT im Backend-Bild: der Build-Kontext ist ``src/backend/``,
+``COPY . .`` sieht das ``bin/`` des Repos nicht. Es wird zur Laufzeit in den Pod
+kopiert — wie jedes ``bin/backfill_*.py``. Darum trägt es denselben
+``_find_backend_dir``-Block: der findet ``/app`` im Bild von selbst, egal aus
+welchem Verzeichnis es gestartet wird.
 
+Aufruf:
+
+    # lokal / Build-Box
     python bin/voice_2fa_emergency.py --list
-    python bin/voice_2fa_emergency.py --username admin --off --dry-run
-    python bin/voice_2fa_emergency.py --username admin --off
 
-    kubectl -n renfield exec deploy/backend -- \\
-        python /app/../bin/voice_2fa_emergency.py --username admin --off
+    # in der Produktion
+    POD=$(kubectl -n renfield get pod -l app.kubernetes.io/name=backend -o name | head -1)
+    kubectl -n renfield cp bin/voice_2fa_emergency.py "${POD#pod/}":/tmp/voice_2fa_emergency.py
+    kubectl -n renfield exec "$POD" -- python /tmp/voice_2fa_emergency.py --username admin --off
 """
 from __future__ import annotations
 
