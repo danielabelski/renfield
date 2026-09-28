@@ -405,6 +405,25 @@ selbst auslösen kann (indem er die Stimmprüfung wiederholt scheitern lässt), 
 den zweiten Faktor auf. Wiederherstellung bei defektem Mikrofon oder Erkältung:
 ein Administrator schaltet `voice_second_factor_enabled` für diese Person ab.
 
+### Wo die Spalte geschaltet wird — und warum getrennt von `PATCH /users/{id}`
+
+`POST /api/users/{id}/voice-second-factor` (`{"enabled": true|false}`, Berechtigung
+`users.manage`), in der Oberfläche die Schild-Schaltfläche je Zeile unter
+**Verwaltung → Benutzer**. Die Route ist bewusst **nicht** Teil des allgemeinen
+`PATCH /users/{id}`, weil dort beide Richtungen dieselbe Berechtigung hätten — die
+Asymmetrie wäre nicht abbildbar:
+
+| Richtung | Wer darf | Grund |
+|---|---|---|
+| **Einschalten** | nur das Konto selbst (sonst **403**) | Einwilligung in biometrische Verarbeitung; niemand kann sie für jemand anderen geben |
+| **Ausschalten** | jede und jeder mit `users.manage` | nimmt eine Anforderung *weg* und ist der oben beschriebene Wiederherstellungsweg |
+
+Das Einschalten wird zusätzlich mit **409** verweigert, solange kein Sprecherprofil
+verknüpft ist oder das verknüpfte Profil keine Einbettungen hat: `POST /auth/voice`
+prüft 1:1 dagegen und verweigert fail-closed, das Konto käme also nie wieder herein.
+Die Oberfläche zeigt die Schaltfläche in diesem Fall gesperrt statt sie ins 409
+laufen zu lassen. Beide Richtungen werden protokolliert (wer, wann, für welches Konto).
+
 🛑 **Was die Stimme weiterhin nicht kann:** eine Aufnahme kann sie täuschen, es gibt
 keine Lebendigkeitsprüfung. Als *erster* Faktor war das die ganze Tür; als
 *zweiter* braucht ein Angreifer zusätzlich das Passwort. Genau darin liegt der
@@ -802,8 +821,11 @@ Zur Fehlersuche also ins Backend-Log sehen, nicht in die Antwort. Dann:
 3. `VOICE_AUTH_MIN_CONFIDENCE` senken — **senkt die Sicherheit**; bei einem Faktor,
    den eine Aufnahme ohnehin täuschen kann, ist das der falsche Hebel
 4. Kommt jemand dauerhaft nicht durch (defektes Mikrofon, Erkältung):
-   `voice_second_factor_enabled` für diese Person abschalten. Das ist der
-   vorgesehene Wiederherstellungsweg, nicht ein Notbehelf.
+   `voice_second_factor_enabled` für diese Person abschalten — **Verwaltung →
+   Benutzer**, Schild-Schaltfläche in der Zeile, oder
+   `POST /api/users/{id}/voice-second-factor` mit `{"enabled": false}`. Das ist der
+   vorgesehene Wiederherstellungsweg, nicht ein Notbehelf; er braucht kein
+   verknüpftes Sprecherprofil mehr.
 
 ---
 

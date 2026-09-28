@@ -75,6 +75,12 @@ no token ever in Redis or a URL. 404 when the flag is off. Redirects carry only 
   🛑 **KEIN Rückfall** auf Passwort allein — ein Rückfall, den der Angreifer selbst auslöst, hebt den Faktor auf.
   Wiederherstellung = Administrator schaltet `voice_second_factor_enabled` ab. Die Hürde greift nur bei
   `VOICE_AUTH_ENABLED=true`, sonst wäre das Konto ausgesperrt.
+  🛑 **Die Spalte hat eine eigene Route, weil die Richtungen verschiedene Rechte haben:**
+  `POST /users/{id}/voice-second-factor` — **einschalten nur für sich selbst** (sonst 403; eine Einwilligung
+  kann niemand für jemanden anderen geben), **ausschalten für jedes Konto** mit `users.manage` (das ist der
+  Rückweg). Einschalten ohne verknüpftes Profil *mit* Einbettungen → 409, sonst wäre es eine Selbstaussperrung.
+  In `PATCH /users/{id}` hätten beide Richtungen dieselbe Berechtigung — deshalb NICHT dort einbauen.
+  Oberfläche: Schild-Schaltfläche je Zeile in `pages/UsersPage`.
   Im Browser: `LoginPage` faengt `SecondFactorRequired` ab und zeigt
   `components/auth/VoiceSecondFactorStep` (Aufnahme ueber `hooks/useVoiceFactorRecording`, Mindestdauer 1,5 s,
   Selbststopp 8 s, kein VAD). Die Maske reicht die Server-Meldung NICHT durch und bietet keinen Weg vorbei;

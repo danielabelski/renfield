@@ -638,3 +638,203 @@ class TestDeleteRefusesToTakeKnowledgeWithIt:
             select(User).where(User.id == victim.id)
         )).scalar_one_or_none()
         assert gone is None
+
+
+class TestVoiceSecondFactorConsent:
+    """`POST /users/{id}/voice-second-factor` — die Einwilligung in die Stimme
+    als zweiten Faktor.
+
+    🛑 Diese Route hat BEWUSST zwei verschiedene Rechte fuer zwei Richtungen.
+    Ein ECAPA-Stimmabdruck ist biometrisches Datum (Art. 9 DSGVO); eine
+    Anmeldung, die ihn verlangt, ist eine Einwilligung, und die kann niemand
+    fuer jemanden anderen geben. Einschalten also nur fuer sich selbst,
+    ausschalten fuer jede und jeden mit `users.manage` — denn Ausschalten ist
+    der einzige dokumentierte Weg zurueck, wenn ein Mikrofon defekt ist
+    (`.claude/rules/auth.md`: es gibt keinen Rueckfall auf Passwort allein).
+
+    Ohne diese Route waere der in PR #1350 beschriebene Wiederherstellungsweg
+    („ein Administrator schaltet es ab") reine Theorie: der Zustand haette
+    keine API und keine Oberflaeche.
+    """
+
+    @staticmethod
+    async def _with_voice(db_session: AsyncSession, user: User, embeddings: int = 1):
+        """Verknuepft `user` mit einem Sprecherprofil samt `embeddings` Einbettungen."""
+        from models.database import SpeakerEmbedding
+
+        speaker = Speaker(name=f"stimme-{uuid4().hex[:8]}")
+        db_session.add(speaker)
+        await db_session.flush()
+        for _ in range(embeddings):
+            db_session.add(
+                SpeakerEmbedding(speaker_id=speaker.id, embedding="AAAA", sample_duration=2000)
+            )
+        user.speaker_id = speaker.id
+        await db_session.commit()
+        return speaker
+
+    @pytest.mark.database
+    async def test_you_can_arm_it_for_yourself(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        from api.routes import users as users_routes
+
+        await self._with_voice(db_session, test_user)
+        body = await users_routes.set_voice_second_factor(
+            user_id=test_user.id,
+            request=users_routes.VoiceSecondFactorRequest(enabled=True),
+            db=db_session,
+            current_user=MagicMock(username=test_user.username, id=test_user.id),
+        )
+        assert body.voice_second_factor_enabled is True
+        await db_session.refresh(test_user)
+        assert test_user.voice_second_factor_enabled is True
+
+    @pytest.mark.database
+    async def test_an_admin_cannot_impose_it_on_someone_else(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        """Das ist der eigentliche Punkt der Route: eine erzwungene biometrische
+        Erfassung waere keine Verwaltung."""
+        from fastapi import HTTPException
+
+        from api.routes import users as users_routes
+
+        await self._with_voice(db_session, test_user)
+        with pytest.raises(HTTPException) as exc:
+            await users_routes.set_voice_second_factor(
+                user_id=test_user.id,
+                request=users_routes.VoiceSecondFactorRequest(enabled=True),
+                db=db_session,
+                current_user=MagicMock(username="admin", id=test_user.id + 1000),
+            )
+        assert exc.value.status_code == 403
+        await db_session.refresh(test_user)
+        assert test_user.voice_second_factor_enabled is False
+
+    @pytest.mark.database
+    async def test_an_admin_can_always_take_it_away(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        """Der Rueckweg ist genau die entgegengesetzte Asymmetrie — sonst waere
+        ein defektes Mikrofon eine dauerhafte Aussperrung."""
+        from api.routes import users as users_routes
+
+        await self._with_voice(db_session, test_user)
+        test_user.voice_second_factor_enabled = True
+        await db_session.commit()
+
+        body = await users_routes.set_voice_second_factor(
+            user_id=test_user.id,
+            request=users_routes.VoiceSecondFactorRequest(enabled=False),
+            db=db_session,
+            current_user=MagicMock(username="admin", id=test_user.id + 1000),
+        )
+        assert body.voice_second_factor_enabled is False
+        await db_session.refresh(test_user)
+        assert test_user.voice_second_factor_enabled is False
+
+    @pytest.mark.database
+    async def test_arming_without_a_speaker_profile_is_refused(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        """`POST /auth/voice` prueft 1:1 gegen das verknuepfte Profil und
+        verweigert fail-closed, wenn keines da ist. Ohne diese Sperre waere das
+        Einschalten eine Selbstaussperrung."""
+        from fastapi import HTTPException
+
+        from api.routes import users as users_routes
+
+        assert test_user.speaker_id is None
+        with pytest.raises(HTTPException) as exc:
+            await users_routes.set_voice_second_factor(
+                user_id=test_user.id,
+                request=users_routes.VoiceSecondFactorRequest(enabled=True),
+                db=db_session,
+                current_user=MagicMock(username=test_user.username, id=test_user.id),
+            )
+        assert exc.value.status_code == 409
+        await db_session.refresh(test_user)
+        assert test_user.voice_second_factor_enabled is False
+
+    @pytest.mark.database
+    async def test_a_profile_without_embeddings_is_the_same_trap(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        """Ein verknuepftes Profil, gegen das nichts verglichen werden kann,
+        sperrt genauso aus wie gar keines."""
+        from fastapi import HTTPException
+
+        from api.routes import users as users_routes
+
+        await self._with_voice(db_session, test_user, embeddings=0)
+        with pytest.raises(HTTPException) as exc:
+            await users_routes.set_voice_second_factor(
+                user_id=test_user.id,
+                request=users_routes.VoiceSecondFactorRequest(enabled=True),
+                db=db_session,
+                current_user=MagicMock(username=test_user.username, id=test_user.id),
+            )
+        assert exc.value.status_code == 409
+
+    @pytest.mark.database
+    async def test_disarming_needs_no_profile_at_all(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        """Der Wiederherstellungsweg darf nicht an derselben Bedingung haengen
+        wie der Hinweg — sonst waere ein geloeschtes Sprecherprofil endgueltig."""
+        from api.routes import users as users_routes
+
+        test_user.voice_second_factor_enabled = True
+        await db_session.commit()
+        assert test_user.speaker_id is None
+
+        body = await users_routes.set_voice_second_factor(
+            user_id=test_user.id,
+            request=users_routes.VoiceSecondFactorRequest(enabled=False),
+            db=db_session,
+            current_user=MagicMock(username="admin", id=test_user.id + 1000),
+        )
+        assert body.voice_second_factor_enabled is False
+
+    @pytest.mark.database
+    async def test_an_unknown_account_is_a_404_not_a_500(
+        self, db_session: AsyncSession
+    ):
+        from fastapi import HTTPException
+
+        from api.routes import users as users_routes
+
+        with pytest.raises(HTTPException) as exc:
+            await users_routes.set_voice_second_factor(
+                user_id=987654,
+                request=users_routes.VoiceSecondFactorRequest(enabled=False),
+                db=db_session,
+                current_user=MagicMock(username="admin", id=1),
+            )
+        assert exc.value.status_code == 404
+
+    @pytest.mark.database
+    async def test_every_other_endpoint_reports_the_state_too(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        """🛑 Negativkontrolle gegen den Fehler, den ich beim Bau fast gemacht
+        haette: `UserResponse` wird an sieben Stellen INLINE aufgebaut. Das neue
+        Feld hat den Standard `False` — ohne Ergaenzung an jeder Stelle haette
+        die Liste den Zustand falsch gemeldet, und die Oberflaeche haette einen
+        Schalter gezeigt, der aus aussieht, obwohl er an ist."""
+        from api.routes import users as users_routes
+
+        await self._with_voice(db_session, test_user)
+        test_user.voice_second_factor_enabled = True
+        await db_session.commit()
+
+        admin = MagicMock(username="admin", id=test_user.id + 1000)
+        one = await users_routes.get_user(
+            user_id=test_user.id, db=db_session, current_user=admin
+        )
+        assert one.voice_second_factor_enabled is True
+
+        listing = await users_routes.list_users(db=db_session, current_user=admin)
+        mine = [u for u in listing.users if u.id == test_user.id]
+        assert mine and mine[0].voice_second_factor_enabled is True
