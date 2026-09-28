@@ -17,7 +17,7 @@ import Badge from '../components/Badge';
 import { useConfirmDialog } from '../components/ConfirmDialog';
 import {
   Users, UserPlus, UserCog, Pencil, Trash2, Loader,
-  Shield, User, Mic, Link2, Unlink, Eye, EyeOff, RefreshCw, Lock, LockOpen,
+  Shield, ShieldCheck, User, Mic, Link2, Unlink, Eye, EyeOff, RefreshCw, Lock, LockOpen,
 } from 'lucide-react';
 import {
   useUsersQuery,
@@ -30,6 +30,7 @@ import {
   useLinkSpeaker,
   useUnlinkSpeaker,
   useUnlockUser,
+  useSetVoiceSecondFactor,
   type AdminUser,
   type PersonalityStyle,
   type SpeakerSummary,
@@ -68,6 +69,7 @@ export default function UsersPage() {
   const linkSpeaker = useLinkSpeaker();
   const unlinkSpeaker = useUnlinkSpeaker();
   const unlockUser = useUnlockUser();
+  const setVoiceSecondFactor = useSetVoiceSecondFactor();
 
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -297,6 +299,57 @@ export default function UsersPage() {
     }
   };
 
+  /**
+   * Die Stimme als zweiten Faktor scharf stellen oder zuruecknehmen.
+   *
+   * Die Asymmetrie ist ABSICHT und wird hier sichtbar gemacht: einschalten
+   * darf nur das Konto selbst, abschalten darf die Verwaltung fuer jedes Konto.
+   * Der Grund steht im Backend (`POST /users/{id}/voice-second-factor`): ein
+   * Stimmabdruck verlangen heisst einwilligen, und einwilligen kann niemand
+   * fuer jemanden anderen. Der Rueckweg dagegen MUSS offen bleiben — es gibt
+   * bewusst keinen Rueckfall auf Passwort allein, ein defektes Mikrofon waere
+   * sonst eine dauerhafte Aussperrung.
+   */
+  const handleVoiceSecondFactor = async (user: AdminUser) => {
+    const enabling = !user.voice_second_factor_enabled;
+    const confirmed = await confirm({
+      title: enabling ? t('users.voiceFactorArm') : t('users.voiceFactorDisarm'),
+      message: enabling
+        ? t('users.voiceFactorArmConfirm')
+        : t('users.voiceFactorDisarmConfirm', { name: user.username }),
+      confirmLabel: enabling ? t('users.voiceFactorArm') : t('users.voiceFactorDisarm'),
+      variant: 'warning',
+    });
+    if (!confirmed) return;
+
+    try {
+      await setVoiceSecondFactor.mutateAsync({ id: user.id, enabled: enabling });
+      setSuccess(enabling ? t('users.voiceFactorArmed') : t('users.voiceFactorDisarmed'));
+    } catch (err) {
+      setError(extractApiError(err, t('users.failedToSave')));
+    }
+  };
+
+  /**
+   * Kann dieses Konto den zweiten Faktor ueberhaupt bestehen?
+   *
+   * Das Backend verweigert das Einschalten mit 409 in ZWEI Faellen: kein
+   * verknuepftes Profil, UND ein verknuepftes Profil ohne Einbettungen. Die
+   * Oberflaeche sperrte nur den ersten — der zweite lief ins 409 und zeigte die
+   * englische Server-Meldung in einer deutschen Maske.
+   *
+   * 🛑 Ein Profil, das NICHT in der Liste steht, gilt als brauchbar: `fetchSpeakers`
+   * schluckt Fehler und gibt `[]` zurueck (`api/resources/users.ts`). Aus einer
+   * leeren Liste „keine Einbettungen" zu folgern, wuerde bei totem
+   * `/api/speakers` jeden Schalter sperren — also nur sperren, wenn das Profil
+   * da ist und nachweislich leer.
+   */
+  const canPassSecondFactor = (user: AdminUser): boolean => {
+    if (!user.speaker_id) return false;
+    const profile = speakers.find((s) => s.id === user.speaker_id);
+    return !profile || profile.embedding_count > 0;
+  };
+
   const availableSpeakers: SpeakerSummary[] = Array.isArray(speakers) && Array.isArray(users)
     ? speakers.filter((s) => !users.some((u) => u.speaker_id === s.id))
     : [];
@@ -392,6 +445,27 @@ export default function UsersPage() {
                           <span>{t('users.lockedOut')}</span>
                         </span>
                       )}
+                      {user.voice_second_factor_enabled && (
+                        /* 🛑 „Scharf" und „ruht" auseinanderhalten. Fehlt eine
+                           Vorbedingung, haelt die Anmeldung die Token NICHT
+                           zurueck — die Einwilligung steht, wirkt aber nicht.
+                           Ein Abzeichen, das beides gleich zeigt, waere eine
+                           Anzeige, die luegt. */
+                        <span
+                          className={
+                            canPassSecondFactor(user)
+                              ? 'flex items-center space-x-1 text-amber-600 dark:text-amber-400'
+                              : 'flex items-center space-x-1 text-gray-500 dark:text-gray-400'
+                          }
+                        >
+                          <ShieldCheck className="w-3 h-3" />
+                          <span>
+                            {canPassSecondFactor(user)
+                              ? t('users.voiceFactorOn')
+                              : t('users.voiceFactorResting')}
+                          </span>
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -405,6 +479,31 @@ export default function UsersPage() {
                       disabled={unlockUser.isPending}
                     >
                       <LockOpen className="w-5 h-5" />
+                    </button>
+                  )}
+                  {(user.voice_second_factor_enabled || user.id === currentUser?.id) && (
+                    <button
+                      onClick={() => handleVoiceSecondFactor(user)}
+                      className="btn-icon btn-icon-ghost"
+                      title={
+                        user.voice_second_factor_enabled
+                          ? t('users.voiceFactorDisarm')
+                          : canPassSecondFactor(user)
+                            ? t('users.voiceFactorArm')
+                            : user.speaker_id
+                              ? t('users.voiceFactorNeedsSamples')
+                              : t('users.voiceFactorNeedsSpeaker')
+                      }
+                      disabled={
+                        setVoiceSecondFactor.isPending ||
+                        (!user.voice_second_factor_enabled && !canPassSecondFactor(user))
+                      }
+                    >
+                      {user.voice_second_factor_enabled ? (
+                        <ShieldCheck className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+                      ) : (
+                        <Shield className="w-5 h-5" />
+                      )}
                     </button>
                   )}
                   {user.speaker_id ? (

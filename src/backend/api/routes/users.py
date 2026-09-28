@@ -37,6 +37,7 @@ from services.auth_service import (
 )
 from services.database import get_db
 from services.login_lockout import LockoutStoreUnavailable, login_lockout
+from services.voice_factor_preconditions import voice_factor_lock_id
 from utils.hooks import run_hooks
 
 router = APIRouter()
@@ -92,6 +93,13 @@ class UserResponse(BaseModel):
     # admin route is that somewhere (the alternative was a hand-written UPDATE
     # against the production DB).
     is_device_account: bool = False
+    # Einwilligung je Person, dass die Anmeldung die Stimme verlangt. Dieselbe
+    # Begruendung wie bei `is_device_account` daneben: es muss IRGENDWO setzbar
+    # sein, und die Alternative waere ein handgeschriebenes UPDATE gegen die
+    # Produktionsdatenbank. Gesetzt wird es ueber `POST /{id}/voice-second-factor`
+    # — nicht ueber den allgemeinen PATCH, weil Ein- und Ausschalten NICHT
+    # dieselbe Berechtigung haben (s. dort).
+    voice_second_factor_enabled: bool = False
     personality_style: str = "freundlich"
     personality_prompt: str | None = None
     speaker_id: int | None
@@ -152,6 +160,11 @@ class LinkSpeakerRequest(BaseModel):
     speaker_id: int
 
 
+class VoiceSecondFactorRequest(BaseModel):
+    """Ein- oder Ausschalten der Stimme als zweiter Anmeldefaktor."""
+    enabled: bool
+
+
 # =============================================================================
 # Endpoints
 # =============================================================================
@@ -199,6 +212,11 @@ async def list_users(
     users = result.scalars().all()
 
     # One Redis SCAN for the whole page (fail-open → nobody shows as locked).
+    # 🛑 Der SCAN liefert AUCH die Sperren des zweiten Faktors: die liegen im
+    # selben Schluesselraum, nur unter `voice2fa:<id>` statt dem Benutzernamen
+    # (getrennt, damit ein Fehlversuch der Stimme den Passwortpfad nicht
+    # mitsperrt). Vorher wurde nur der Benutzername geprueft — die Liste meldete
+    # „nicht gesperrt", waehrend die Person nicht hereinkam.
     locked = await login_lockout.locked_usernames()
 
     return UserListResponse(
@@ -214,6 +232,7 @@ async def list_users(
                 permissions=user.get_permissions(),
                 is_active=user.is_active,
                 is_device_account=bool(user.is_device_account),
+                voice_second_factor_enabled=bool(user.voice_second_factor_enabled),
                 personality_style=user.personality_style,
                 personality_prompt=user.personality_prompt,
                 speaker_id=user.speaker_id,
@@ -221,7 +240,10 @@ async def list_users(
                 created_at=user.created_at,
                 updated_at=user.updated_at,
                 last_login=user.last_login,
-                locked_out=user.username.strip().lower() in locked,
+                locked_out=(
+                    user.username.strip().lower() in locked
+                    or voice_factor_lock_id(user.id) in locked
+                ),
             )
             for user in users
         ],
@@ -266,6 +288,7 @@ async def get_user(
         permissions=user.get_permissions(),
         is_active=user.is_active,
         is_device_account=bool(user.is_device_account),
+        voice_second_factor_enabled=bool(user.voice_second_factor_enabled),
         personality_style=user.personality_style,
         personality_prompt=user.personality_prompt,
         speaker_id=user.speaker_id,
@@ -273,7 +296,10 @@ async def get_user(
         created_at=user.created_at,
         updated_at=user.updated_at,
         last_login=user.last_login,
-        locked_out=await login_lockout.has_any_lock(user.username),
+        locked_out=(
+            await login_lockout.has_any_lock(user.username)
+            or await login_lockout.has_any_lock(voice_factor_lock_id(user.id))
+        ),
     )
 
 
@@ -358,6 +384,7 @@ async def create_user(
         permissions=user.get_permissions(),
         is_active=user.is_active,
         is_device_account=bool(user.is_device_account),
+        voice_second_factor_enabled=bool(user.voice_second_factor_enabled),
         personality_style=user.personality_style,
         personality_prompt=user.personality_prompt,
         speaker_id=user.speaker_id,
@@ -514,6 +541,7 @@ async def update_user(
         permissions=user.get_permissions(),
         is_active=user.is_active,
         is_device_account=bool(user.is_device_account),
+        voice_second_factor_enabled=bool(user.voice_second_factor_enabled),
         personality_style=user.personality_style,
         personality_prompt=user.personality_prompt,
         speaker_id=user.speaker_id,
@@ -697,7 +725,11 @@ async def unlock_user(
         )
 
     try:
+        # Beide Zaehler: der des Passwortpfads und der des zweiten Faktors.
+        # Ein Knopf, der nur einen raeumt, meldet „entsperrt" und laesst die
+        # Person draussen.
         cleared = await login_lockout.unlock(user.username)
+        cleared += await login_lockout.unlock(voice_factor_lock_id(user.id))
     except LockoutStoreUnavailable:
         # Never a false "cleared": with Redis down the lock may still stand.
         raise HTTPException(
@@ -780,6 +812,7 @@ async def link_speaker(
         permissions=user.get_permissions(),
         is_active=user.is_active,
         is_device_account=bool(user.is_device_account),
+        voice_second_factor_enabled=bool(user.voice_second_factor_enabled),
         personality_style=user.personality_style,
         personality_prompt=user.personality_prompt,
         speaker_id=user.speaker_id,
@@ -836,6 +869,7 @@ async def unlink_speaker(
         permissions=user.get_permissions(),
         is_active=user.is_active,
         is_device_account=bool(user.is_device_account),
+        voice_second_factor_enabled=bool(user.voice_second_factor_enabled),
         personality_style=user.personality_style,
         personality_prompt=user.personality_prompt,
         speaker_id=None,
@@ -843,4 +877,163 @@ async def unlink_speaker(
         created_at=user.created_at,
         updated_at=user.updated_at,
         last_login=user.last_login
+    )
+
+
+@router.post("/{user_id}/voice-second-factor", response_model=UserResponse)
+async def set_voice_second_factor(
+    user_id: int,
+    request: VoiceSecondFactorRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission(Permission.USERS_MANAGE))
+):
+    """Die Stimme als zweiten Anmeldefaktor ein- oder ausschalten.
+
+    🛑 EIN- UND AUSSCHALTEN SIND NICHT DASSELBE RECHT
+    -------------------------------------------------
+    Ein ECAPA-Stimmabdruck ist biometrisches Datum (Art. 9 DSGVO). Dass eine
+    ANMELDUNG ihn verlangt, ist eine Einwilligung — und eine Einwilligung kann
+    niemand fuer jemanden anderen geben. Deshalb:
+
+    * **Einschalten nur fuer sich selbst.** Auch eine Administratorin darf es
+      einem fremden Konto nicht auferlegen. Das waere keine Verwaltung, das waere
+      eine erzwungene biometrische Erfassung.
+    * **Ausschalten fuer sich selbst** mit `users.manage`; **fuer ein fremdes
+      Konto nur mit `admin`.** Das NIMMT eine Anforderung weg, und genau das ist
+      der dokumentierte Wiederherstellungsweg, wenn ein Mikrofon defekt ist oder
+      jemand heiser: es gibt bewusst keinen Rueckfall auf Passwort allein
+      (`.claude/rules/auth.md`).
+
+      🛑 Warum `admin` und nicht `users.manage`: der Rueckweg ist zugleich ein
+      Angriffsweg. Wer einem fremden Konto den zweiten Faktor nimmt, senkt
+      dessen Anmeldung still auf Passwort allein — und kann sich danach an
+      diesem Passwort versuchen, ohne dass eine Stimme im Weg steht. Das ist
+      MEHR als ein Passwort-Zuruecksetzen (das allein kommt an einem scharfen
+      zweiten Faktor nicht vorbei). `users.manage` ist ein delegierbares Recht
+      ohne `admin` (`models/permissions.py`), und dieselbe Datei verteidigt
+      diesen Prinzipal an anderer Stelle ausdruecklich gegen Rechteausweitung.
+      Fuer das EIGENE Konto bleibt es bei `users.manage`: den eigenen Faktor
+      zurueckzunehmen ist niemandes Rechteausweitung.
+
+    Diese Route existiert getrennt vom allgemeinen `PATCH /{id}`, weil dort beide
+    Richtungen dieselbe Berechtigung haetten — die Asymmetrie waere nicht
+    abbildbar.
+
+    🛑 EINSCHALTEN OHNE PROFIL WAERE EINE SELBSTAUSSPERRUNG
+    ------------------------------------------------------
+    `POST /auth/voice` prueft 1:1 gegen das verknuepfte Sprecherprofil und
+    verweigert fail-closed, wenn keines da ist. Ein Konto mit gesetzter
+    Einwilligung, aber ohne Profil mit Einbettungen, kaeme also NIE herein — und
+    der Weg heraus waere wieder diese Route. Deshalb wird hier gepruft, nicht
+    dort repariert.
+
+    Requires: users.manage permission (und fuer das Einschalten: das eigene Konto)
+    """
+    result = await db.execute(
+        select(User)
+        .options(selectinload(User.role), selectinload(User.speaker))
+        .where(User.id == user_id)
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    # 🛑 `current_user` ist `None`, wenn `AUTH_ENABLED=false` ist
+    # (`require_permission` reicht das Ergebnis von `get_current_user` dann
+    # ungeprueft durch). Elf Geschwisterstellen in dieser Datei fangen das ab;
+    # diese beiden taten es nicht — der Ausschaltpfad haette nach dem COMMIT
+    # eine AttributeError geworfen, also 500 gemeldet und trotzdem geschrieben.
+    # Genau der Zustand, in dem jemand von Hand an der Datenbank landet.
+    is_self = current_user is not None and user.id == current_user.id
+    actor = current_user.username if current_user else "system"
+
+    if request.enabled:
+        if not is_self:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "Voice as a second factor can only be enabled by the account "
+                    "holder — a voiceprint requirement is a consent, not a setting."
+                ),
+            )
+        # Derselbe Pruefer wie in `/auth/login` und `/auth/voice`: eine scharfe
+        # Einwilligung, die nicht eingeloest werden kann, ist keine Sicherheit,
+        # sondern eine Falle. `voice_auth_enabled` wird hier bewusst NICHT
+        # geprueft — sonst waere die Reihenfolge des Cutovers (erst Einwilligung,
+        # dann Flag) nicht durchfuehrbar; das Ruhen ist dort dokumentiert.
+        from services.voice_factor_preconditions import (
+            NO_PROFILE,
+            RECOGNITION_OFF,
+            voice_path_blocker,
+            voice_profile_blocker,
+        )
+
+        blocker = await voice_profile_blocker(db, user)
+        if blocker is None and voice_path_blocker() == RECOGNITION_OFF:
+            blocker = RECOGNITION_OFF
+        if blocker is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    NO_PROFILE: (
+                        "Link a speaker profile first — without one the account "
+                        "could never complete the second factor."
+                    ),
+                    RECOGNITION_OFF: (
+                        "Speaker recognition is switched off on this instance — "
+                        "the second factor could never be redeemed."
+                    ),
+                }.get(blocker, (
+                    "The linked speaker profile has no embeddings yet — enroll a "
+                    "voice sample first."
+                )),
+            )
+    elif current_user is not None and not is_self and not has_permission(
+        current_user.get_permissions(), Permission.ADMIN
+    ):
+        # Siehe Docstring: fremden Faktor abschalten ist der Rueckweg UND ein
+        # Angriffsweg. Den eigenen zurueckzunehmen bleibt `users.manage`.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Switching off someone else's second factor requires admin — it "
+                "lowers that account to password-only."
+            ),
+        )
+
+    user.voice_second_factor_enabled = bool(request.enabled)
+    await db.commit()
+    # KEIN blankes `db.refresh(user)`: das verfaellt AUCH `role` und `speaker`,
+    # die oben mit `selectinload` geholt wurden — der naechste Zugriff darauf
+    # waere ein Lazy-Load ausserhalb der greenlet-Schleife (MissingGreenlet).
+    # Die Sitzungen laufen mit `expire_on_commit=False`, das Commit genuegt.
+
+    # Protokoll, weil es eine Einwilligung ist: wer hat sie wann fuer welches
+    # Konto gesetzt oder zurueckgenommen.
+    logger.info(
+        f"Voice second factor {'enabled' if request.enabled else 'disabled'} "
+        f"for user {user.id} by {actor}"
+    )
+    return UserResponse(
+        id=user.id,
+        username=user.username,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        email=user.email,
+        role_id=user.role_id,
+        role_name=user.role.name if user.role else "Unknown",
+        permissions=user.get_permissions(),
+        is_active=user.is_active,
+        is_device_account=bool(user.is_device_account),
+        voice_second_factor_enabled=bool(user.voice_second_factor_enabled),
+        personality_style=user.personality_style,
+        personality_prompt=user.personality_prompt,
+        speaker_id=user.speaker_id,
+        speaker_name=user.speaker.name if user.speaker else None,
+        created_at=user.created_at,
+        updated_at=user.updated_at,
+        last_login=user.last_login,
     )

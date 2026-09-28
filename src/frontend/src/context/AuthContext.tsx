@@ -8,6 +8,9 @@ import { createContext, useContext, useState, useEffect, useCallback, useRef, Re
 import apiClient, { PASSWORD_CHANGE_REQUIRED_EVENT } from '../utils/axios';
 import { ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY } from '../utils/authTokens';
 import type { User, LoginResponse } from '../types/api';
+// Wert-Import, nicht `import type`: `SecondFactorRequired` ist eine Klasse,
+// die zur Laufzeit geworfen wird.
+import { SecondFactorRequired } from '../types/api';
 
 // Auth user with permissions
 export interface AuthUser extends User {
@@ -174,6 +177,18 @@ export function AuthProvider({ children }: AuthProviderProps) {
     const response = await apiClient.post('/api/auth/login', formData, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
     });
+
+    // 🛑 NICHT blind Token setzen. Für ein Konto mit `voice_second_factor_enabled`
+    // gibt `/auth/login` absichtlich keine Token, sondern ein Ticket für
+    // `POST /api/auth/voice`. Ohne diese Verzweigung liefe hier
+    // `setTokens(undefined, undefined)` — die Oberfläche hielte sich für
+    // angemeldet und jede Folgeanfrage käme unauthentifiziert zurück.
+    if (response.data?.second_factor) {
+      throw new SecondFactorRequired(
+        response.data.second_factor,
+        response.data.second_factor_ticket ?? '',
+      );
+    }
 
     setTokens(response.data.access_token, response.data.refresh_token);
     await fetchUser();

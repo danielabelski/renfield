@@ -177,7 +177,27 @@
     "newPasswordSameAsCurrent": "Das neue Passwort muss sich vom aktuellen unterscheiden.",
     "changePasswordFailed": "Passwortänderung fehlgeschlagen. Bitte erneut versuchen.",
     "accessDeniedTitle": "Zugriff verweigert",
-    "accessDeniedBody": "Du hast keine Berechtigung für diese Seite. Wende dich an eine Administratorin oder einen Administrator, wenn du sie brauchst."
+    "accessDeniedBody": "Du hast keine Berechtigung für diese Seite. Wende dich an eine Administratorin oder einen Administrator, wenn du sie brauchst.",
+    "voiceFactor": {
+      "title": "Stimme bestätigen",
+      "intro": "Das Passwort stimmt. Zum Abschluss bitte mindestens {{seconds}} Sekunden sprechen — ein beliebiger Satz genügt.",
+      "record": "Aufnahme starten",
+      "stop": "Aufnahme beenden",
+      "keepTalking": "Weitersprechen …",
+      "confirm": "Bestätigen",
+      "checking": "Wird geprüft …",
+      "again": "Neu aufnehmen",
+      "refused": "Die Stimme konnte nicht bestätigt werden.",
+      "recoveryHint": "Kommt es wiederholt nicht durch, kann der Stimmfaktor für dieses Konto administrativ abgeschaltet werden.",
+      "srRecording": "Aufnahme läuft.",
+      "srCaptured": "Aufnahme fertig. Zum Bestätigen abschicken.",
+      "deviceError": {
+        "permission": "Der Zugriff auf das Mikrofon ist nicht erlaubt. Bitte in den Browser-Einstellungen für diese Seite freigeben.",
+        "no-device": "Es wurde kein Mikrofon gefunden.",
+        "unsupported": "Dieser Browser kann nicht aufnehmen. Bitte einen aktuellen Browser verwenden.",
+        "unknown": "Die Aufnahme ist fehlgeschlagen."
+      }
+    }
   },
   "chat": {
     "title": "Chat",
@@ -1095,6 +1115,16 @@
     "you": "Du",
     "inactive": "Inaktiv",
     "voiceLinked": "Stimme verknüpft",
+    "voiceFactorOn": "Stimme als 2. Faktor",
+    "voiceFactorResting": "2. Faktor ruht (kein Stimmprofil)",
+    "voiceFactorArm": "Stimme als zweiten Faktor einschalten",
+    "voiceFactorDisarm": "Stimme als zweiten Faktor abschalten",
+    "voiceFactorNeedsSpeaker": "Erst ein Sprecherprofil verknüpfen",
+    "voiceFactorNeedsSamples": "Das verknüpfte Profil hat noch keine Stimmproben",
+    "voiceFactorArmConfirm": "Ab sofort genügt Ihr Passwort allein nicht mehr: nach der Anmeldung sprechen Sie einen kurzen Satz, der gegen Ihr Sprecherprofil geprüft wird. Einen Rückfall auf das Passwort allein gibt es bewusst nicht. Wenn Ihr Mikrofon einmal ausfällt, kann eine Administratorin die Anforderung hier wieder abschalten.",
+    "voiceFactorDisarmConfirm": "Für {{name}} entfällt der zweite Faktor. Die Anmeldung mit Passwort allein reicht dann wieder aus.",
+    "voiceFactorArmed": "Stimme ist jetzt zweiter Anmeldefaktor.",
+    "voiceFactorDisarmed": "Zweiter Anmeldefaktor abgeschaltet.",
     "lockedOut": "Anmeldung gesperrt",
     "unlock": "Anmeldesperre aufheben",
     "failedToUnlock": "Anmeldesperre konnte nicht aufgehoben werden",

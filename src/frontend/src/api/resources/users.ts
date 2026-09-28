@@ -27,6 +27,14 @@ export interface AdminUser {
    * memories and books no presence. Set through create/update; no UI yet.
    */
   is_device_account?: boolean;
+  /**
+   * Die Stimme ist fuer dieses Konto ZWEITER Anmeldefaktor: Passwort allein
+   * gibt keine Token mehr, `POST /auth/voice` prueft 1:1 gegen das verknuepfte
+   * Sprecherprofil. Einschalten darf das nur das Konto selbst (es ist eine
+   * Einwilligung in biometrische Verarbeitung), abschalten jede und jeder mit
+   * `users.manage` — das ist der einzige Weg zurueck bei defektem Mikrofon.
+   */
+  voice_second_factor_enabled?: boolean;
 }
 
 export interface RoleSummary {
@@ -180,6 +188,29 @@ export function useResetUserPassword() {
   return useApiMutation(
     {
       mutationFn: resetPasswordRequest,
+    },
+    'users.failedToSave',
+  );
+}
+
+async function setVoiceSecondFactorRequest(
+  args: { id: number; enabled: boolean },
+): Promise<AdminUser> {
+  const response = await apiClient.post<AdminUser>(
+    `/api/users/${args.id}/voice-second-factor`,
+    { enabled: args.enabled },
+  );
+  return response.data;
+}
+
+export function useSetVoiceSecondFactor() {
+  const queryClient = useQueryClient();
+  return useApiMutation(
+    {
+      mutationFn: setVoiceSecondFactorRequest,
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: keys.users.all });
+      },
     },
     'users.failedToSave',
   );

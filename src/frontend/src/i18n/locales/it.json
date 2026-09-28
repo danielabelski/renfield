@@ -123,7 +123,27 @@
     "completingSignIn": "Completamento accesso …",
     "signInFailed": "Accesso non riuscito. Riprova.",
     "accessDeniedTitle": "Accesso negato",
-    "accessDeniedBody": "Non hai i permessi per questa pagina. Rivolgiti a un amministratore se pensi di doverli avere."
+    "accessDeniedBody": "Non hai i permessi per questa pagina. Rivolgiti a un amministratore se pensi di doverli avere.",
+    "voiceFactor": {
+      "title": "Conferma la voce",
+      "intro": "La password è corretta. Per concludere, parla per almeno {{seconds}} secondi — qualsiasi frase va bene.",
+      "record": "Avvia registrazione",
+      "stop": "Termina registrazione",
+      "keepTalking": "Continua a parlare …",
+      "confirm": "Conferma",
+      "checking": "Verifica in corso …",
+      "again": "Registra di nuovo",
+      "refused": "Non è stato possibile confermare la voce.",
+      "recoveryHint": "Se continua a non funzionare, un amministratore può disattivare il fattore vocale per questo account.",
+      "srRecording": "Registrazione in corso.",
+      "srCaptured": "Registrazione completata. Invia per confermare.",
+      "deviceError": {
+        "permission": "L'accesso al microfono è bloccato. Consentilo per questo sito nelle impostazioni del browser.",
+        "no-device": "Nessun microfono trovato.",
+        "unsupported": "Questo browser non può registrare audio. Usa un browser aggiornato.",
+        "unknown": "Registrazione non riuscita."
+      }
+    }
   },
   "chat": {
     "title": "Chat",
@@ -753,6 +773,16 @@
     "you": "Tu",
     "inactive": "Inattivo",
     "voiceLinked": "Voce collegata",
+    "voiceFactorOn": "Voce come 2° fattore",
+    "voiceFactorResting": "2° fattore in pausa (nessun profilo vocale)",
+    "voiceFactorArm": "Richiedi la voce come secondo fattore",
+    "voiceFactorDisarm": "Non richiedere più la voce come secondo fattore",
+    "voiceFactorNeedsSpeaker": "Collega prima un profilo vocale",
+    "voiceFactorNeedsSamples": "Il profilo collegato non ha ancora campioni vocali",
+    "voiceFactorArmConfirm": "Da ora la password da sola non basta più: dopo l'accesso pronuncerai una breve frase, verificata contro il tuo profilo vocale. Non esiste volutamente un ripiego sulla sola password. Se il microfono dovesse guastarsi, un amministratore può disattivare qui il requisito.",
+    "voiceFactorDisarmConfirm": "Per {{name}} il secondo fattore non sarà più richiesto. L'accesso con la sola password torna a essere sufficiente.",
+    "voiceFactorArmed": "La voce è ora un secondo fattore di accesso.",
+    "voiceFactorDisarmed": "Secondo fattore di accesso disattivato.",
     "lockedOut": "Accesso bloccato",
     "unlock": "Sblocca l'accesso",
     "failedToUnlock": "Impossibile sbloccare l'accesso",

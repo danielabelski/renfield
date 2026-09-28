@@ -372,18 +372,128 @@ Voice Authentication ermöglicht Login per Stimmerkennung:
 
 ### Aktivierung
 
-🛑 **Nicht empfohlen.** Eine Tonaufnahme der Stimme reicht für Zugriffs- UND
-Erneuerungstoken; es gibt keine Lebendigkeitsprüfung und keinen zweiten Faktor.
-Die Route setzt seit 2026-09-27 dieselben HttpOnly-Cookies wie die anderen
-Anmeldewege und meldet `must_change_password`, sie prüft `SPEAKER_RECOGNITION_ENABLED`
-(ein ECAPA-Stimmabdruck ist biometrisches Datum, Art. 9 DSGVO) und sie schreibt
-**nichts** — ein Fehlversuch legt kein Profil an. Vorher stürzte sie bei jedem
-Versuch ab. Funktionsfähig ist sie damit, tragbar nur als Zusatzfaktor.
+Seit dem 2026-09-27 ist die Stimme ein **Zusatzfaktor**, nicht mehr ein eigener
+Anmeldeweg. Eine Tonaufnahme allein genügt nicht mehr — sie bestätigt eine bereits
+mit Passwort bestandene Anmeldung.
+
+**Ablauf:**
+
+1. `POST /api/auth/login` mit Benutzername und Passwort. Für ein Konto mit
+   gesetztem `voice_second_factor_enabled` kommen **keine Token** zurück, sondern
+   `second_factor: "voice"` und ein `second_factor_ticket`.
+2. `POST /api/auth/voice` mit diesem Ticket und einer Aufnahme. Geprüft wird
+   **1:1** gegen das verknüpfte Sprecherprofil.
+3. Erst hier entstehen Zugriffs- und Erneuerungstoken samt HttpOnly-Cookies.
+
+**Einschalten** braucht deshalb zwei Dinge — den Sprachweg und die Einwilligung
+der betroffenen Person:
 
 ```bash
-VOICE_AUTH_ENABLED=true          # Standard und Empfehlung: false
-VOICE_AUTH_MIN_CONFIDENCE=0.7    # Minimum Confidence (0-1)
+VOICE_AUTH_ENABLED=true            # Standard false; ohne das ruht die Hürde
+VOICE_AUTH_MIN_CONFIDENCE=0.7      # Minimum Confidence (0-1)
+VOICE_SECOND_FACTOR_TTL_SECONDS=180  # Lebensdauer des Zwischentickets
 ```
+
+Die Einwilligung ist eine Spalte je Person (`users.voice_second_factor_enabled`,
+Standard `false`), **kein** Flag: ein ECAPA-Stimmabdruck ist biometrisches Datum
+(Art. 9 DSGVO), und dass eine Anmeldung ihn verlangt, kann niemand für jemand
+anderen entscheiden. `speaker_id` taugt dafür nicht — die Verknüpfung entstand für
+die Sprecherkennung, nicht als Zustimmung zur Anmeldung.
+
+🛑 **Es gibt keinen Rückfall auf Passwort allein.** Ein Rückfall, den ein Angreifer
+selbst auslösen kann (indem er die Stimmprüfung wiederholt scheitern lässt), hebt
+den zweiten Faktor auf. Wiederherstellung bei defektem Mikrofon oder Erkältung:
+ein Administrator schaltet `voice_second_factor_enabled` für diese Person ab.
+
+### Die Hürde steht genau dann, wenn sie auch fällt
+
+🛑 **Der Fehler, gegen den `services/voice_factor_preconditions` geschrieben ist.**
+`/auth/login` stellte die Hürde, sobald `VOICE_AUTH_ENABLED` an war. Zum Einlösen
+verlangte `/auth/voice` aber vier weitere Dinge. **Jede Lücke zwischen den beiden
+Mengen ist eine Aussperrung**, denn einen Rückfall gibt es bewusst nicht:
+
+| Vorbedingung | prüfte Login vorher | prüft `/auth/voice` |
+|---|---|---|
+| `VOICE_AUTH_ENABLED` | ✅ | ✅ |
+| `SPEAKER_RECOGNITION_ENABLED` | ❌ | ✅ |
+| verknüpftes Sprecherprofil | ❌ | ✅ |
+| mindestens eine Einbettung | ❌ | ✅ |
+| brauchbarer Einbettungsweg | ❌ | ✅ (früher **nie** erfüllbar, s.u.) |
+
+Alle drei Stellen fragen jetzt denselben Prüfer. Fehlt eine Vorbedingung, **ruht**
+die Hürde: der Passwortweg bleibt offen, ein WARNING geht ins Protokoll, und die
+Einwilligung **bleibt gespeichert**. Sie ist der Nachweis einer Erklärung der
+Person (Art. 9 DSGVO), kein Schalter, den das System still umlegen darf — kehrt
+das Profil zurück, greift die Anforderung von selbst wieder. Das ist dieselbe
+Regel, die für `VOICE_AUTH_ENABLED=false` schon galt, nur konsequent angewandt.
+
+Ein Angreifer gewinnt dadurch nichts: um die Hürde zum Ruhen zu bringen, muss er
+das Profil entfernen, und das verlangt `users.manage` bzw. `speakers.all` — dieselbe
+Berechtigung, mit der er die Einwilligung ohnehin direkt abschalten könnte.
+
+### Die Stimmprobe kommt vom voice-server
+
+`/auth/voice` berechnet die Einbettung **nicht** im Backend-Prozess. Der Weg dorthin
+(`SpeakerService.extract_embedding_from_bytes`) ist durch
+`SPEAKER_INPROCESS_EMBEDDINGS_ENABLED=false` auf beiden Instanzen verriegelt — der
+zentrale Riegel nennt „voice-login" ausdrücklich als abgedeckten Aufrufer — und selbst
+offen wäre es der **falsche Vektorraum**: gespeichert sind voice-server-ONNX-Vektoren,
+berechnet würde SpeechBrain. Also derselbe Weg wie beim Anlernen: `voice_server_client.stt()`
+mit einem kurzlebigen Dienst-Token (hier ist noch niemand angemeldet). `verify_speaker`
+bleibt unberührt — reine Kosinus-Ähnlichkeit, nicht am Riegel.
+
+Nebengewinn: der voice-server misst die Aufnahme selbst. `audio_duration_s` wird gegen
+`SPEAKER_RECOGNITION_MIN_DURATION_S` geprüft — eine **serverseitige** Mindestdauer. Die
+1,5 s in der Erfassungsmaske sind Bedienführung; ein Angreifer schickt direkt an die API.
+
+### Wo die Spalte geschaltet wird — und warum getrennt von `PATCH /users/{id}`
+
+`POST /api/users/{id}/voice-second-factor` (`{"enabled": true|false}`, Berechtigung
+`users.manage`), in der Oberfläche die Schild-Schaltfläche je Zeile unter
+**Verwaltung → Benutzer**. Die Route ist bewusst **nicht** Teil des allgemeinen
+`PATCH /users/{id}`, weil dort beide Richtungen dieselbe Berechtigung hätten — die
+Asymmetrie wäre nicht abbildbar:
+
+| Richtung | Wer darf | Grund |
+|---|---|---|
+| **Einschalten** | nur das Konto selbst (sonst **403**) | Einwilligung in biometrische Verarbeitung; niemand kann sie für jemand anderen geben |
+| **Ausschalten (eigenes Konto)** | `users.manage` | den eigenen Faktor zurückzunehmen ist niemandes Rechteausweitung |
+| **Ausschalten (fremdes Konto)** | `admin` | 🛑 der Rückweg ist zugleich ein Angriffsweg: er senkt ein fremdes Konto still auf Passwort allein, und *danach* kann man sich an diesem Passwort versuchen — mehr als ein Passwort-Zurücksetzen, das an einem scharfen Faktor nicht vorbeikommt. `users.manage` ist delegierbar ohne `admin`. |
+
+Das Einschalten wird zusätzlich mit **409** verweigert, solange der Einlöseweg nicht
+trägt — kein Sprecherprofil, keine Einbettungen, oder abgeschaltete Sprecherkennung
+(derselbe Prüfer wie oben). `VOICE_AUTH_ENABLED` wird dabei bewusst **nicht** geprüft,
+sonst wäre die Reihenfolge des Cutovers unmöglich: erst die Einwilligungen einsammeln,
+dann das Flag umlegen. Solange ruht die Hürde. Grund für die Sperre: `POST /auth/voice`
+prüft 1:1 dagegen und verweigert fail-closed, das Konto käme also nie wieder herein.
+Die Oberfläche zeigt die Schaltfläche in diesem Fall gesperrt statt sie ins 409
+laufen zu lassen. Beide Richtungen werden protokolliert (wer, wann, für welches Konto).
+
+🛑 **Was die Stimme weiterhin nicht kann:** eine Aufnahme kann sie täuschen, es gibt
+keine Lebendigkeitsprüfung. Als *erster* Faktor war das die ganze Tür; als
+*zweiter* braucht ein Angreifer zusätzlich das Passwort. Genau darin liegt der
+Gewinn — und darin die Grenze.
+
+### Im Browser
+
+`LoginPage` fängt `SecondFactorRequired` (aus `AuthContext.login`) ab und zeigt
+statt des Formulars `components/auth/VoiceSecondFactorStep`. Die Maske nimmt auf
+(`hooks/useVoiceFactorRecording`: Mindestdauer 1,5 s, Selbststopp bei 8 s, kein
+VAD — eine Anmeldephrase darf nicht bei einer Pause abgeschnitten werden) und
+schickt Ticket + Aufnahme an `POST /api/auth/voice`. Erst danach steht die
+Sitzung, und `fetchUser` holt den Nutzer über das frisch gesetzte Cookie.
+
+🛑 **Die Maske zeigt die Server-Meldung NICHT durch.** Sie ist absichtlich
+uninformativ; sie durchzureichen würde das Orakel in die Oberfläche tragen,
+sobald der Server je auskunftsfreudiger wird. Unterscheidbar sind nur Fehler des
+NUTZERGERÄTS — verweigertes Mikrofon, kein Gerät, Browser ohne Aufnahme —, denn
+wer nicht weiß, dass er das Mikrofon verweigert hat, kann es nicht erlauben.
+
+🛑 **Es gibt keinen Knopf vorbei.** Auch nach mehreren Fehlversuchen nicht; ab dem
+dritten nennt die Maske nur den vorgesehenen Weg (administratives Abschalten des
+Faktors für dieses Konto). Das Mikrofon wird beim Verlassen der Maske freigegeben
+— ein heimlich offenes Mikrofon auf einer Anmeldeseite wäre das Letzte, was man
+will.
 
 ### Sprecher mit User verknüpfen
 
@@ -739,44 +849,69 @@ UPDATE knowledge_bases SET is_public = true;
 401 Unauthorized: Invalid authentication token
 ```
 
-**Lösung:** Refresh-Token verwenden um neuen Access-Token zu erhalten.
-
-### Permission denied
-
-```
-403 Forbidden: Permission required: ha.control
-```
-
-**Lösung:** Benutzer-Rolle anpassen oder entsprechende Berechtigung hinzufügen.
-
-### Selbst nicht deaktivieren
-
-```
-400 Bad Request: Cannot deactivate your own account
-```
-
-**Lösung:** Ein anderer Admin muss den Account deaktivieren.
-
-### Voice Auth Confidence zu niedrig
-
-```
-{"success": false, "message": "Confidence too low (0.65 < 0.70)"}
-```
-
 **Lösung:**
 
-🛑 **Vorbemerkung (2026-09-27):** Dieser Abschnitt beschrieb Antworten, die die
-Route nie erzeugt hat — `/auth/voice` starb bis 2026-09-27 an einer falschen
-Aufrufsignatur, bevor überhaupt eine Konfidenz berechnet wurde. Die Route
-funktioniert jetzt, aber `VOICE_AUTH_ENABLED` gehört aus (Wiedereinspielung
-einer Tonaufnahme genügt für beide Token, keine Lebendigkeitsprüfung, kein
-zweiter Faktor). Die Schritte unten gelten nur, wenn Sie das Flag bewusst und
-in einer Umgebung einschalten, in der das tragbar ist.
+Alle Fehlschläge des zweiten Faktors antworten absichtlich **identisch**
+(`{"success": false, "message": "Voice authentication failed"}`) — kein Feld und
+kein Text unterscheidet „Ticket abgelaufen" von „Stimme passt nicht" von „Konto
+gesperrt". Das ist derselbe Grundsatz, nach dem der Passwortpfad „Nutzer
+unbekannt" und „Passwort falsch" nicht trennt: sonst wäre die Route eine
+Auskunftsstelle. **Die Diagnose steht im Server-Protokoll**, dort mit Grund und
+Messwert.
 
-1. Mehr Voice-Samples zum Sprecher hinzufügen
-2. Ruhigere Umgebung für Aufnahme
-3. `VOICE_AUTH_MIN_CONFIDENCE` senken — **senkt die Sicherheit** und ist bei
-   einem Faktor, der ohnehin wiedereinspielbar ist, der falsche Hebel
+Zur Fehlersuche also ins Backend-Log sehen, nicht in die Antwort. Dann:
+
+1. Mehr Voice-Samples zum Sprecher hinzufügen (`/speakers`)
+2. Ruhigere Umgebung für die Aufnahme
+3. `VOICE_AUTH_MIN_CONFIDENCE` senken — **senkt die Sicherheit**; bei einem Faktor,
+   den eine Aufnahme ohnehin täuschen kann, ist das der falsche Hebel
+### 🛑 Der Notausgang, wenn es keinen zweiten Administrator gibt
+
+`users.manage` sitzt auf einer Standardinstallation **nur** auf der Admin-Rolle.
+Hat die einzige Administratorin den Faktor für sich eingeschaltet und kann dann
+nicht sprechen, greift die Kette lückenlos gegen sie: die Anmeldung hält die
+Token zurück, `/auth/voice` scheitert an der Stimme, und Abschalten verlangt
+`users.manage` — das nur sie hat. **Kein API-Aufruf stellt die Instanz wieder
+her.** Der Haushalt ist genau so eine Instanz.
+
+Dafür gibt es `bin/voice_2fa_emergency.py`, das direkt gegen die Datenbank
+schreibt. Es kann **nur abschalten** — Einschalten ist eine Einwilligung in
+biometrische Verarbeitung, die eine Person über die Oberfläche für sich selbst
+abgibt, nicht ein Betreiber über die Kommandozeile.
+
+```bash
+kubectl -n renfield exec deploy/backend -- \
+    python /app/../bin/voice_2fa_emergency.py --list
+kubectl -n renfield exec deploy/backend -- \
+    python /app/../bin/voice_2fa_emergency.py --username admin --off --dry-run
+kubectl -n renfield exec deploy/backend -- \
+    python /app/../bin/voice_2fa_emergency.py --username admin --off
+```
+
+Die Alternative wäre gewesen, das Einschalten für den letzten Administrator zu
+verweigern — dann könnte ausgerechnet die Person mit dem größten Schutzbedarf
+den Faktor als Einzige nie benutzen.
+
+### Sperren: zwei Zähler, ein Knopf
+
+Fehlversuche des zweiten Faktors zählen unter `voice2fa:<user_id>`, nicht unter
+dem Benutzernamen. Das ist Absicht: ein Fehlversuch der Stimme darf den
+Passwortpfad nicht mitsperren, sonst wäre der zweite Faktor ein Weg, jemanden mit
+fremden Mitteln aus seinem Konto zu drängen. Die Benutzerliste und
+`POST /api/users/{id}/unlock` prüfen bzw. räumen **beide** Zähler — vorher nur den
+des Benutzernamens, sodass die Liste „nicht gesperrt" meldete und der Knopf nichts
+tat, während die Person nicht hereinkam. Die Kennung steht in
+`services/voice_factor_preconditions.voice_factor_lock_id`, damit sie nicht wieder
+auseinanderläuft.
+
+---
+
+4. Kommt jemand dauerhaft nicht durch (defektes Mikrofon, Erkältung):
+   `voice_second_factor_enabled` für diese Person abschalten — **Verwaltung →
+   Benutzer**, Schild-Schaltfläche in der Zeile, oder
+   `POST /api/users/{id}/voice-second-factor` mit `{"enabled": false}`. Das ist der
+   vorgesehene Wiederherstellungsweg, nicht ein Notbehelf; er braucht kein
+   verknüpftes Sprecherprofil mehr.
 
 ---
 

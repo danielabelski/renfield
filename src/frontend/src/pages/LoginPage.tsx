@@ -16,6 +16,8 @@ import { AlertCircle, Eye, EyeOff, Loader, LogIn } from 'lucide-react';
 
 import { useAuth } from '../context/AuthContext';
 import { extractApiError } from '../utils/axios';
+import VoiceSecondFactorStep from '../components/auth/VoiceSecondFactorStep';
+import { SecondFactorRequired } from '../types/api';
 
 // react-router's `useLocation().state` is typed as `unknown`. Narrow it
 // here so the redirect-after-login path is exercised through a real
@@ -30,6 +32,7 @@ export default function LoginPage() {
   const location = useLocation();
   const {
     login,
+    fetchUser,
     isAuthenticated,
     authEnabled,
     allowRegistration,
@@ -41,6 +44,10 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  // 🛑 Das Ticket, wenn das Passwort stimmte und die Stimme noch fehlt. Solange es
+  // steht, wird die Maske fuer den zweiten Faktor gezeigt und NICHT das Formular:
+  // Anmeldung ist noch nicht fertig, es gibt keine Sitzung.
+  const [voiceTicket, setVoiceTicket] = useState<string | null>(null);
 
   // Redirect path from location state, default to home.
   const fromState = (location.state as LocationStateWithFrom | null) ?? null;
@@ -93,6 +100,14 @@ export default function LoginPage() {
       await login(username, password);
       navigate(from, { replace: true });
     } catch (err: unknown) {
+      // Kein Fehler, sondern ein Zwischenschritt: das Passwort stimmte, die
+      // Stimme fehlt noch. `login()` wirft hier absichtlich, damit kein Aufrufer
+      // versehentlich weitermacht, als waere er angemeldet.
+      if (err instanceof SecondFactorRequired) {
+        setVoiceTicket(err.ticket);
+        setPassword('');   // nicht im Speicher stehen lassen, waehrend aufgenommen wird
+        return;
+      }
       setError(extractApiError(err, t('auth.loginFailed')));
     } finally {
       setLoading(false);
@@ -191,6 +206,24 @@ export default function LoginPage() {
             </div>
           )}
 
+          {voiceTicket ? (
+            <VoiceSecondFactorStep
+              ticket={voiceTicket}
+              onVerified={async () => {
+                // Die Sitzung steht erst JETZT. `fetchUser` holt den Nutzer
+                // ueber das frisch gesetzte Cookie; danach ist die Navigation
+                // dieselbe wie beim einfaktorigen Weg.
+                setVoiceTicket(null);
+                await fetchUser();
+                navigate(from, { replace: true });
+              }}
+              onCancel={() => {
+                // Das Ticket verfaellt von selbst (kurze Lebensdauer, einmalig).
+                setVoiceTicket(null);
+                setError(null);
+              }}
+            />
+          ) : (
           <form onSubmit={handleSubmit} className="space-y-6">
             {/* Username */}
             <div>
@@ -257,6 +290,7 @@ export default function LoginPage() {
               )}
             </button>
           </form>
+          )}
 
           {/* OIDC SSO button — full-page navigation (not Link/navigate)
               because /auth/oidc/login responds 302 to the IdP, which is
