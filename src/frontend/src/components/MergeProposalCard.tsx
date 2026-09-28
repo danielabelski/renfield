@@ -142,6 +142,11 @@ export default function MergeProposalCard({ proposal, onApprove, onReject, busy 
           disabled={busy}
           // Absicht: bei einem vorsichtigen Vorschlag bekommt die SICHERE
           // Aktion den Fokus, nicht die zusammenfuehrende.
+          // 🛑 Bekannter Fehler, #1349: die Liste rendert eine Karte JE Vorschlag,
+          // also verlangen bei mehreren vorsichtigen Vorschlaegen alle den Fokus
+          // und die letzte gewinnt. Nicht hier geloest, weil der Fix eine
+          // Entwurfsentscheidung ist (Elternkomponente rechnet den Index, oder
+          // gar kein DOM-autoFocus mehr).
           autoFocus={cautious}
         >
           {t('circles.mergeProposals.reject')}

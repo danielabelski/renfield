@@ -31,18 +31,19 @@ Last reviewed: 2026-05-03 (post-release sweep). Voice pipeline Phase A (v2.3.0) 
 
 **Vollständige Auflistung: [`docs/BACKLOG_INVENTORY.md`](docs/BACKLOG_INVENTORY.md)** — diese
 Sicht hier nennt nur die Spitzenposten je Stufe, nicht den gesamten Bestand (über 150
-Posten). Erfasst aus **beiden** Quellen — 41 offene GitHub-Issues und die
+Posten). Erfasst aus **beiden** Quellen — 40 offene GitHub-Issues (gemessen 2026-09-27; die 41 stammten von vor dem Aufräumen) und die
 Dokumentation (dieser Index, `docs/design/*`, `CLAUDE.md`, Funktionsschalter,
 `TECHNICAL_DEBT.md`). Die Einzelposten stehen unverändert in den Tier-Abschnitten
 unten; diese Sicht ordnet sie nur. **Nicht erfasst:** `tasks/*.md` (33 Planungsdateien).
 
-**Lagebild:** 28 der 41 Issues sind seit über 90 Tagen unberührt. 33 fertig gebaute
+**Lagebild (gemessen 2026-09-27):** 19 der 40 Issues sind seit über 90 Tagen unberührt — vorher 28 von 41; die Issue-Aktionen vom 2026-09-27 (#11, #13, #23, #127, #1113, #1116, #1277 geschlossen, #1343/#1344/#1345 angelegt) haben genau die ältesten getroffen. Ältestes offenes Issue: 2026-01-24. 33 fertig gebaute
 Funktionen sind auf **keiner** Instanz je eingeschaltet worden. Kein P0.
 
 ### S1 — Kaputt oder blind, jetzt
 | Sache | Warum zuerst | Quelle |
 |---|---|---|
 | ~~Browser-Mikrofon im Haushalt tot seit ~Juli~~ **behoben 2026-09-18** | Verwaister Ingress aus #1119; ersetzt durch eine IngressRoute in ns `voice`. Browser-Test bestanden | `:56` |
+| 🛑 Haushalt läuft auth-on OHNE HttpOnly-Sitzung | `AUTH_ENABLED=true` seit 2026-09-23, `AUTH_COOKIE_ENABLED` dort **nicht gesetzt** (Standard `false`, `config.py:1437`, auch nicht im `renfield-env-private`-Secret) → Sitzungstoken liegt in `localStorage` (`utils/axios.ts:45`), für jedes Skript auf der Seite lesbar. xidra führt mit `AUTH_COOKIE_ENABLED=true` eine HttpOnly-Sitzung. Solange die Anmeldung aus war, war der Schalter belanglos — mit dem Umlegen ist er ein Ausfall. Umlegen ändert den Anmeldeweg der Oberfläche, Browser-E2E danach zwingend | gemessen 2026-09-27, `docs/BACKLOG_INVENTORY.md` §4a |
 | `sat-wohnzimmer` ist taub (WM8960-Probe −110) | Gerät hört nichts **und** meldet sich gesund — der Überwachungs-Blindfleck wiegt schwerer | #1211 |
 | KV-Cache auf `cuda.local` gesättigt | 2267 Fehler, gemeinsamer Pool für 4 Slots, keine Mandantentrennung | `docs/GPU_TOPOLOGY.md` §5 |
 | ~~OTA-Rollback terminiert nicht~~ **behoben 2026-09-19** | Endstufen terminieren jetzt und behalten die Ursache; der Kehraus hatte gar keinen Takt — nachgezogen und kalibriert. Der Geräte-Kehraus bleibt offen | #1209, #1277 |

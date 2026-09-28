@@ -38,10 +38,18 @@ export default function ObligationRow({ fact, now, confirmed = false, className 
         fact.amount_value,
       );
     } catch {
-      // amount_currency is LLM-extracted and NOT ISO-4217-validated (backend
-      // TODO) — an invalid code (e.g. "EURO") makes Intl.NumberFormat throw a
-      // RangeError mid-render. Fall back to a plain number + the raw code so a
-      // single bad fact can't crash the agenda/panel.
+      // Der Rückfall bleibt nötig, die BEGRÜNDUNG war überholt: bis 2026-09-27
+      // stand hier „backend TODO", als validiere das Backend nicht. Es tut es
+      // seit 2026-06-18 (`_clean_currency` im Schicht-A-Extraktor, der einzige
+      // Schreibpfad — nachgeprüft am 2026-09-27: ein `DocumentFact(...)`,
+      // zwei Roh-SQL-Anweisungen, die die Spalte nicht anfassen, kein
+      // API-Schreibweg).
+      //
+      // Warum das `catch` trotzdem steht: die ALTBESTÄNDE sind älter als die
+      // Validierung. In der Produktion liegt eine Zeile mit `KWH` als Währung,
+      // angelegt am 2026-06-01 21:27 — 17 Tage davor. `Intl.NumberFormat` wirft
+      // darauf einen `RangeError` mitten im Rendern; ohne diesen Zweig reisst
+      // eine einzige Altzeile die Agenda mit.
       amount = `${new Intl.NumberFormat(locale, {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,

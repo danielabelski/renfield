@@ -27,13 +27,25 @@ select = [
     "RUF",  # ruff-specific rules
 ]
 # 🛑 `BLE` (blind-except) ist ABSICHTLICH nicht ausgewaehlt, und das ist eine
-# Entscheidung, keine Luecke. Im Backend sind 577 Stellen betroffen; der grosse
-# Teil davon ist das gewollte Muster an Dienstgrenzen — „eine fehlgeschlagene
-# Benachrichtigung darf die Aufgabe nie umbringen", „ein geschlossener
-# WebSocket darf eine foederierte Abfrage nicht abbrechen". Die Regel scharf zu
-# machen hiesse 206 zusaetzliche `noqa`-Gummistempel, ohne eine einzige echte
-# Fangstelle. Wer hier trotzdem `# noqa: BLE001` schreibt, bekommt ihn von
-# RUF100 als toten Ballast zurueck — das ist der Hinweis, nicht ein Fehler.
+# Entscheidung, keine Luecke. Gemessen am 2026-09-27 mit der festgenagelten
+# ruff-Version: **851 Stellen in `src/backend`, 89 in `tests` — 940 insgesamt**,
+# und JEDE einzelne braeuchte einen `noqa`, weil dieser Commit die 371 alten
+# entfernt hat.
+#
+# Die Zahl ist die Korrektur eines eigenen Fehlers: hier stand zuerst „577
+# Stellen, 206 Gummistempel". Die 577 waren gemessen, WAEHREND die 371 toten
+# `noqa: BLE001` noch dastanden — ein `noqa` unterdrueckt den Befund eben doch,
+# sobald man die Regel ausdruecklich auswaehlt. Eine Zahl, die nur vor der
+# eigenen Aenderung galt, ist keine Begruendung. 577 + 371 = 948 ≈ 940, die
+# Rechnung geht auf.
+#
+# Das Argument wird dadurch STAERKER, nicht schwaecher: der grosse Teil dieser
+# Stellen ist das gewollte Muster an Dienstgrenzen — „eine fehlgeschlagene
+# Benachrichtigung darf die Aufgabe nie umbringen", „ein geschlossener WebSocket
+# darf eine foederierte Abfrage nicht abbrechen". Die Regel scharf zu machen
+# hiesse 940 Gummistempel ohne eine einzige echte Fangstelle. Wer hier trotzdem
+# `# noqa: BLE001` schreibt, bekommt ihn von RUF100 als toten Ballast zurueck —
+# das ist der Hinweis, nicht ein Fehler.
 ignore = [
     "E501",   # line too long — handled by formatter
     "E402",   # module-level import not at top — intentional for conditional/lazy imports

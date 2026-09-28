@@ -2,7 +2,9 @@
 
 Dieses Dokument enthält eine umfassende Analyse der technischen Schulden im gesamten Renfield-System.
 
-**Letzte Aktualisierung:** 2026-07-23 (Infrastruktur I1 KORRIGIERT: Harbor-Slowness vom Heim-Netz = **WAN-Hairpin über die Public-IP**, upload-gedeckelt ~72 Mbit/s — KEIN PMTUD-Blackhole [sauberer Push: 0 Retrans, 0 frag-needed]. `.159` löst Harbor auf die Public-IP auf, weil der einzige TLS-Endpoint öffentlich ist. Fix: LAN-direkter `ctr import` › interner TLS-Endpoint + Split-Horizon-DNS. KEINE Firewall-Änderung. Vollanalyse: `../public_k8s/docs/harbor-slow-from-home-lan.md`)
+**Letzte Aktualisierung:** 2026-09-27 (Lint-Tor reparierbar gemacht — es lief seit seiner Einführung **nie**: `pyproject.toml` fehlt im Backend-Bild UND `ruff` ist dort nicht installiert; siehe `bin/lint-backend.sh`. Damit sichtbar geworden: eine Fail-Closed-Sicherheitsprüfung, die eine doppelte Testmethode verdeckte, drei tote Mocks, ein Test, der den Fehlerpfad für Erfolg nahm, und der latente Hook-Fehler im `TierPicker`. Beide Torhälften stehen jetzt auf 0 Fehlern. Dazu drei Flags, die das Einschalten nicht überlebten.)
+
+**Vorher, 2026-07-23** (Infrastruktur I1 KORRIGIERT: Harbor-Slowness vom Heim-Netz = **WAN-Hairpin über die Public-IP**, upload-gedeckelt ~72 Mbit/s — KEIN PMTUD-Blackhole [sauberer Push: 0 Retrans, 0 frag-needed]. `.159` löst Harbor auf die Public-IP auf, weil der einzige TLS-Endpoint öffentlich ist. Fix: LAN-direkter `ctr import` › interner TLS-Endpoint + Split-Horizon-DNS. KEINE Firewall-Änderung. Vollanalyse: `../public_k8s/docs/harbor-slow-from-home-lan.md`)
 
 ---
 
@@ -620,13 +622,23 @@ Bereits gepinnte Images:
 
 ## Test-Coverage
 
-| Bereich (Stand 2026-09-20) | Test Files | Tests | Source Files |
+| Bereich (gemessen 2026-09-27) | Test Files | Tests | Source Files |
 |---------|------------|-------|--------------|
-| Backend (`tests/backend`) | 366 | 6777 `def test_` | 319 `.py` (ohne alembic) |
-| Frontend (`tests/frontend/react`, Vitest/TS — keine `.jsx` mehr) | 113 | 920 `it()/test()` | 245 `.ts/.tsx` |
-| Satellite (`tests/satellite`) | 33 | – | 36 `.py` (Paket `renfield_satellite/`) |
+| Backend (`tests/backend`) | 385 | 7167 `def test_` → **7604 gesammelt** (Vollsuite 2026-09-27, 37:57, 30 übersprungen) | 323 `.py` (ohne alembic) |
+| Frontend (`tests/frontend/react`, Vitest/TS — keine `.jsx` mehr) | 120 | 977 `it()/test()` | 245 `.ts/.tsx` |
+| Satellite (`tests/satellite`) | 34 | – | 36 `.py` (Paket `renfield_satellite/`) |
 
-Zählung: `find tests/backend -name 'test_*.py' | wc -l`, `grep -rc "def test_" tests/backend | awk -F: '{s+=$2} END{print s}'`; Frontend mit `-not -path '*/node_modules/*'` bzw. `--exclude-dir=node_modules` (ohne den Ausschluss zählt man die Tests der Abhängigkeiten mit: 336 / 2746).
+Zählung: `find tests/backend -name 'test_*.py' | wc -l`, `grep -rhc 'def test_' tests/backend --include='test_*.py' | awk '{s+=$1} END{print s}'`; Frontend mit `-not -path '*/node_modules/*'` bzw. `--exclude-dir=node_modules` (ohne den Ausschluss zählt man die Tests der Abhängigkeiten mit).
+
+🛑 **`def test_` ist eine UNTERGRENZE, nicht die Zahl der Testfälle.** Ein
+`@pytest.mark.parametrize` erzeugt aus einer Definition mehrere Fälle. Die Tabelle nennt
+deshalb beides: die Definitionen, weil sie ohne Testbank messbar sind, und die gesammelte
+Zahl aus dem letzten Vollauf (7604 gegen 7167 Definitionen — 437 Fälle kommen aus
+`parametrize`). Wer eine Fallzahl braucht, muss sammeln oder laufen lassen.
+
+Und dies ist die EINZIGE Stelle, die eine Testzahl führt: `CLAUDE.md` nannte bis
+2026-09-27 „backend 3.400+" — weniger als die Hälfte — und verweist jetzt hierher,
+statt eine zweite Zahl zu pflegen, die zwangsläufig auseinanderdriftet.
 
 ### Fehlende Tests
 

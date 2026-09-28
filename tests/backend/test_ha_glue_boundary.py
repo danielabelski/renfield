@@ -63,6 +63,14 @@ ALLOWED_IMPORTERS = frozenset({
     # (1) Structural bootstrap
     "api/lifecycle.py",
     "alembic/env.py",
+    # (1) Schema-Bootstrap, dieselbe Begruendung wie `alembic/env.py`:
+    # `Base.metadata` ist nur vollstaendig, wenn die ha_glue-Modelle IMPORTIERT
+    # sind — ohne den Import fehlen 12 Tabellen und eine Neuinstallation baut
+    # ein halbes Schema. Die Trennung einer plattform-eigenen Migrationskette
+    # ist W3 aus #342 und auf Q1 2027 terminiert; bis dahin ist das Schema EINES
+    # fuer beide Haelften, und diese zwei Stellen sagen das ehrlich.
+    "services/database.py",
+    "alembic/versions/pc20260926_schema_baseline.py",
     # (2) Lazy compat shim
     "models/database.py",
     # (2) Lazy compat shim — whisper_prompt_builder._build_default() does a
@@ -107,6 +115,14 @@ ALLOWED_IMPORTERS = frozenset({
     # inside a try block to broadcast the room-handoff chip; deferred + guarded, so
     # a platform-only deploy never reaches it. Same lazy-pattern rule as above.
     "services/conversation_handoff.py",
+    # (2) Lazy, merkmalsgetort — `satellite_fleet_watchdog.check_satellite_fleet`
+    # holt die Registratur des `SatelliteManager` im FUNKTIONSRUMPF und erst
+    # hinter `settings.features.get("satellites")`. Eine Plattform-Installation
+    # ohne ha_glue erreicht den Import nie: der Aufrufer in
+    # `scheduled_tasks/builtins.py` prueft dasselbe Tor davor, und die Funktion
+    # selbst nochmal fuer direkte Aufrufer. Ein Waechter ueber Satelliten hat
+    # ohne Satelliten nichts zu tun.
+    "services/satellite_fleet_watchdog.py",
 })
 
 

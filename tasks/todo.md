@@ -79,3 +79,47 @@ wären auf jeder Neuinstallation reine Schreiblast.
 ## Nicht in diesem Vorhaben
 - Die 44 Indizes mit 0 Scans beschneiden — das Fenster trägt die Aussage nicht.
   Wenn das gewollt ist: Statistiken zurücksetzen, zwei Wochen laufen lassen, dann messen.
+
+---
+
+# 2026-09-27 — Sechs Baustellen: Tore, Flags, Doku, Issues
+
+Auftrag: veraltete Doku beheben, Schließbares schließen, das kaputte Lint-Tor und den
+latenten Hook-Fehler beheben, die Flags reparieren, die beim Einschalten brechen, und
+die 12 vorbereiteten Issue-Aktionen ausführen.
+
+## Erledigt
+
+- [x] **Lint-Tor** (`fix/lint-gate-and-latent-defects`, 3 Commits). Es lief seit seiner
+      Einführung nie: `--config /app/pyproject.toml` zeigte auf eine Datei, die nie im
+      Bild war, und `ruff` ist im Produktionsbild nicht installiert. Neu:
+      `bin/lint-backend.sh` (Host, Version festgenagelt auf 0.16.9, weil `RUF100` an der
+      aktiven Regelmenge hängt). 1469 → 0 Befunde.
+- [x] **Frontend-Tor** — dieselbe Hälfte war rot: 9 Fehler, darunter zwei kaputte
+      `eslint-disable`-Kommentare. `npm run lint` → 0 Fehler.
+- [x] **Latenter Hook-Fehler** `TierPicker.tsx` — `useRef`/`useEffect` standen hinter dem
+      vorzeitigen `return` für `variant === 'compact'`. Neuer Test mit Gegenkontrolle
+      (`Rendered fewer hooks than expected`).
+- [x] **Drei Flags** (`fix/flags-that-break-when-enabled`, 1 Commit):
+      `VOICE_AUTH_ENABLED` war ein `TypeError` (+ drei weitere Brüche desselben Flags);
+      `/api/speakers/identify` rechnete einen anderen Schwerpunkt als die Erkennung
+      (drei Abweichungen, nicht eine); `MEMORY_EXTRACTION_V2_AUTHORITATIVE` ist überholt.
+      10 neue Tests, 8 davon fallen gegen den Vorzustand.
+- [x] **12 Issue-Aktionen** ausgeführt: 7 geschlossen (#11, #13, #23, #127, #1113,
+      #1116, #1277), 3 angelegt (#1343/#1344/#1345), 2 zugeschnitten (#270, #263),
+      3 kommentiert (#342, #1206, #876).
+- [x] **Veraltete Doku**: Kopfdatum in `docs/TECHNICAL_DEBT.md` (war zwei Monate alt bei
+      aktueller Tabelle), Flag-Liste 4a in `docs/BACKLOG_INVENTORY.md` (gegen die LIVE-
+      ConfigMaps nachgemessen), die Begründung im `catch` von `ObligationRow.tsx`.
+
+## Offen / an den Eigentümer
+
+- [ ] 🛑 **`AUTH_COOKIE_ENABLED` im Haushalt** — nicht gesetzt (Standard `False`), während
+      `AUTH_ENABLED` seit 2026-09-23 an ist. Das Sitzungstoken liegt dort in
+      `localStorage`; xidra führt eine HttpOnly-Sitzung. Ein Auth-Flag in der Produktion
+      lege ich nicht selbst um.
+- [ ] Der Doku-Kehraus der 101 `status: docs-pr`-Posten — ein großer Teil davon ist in
+      `TODOS.md` längst nachgezogen; die Prüfung Posten für Posten läuft.
+- [ ] Das neue Issue „Geteilte Verläufe nach dem Vorbild der Meetings" — Abschnitt 4 der
+      Vorlage behält es dem Eigentümer vor.
+- [ ] Push + PRs: drei Zweige liegen lokal, gestapelt. Ungefragt pushe ich nicht.

@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from pydantic import SecretStr
 
 # ============================================================================
 # HomeAssistantClient Tests
@@ -27,8 +28,6 @@ class TestHomeAssistantClient:
         that. ``home_assistant_token`` is a SecretStr; use a real SecretStr
         so ``.get_secret_value()`` works in __init__.
         """
-        from pydantic import SecretStr
-
         with patch('ha_glue.integrations.homeassistant.ha_glue_settings') as mock_settings:
             mock_settings.home_assistant_url = "http://ha.local:8123"
             mock_settings.home_assistant_token = SecretStr("test_token")
@@ -348,7 +347,7 @@ class TestIntegrationEdgeCases:
         """Test: HA Client Timeout"""
         with patch('ha_glue.integrations.homeassistant.ha_glue_settings') as mock_settings:
             mock_settings.home_assistant_url = "http://slow.server"
-            mock_settings.home_assistant_token = "token"
+            mock_settings.home_assistant_token = SecretStr("token")
 
             from ha_glue.integrations.homeassistant import HomeAssistantClient
             client = HomeAssistantClient()

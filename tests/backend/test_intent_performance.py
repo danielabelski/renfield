@@ -13,6 +13,7 @@ import time
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from pydantic import SecretStr
 
 # =============================================================================
 # Entity Map Cache Tests (HomeAssistantClient)
@@ -26,7 +27,7 @@ class TestEntityMapCache:
         """Clear class-level cache before each test."""
         with patch('ha_glue.integrations.homeassistant.ha_glue_settings') as mock_settings:
             mock_settings.home_assistant_url = "http://ha.local:8123"
-            mock_settings.home_assistant_token = "test_token"
+            mock_settings.home_assistant_token = SecretStr("test_token")
             from ha_glue.integrations.homeassistant import HomeAssistantClient
             HomeAssistantClient._entity_map_cache = None
             HomeAssistantClient._entity_map_cache_time = 0
@@ -36,7 +37,7 @@ class TestEntityMapCache:
     def ha_client(self):
         with patch('ha_glue.integrations.homeassistant.ha_glue_settings') as mock_settings:
             mock_settings.home_assistant_url = "http://ha.local:8123"
-            mock_settings.home_assistant_token = "test_token"
+            mock_settings.home_assistant_token = SecretStr("test_token")
             from ha_glue.integrations.homeassistant import HomeAssistantClient
             return HomeAssistantClient()
 
@@ -111,7 +112,7 @@ class TestEntityMapCache:
         """Cache should be shared across HomeAssistantClient instances."""
         with patch('ha_glue.integrations.homeassistant.ha_glue_settings') as mock_settings:
             mock_settings.home_assistant_url = "http://ha.local:8123"
-            mock_settings.home_assistant_token = "test_token"
+            mock_settings.home_assistant_token = SecretStr("test_token")
 
             from ha_glue.integrations.homeassistant import HomeAssistantClient
 

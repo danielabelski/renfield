@@ -73,7 +73,12 @@ DEFAULT_ADMIN_USERNAME=admin
 DEFAULT_ADMIN_PASSWORD=sofort-aendern!
 
 # === Voice Authentication ===
-VOICE_AUTH_ENABLED=true
+# 🛑 AUS LASSEN. Eine Tonaufnahme der Stimme reicht für Zugriffs- UND
+# Erneuerungstoken; es gibt keine Lebendigkeitsprüfung und keinen zweiten
+# Faktor. Bis 2026-09-27 war die Route ohnehin unbenutzbar (falsche
+# Aufrufsignatur → `TypeError` bei jedem Versuch); sie funktioniert jetzt,
+# ist aber nicht empfehlenswert. Details: `docs/ENVIRONMENT_VARIABLES.md`.
+VOICE_AUTH_ENABLED=false
 VOICE_AUTH_MIN_CONFIDENCE=0.7
 ```
 
@@ -367,8 +372,16 @@ Voice Authentication ermöglicht Login per Stimmerkennung:
 
 ### Aktivierung
 
+🛑 **Nicht empfohlen.** Eine Tonaufnahme der Stimme reicht für Zugriffs- UND
+Erneuerungstoken; es gibt keine Lebendigkeitsprüfung und keinen zweiten Faktor.
+Die Route setzt seit 2026-09-27 dieselben HttpOnly-Cookies wie die anderen
+Anmeldewege und meldet `must_change_password`, sie prüft `SPEAKER_RECOGNITION_ENABLED`
+(ein ECAPA-Stimmabdruck ist biometrisches Datum, Art. 9 DSGVO) und sie schreibt
+**nichts** — ein Fehlversuch legt kein Profil an. Vorher stürzte sie bei jedem
+Versuch ab. Funktionsfähig ist sie damit, tragbar nur als Zusatzfaktor.
+
 ```bash
-VOICE_AUTH_ENABLED=true
+VOICE_AUTH_ENABLED=true          # Standard und Empfehlung: false
 VOICE_AUTH_MIN_CONFIDENCE=0.7    # Minimum Confidence (0-1)
 ```
 
@@ -751,9 +764,19 @@ UPDATE knowledge_bases SET is_public = true;
 ```
 
 **Lösung:**
+
+🛑 **Vorbemerkung (2026-09-27):** Dieser Abschnitt beschrieb Antworten, die die
+Route nie erzeugt hat — `/auth/voice` starb bis 2026-09-27 an einer falschen
+Aufrufsignatur, bevor überhaupt eine Konfidenz berechnet wurde. Die Route
+funktioniert jetzt, aber `VOICE_AUTH_ENABLED` gehört aus (Wiedereinspielung
+einer Tonaufnahme genügt für beide Token, keine Lebendigkeitsprüfung, kein
+zweiter Faktor). Die Schritte unten gelten nur, wenn Sie das Flag bewusst und
+in einer Umgebung einschalten, in der das tragbar ist.
+
 1. Mehr Voice-Samples zum Sprecher hinzufügen
-2. `VOICE_AUTH_MIN_CONFIDENCE` senken (weniger sicher)
-3. Ruhigere Umgebung für Aufnahme
+2. Ruhigere Umgebung für Aufnahme
+3. `VOICE_AUTH_MIN_CONFIDENCE` senken — **senkt die Sicherheit** und ist bei
+   einem Faktor, der ohnehin wiedereinspielbar ist, der falsche Hebel
 
 ---
 

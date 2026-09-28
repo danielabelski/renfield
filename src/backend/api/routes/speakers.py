@@ -5,6 +5,8 @@ Endpoints for speaker enrollment, identification, verification, and management.
 Uses SpeechBrain ECAPA-TDNN for speaker embeddings.
 """
 
+import asyncio
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from loguru import logger
 from pydantic import BaseModel
@@ -638,7 +640,13 @@ async def enroll_speaker(
     logger.info(f"📥 Enrolling voice sample for {speaker.name}: {audio.filename}")
     audio_bytes = await audio.read()
 
-    embedding = service.extract_embedding_from_bytes(audio_bytes, audio.filename)
+    # 🛑 `to_thread`: der Aufruf ist ein schlichtes `def` (Tempdatei,
+    # librosa, torch-ECAPA) und blockiert nackt die GESAMTE
+    # Ereignisschleife — auch jede Satelliten-Sprachrunde. Admin-Tor
+    # davor aendert daran nichts.
+    embedding = await asyncio.to_thread(
+        service.extract_embedding_from_bytes, audio_bytes, audio.filename
+    )
 
     if embedding is None:
         raise HTTPException(
@@ -705,7 +713,13 @@ async def identify_speaker(
     logger.info(f"🔍 Identifying speaker from: {audio.filename}")
     audio_bytes = await audio.read()
 
-    query_embedding = service.extract_embedding_from_bytes(audio_bytes, audio.filename)
+    # 🛑 `to_thread`: der Aufruf ist ein schlichtes `def` (Tempdatei,
+    # librosa, torch-ECAPA) und blockiert nackt die GESAMTE
+    # Ereignisschleife — auch jede Satelliten-Sprachrunde. Admin-Tor
+    # davor aendert daran nichts.
+    query_embedding = await asyncio.to_thread(
+        service.extract_embedding_from_bytes, audio_bytes, audio.filename
+    )
 
     if query_embedding is None:
         raise HTTPException(
@@ -800,7 +814,13 @@ async def verify_speaker(
 
     # Extract query embedding
     audio_bytes = await audio.read()
-    query_embedding = service.extract_embedding_from_bytes(audio_bytes, audio.filename)
+    # 🛑 `to_thread`: der Aufruf ist ein schlichtes `def` (Tempdatei,
+    # librosa, torch-ECAPA) und blockiert nackt die GESAMTE
+    # Ereignisschleife — auch jede Satelliten-Sprachrunde. Admin-Tor
+    # davor aendert daran nichts.
+    query_embedding = await asyncio.to_thread(
+        service.extract_embedding_from_bytes, audio_bytes, audio.filename
+    )
 
     if query_embedding is None:
         raise HTTPException(

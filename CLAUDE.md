@@ -64,7 +64,8 @@ A failing test is an issue, not noise: the backend suite is green, so investigat
 ```bash
 ./bin/start.sh                  # Start entire stack (build-box / dev compose)
 ./bin/quick-update.sh           # Quick backend restart
-make lint                       # Lint all (ruff + eslint)
+make lint                       # Lint all (ruff + eslint) — einmalig: pipx install ruff==0.16.9
+                                #   (ruff laeuft auf dem HOST, nicht im Bild; s. bin/lint-backend.sh)
 make format-backend             # Format + auto-fix with ruff
 bin/deploy-production.sh …      # Real deploy (see the deploy-production skill; user-invoked)
 ```
@@ -79,7 +80,7 @@ For architecture questions use the `architecture-guide` agent; it reads `.claude
 
 ## Testing
 
-Tests live in `tests/` at the project root (backend 3,400+). Markers: `@pytest.mark.unit`, `database`, `integration`, `e2e`, `backend`, `frontend`, `satellite`, `postgres`.
+Tests live in `tests/` at the project root (Zahlen: `docs/TECHNICAL_DEBT.md` → Test-Coverage; hier KEINE zweite Zahl, sie driftet). Markers: `@pytest.mark.unit`, `database`, `integration`, `e2e`, `backend`, `frontend`, `satellite`, `postgres`.
 
 **There is no local Python test environment and GitHub CI does not run.** Reality:
 

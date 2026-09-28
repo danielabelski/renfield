@@ -66,6 +66,13 @@ no token ever in Redis or a URL. 404 when the flag is off. Redirects carry only 
 - Frontend cookie mode: `AuthContext.setTokens` persists NEITHER token to localStorage; "logged in?" comes from `/me`.
 
 ## Voice token + voiceprint privacy gate
+- **`POST /auth/voice` (`VOICE_AUTH_ENABLED`, aus auf beiden Instanzen) liest biometrische Daten und stellt Token aus.**
+  Sie prüft `speaker_recognition_enabled` VOR der Einbettung, vergleicht gegen dieselben Referenzprofile wie die
+  Erkennung (`speaker_resolver.build_known_speaker_centroids`) und schreibt NICHTS — bewusst nicht über
+  `resolve_speaker_from_embedding`, der einen unbekannten Sprecher anlegen würde: ein Anmeldeversuch darf kein Profil
+  erzeugen. Sie setzt `_set_auth_cookies` und meldet `must_change_password` wie die vier anderen Anmeldewege.
+  🛑 Das Flag bleibt aus: eine Tonaufnahme genügt für Zugriffs- UND Erneuerungstoken, ohne Lebendigkeitsprüfung und
+  ohne zweiten Faktor. Bis 2026-09-27 war die Route eine `TypeError`-Falle (falsche Aufrufsignatur).
 - `/api/ws/token?purpose=voice` mints a short-lived `scope:"voice"` token for the external voice-server only; its verify
   path (`/api/internal/auth/verify`) accepts any non-`ws` scope. **REST and renfield's own `/ws/*` REJECT `scope:voice`.**
 - **With `SPEAKER_RECOGNITION_ENABLED=false` NO voiceprint is persisted on ANY path (Art. 9 GDPR):**

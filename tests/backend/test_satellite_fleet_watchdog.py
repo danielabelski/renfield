@@ -219,3 +219,69 @@ class TestSurvival:
 
 async def _async(value):
     return value
+
+
+class TestTheFeatureGate:
+    """Der innere Riegel — der Pfad, den `manager=None` nimmt.
+
+    🛑 Dieser Block hat gefehlt, und das war kein Zufall: jeder andere Test hier
+    geht durch `_run()`, und das speist IMMER einen Manager ein. Damit war
+    `manager is None` nie wahr und der ganze Zweig aus Sicht der Suite toter
+    Code — einschliesslich des `ha_glue`-Imports, den er abschirmen soll. Genau
+    dieser Import ist der Grund, warum `test_ha_glue_boundary.py` diese Datei
+    durchlaesst. Ein Allowlist-Eintrag, dessen Bedingung ungeprueft ist, ist
+    keine Begruendung, sondern eine Behauptung.
+    """
+
+    async def test_without_the_satellite_feature_it_never_touches_ha_glue(
+        self, monkeypatch, settled
+    ):
+        from utils.config import settings
+
+        monkeypatch.setattr(settings, "feature_satellites", False)
+        assert settings.features.get("satellites") is False
+
+        # Waere der Riegel weg, liefe der Code in den Import und von dort in die
+        # echte Registratur. Ein Fehlschlag hier heisst: die Grenze ist offen.
+        n = _Notify()
+        out = await wd.check_satellite_fleet(
+            notify=n, manager=None,
+            fetch_enrolled=lambda: _async(_rows(("a", "Kueche", 5))),
+            read_state=_State().read, write_state=_State().write,
+        )
+        assert out is None
+        assert n.calls == []
+
+    async def test_with_the_feature_on_it_asks_the_registry(self, monkeypatch, settled):
+        """Die Gegenrichtung: mit Merkmal AN wird der Manager geholt.
+
+        Der Import wird ersetzt, damit der Test ohne `ha_glue`-Registratur
+        laeuft — geprueft wird, DASS er stattfindet, nicht was dahinter liegt.
+        """
+        from utils.config import settings
+
+        monkeypatch.setattr(settings, "feature_satellites", True)
+        asked = []
+
+        class _Mgr:
+            satellites: dict = {}
+
+        def _get():
+            asked.append(1)
+            return _Mgr()
+
+        import sys
+        import types
+
+        mod = types.ModuleType("ha_glue.services.satellite_manager")
+        mod.get_satellite_manager = _get
+        monkeypatch.setitem(sys.modules, "ha_glue.services.satellite_manager", mod)
+
+        n = _Notify()
+        out = await wd.check_satellite_fleet(
+            notify=n, manager=None,
+            fetch_enrolled=lambda: _async(_rows(("a", "Kueche", 5))),
+            read_state=_State().read, write_state=_State().write,
+        )
+        assert asked == [1], "mit Satellitenmerkmal MUSS die Registratur gefragt werden"
+        assert out is not None, "der Satellit fehlt, also muss gemeldet werden"
