@@ -47,27 +47,57 @@ for t in "$BACKEND_TAG" "$FRONTEND_TAG"; do
   [[ "$t" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "ERROR: unplausible tag: $t" >&2; exit 2; }
 done
 
-changed=()
+changed=() fehlgeschlagen=()
 while IFS= read -r -d '' f; do
   before="$(cat "$f")"
   after="$before"
   # Nur der Teil HINTER `renfield/<bild>:` wird ersetzt. Der Praefix — und damit
   # der Registry-Name, echt oder Platzhalter — bleibt unangetastet.
-  [[ -n "$BACKEND_TAG"  ]] && after="$(printf '%s' "$after" | sed -E "s#(renfield/backend:)[A-Za-z0-9._-]+#\1${BACKEND_TAG}#g")"
-  [[ -n "$FRONTEND_TAG" ]] && after="$(printf '%s' "$after" | sed -E "s#(renfield/frontend:)[A-Za-z0-9._-]+#\1${FRONTEND_TAG}#g")"
-  if [[ "$after" != "$before" ]]; then
+  if [[ -n "$BACKEND_TAG" ]]; then
+    after="$(printf '%s' "$after" | sed -E "s#(renfield/backend:)[A-Za-z0-9._-]+#\1${BACKEND_TAG}#g")"
+  fi
+  if [[ -n "$FRONTEND_TAG" ]]; then
+    after="$(printf '%s' "$after" | sed -E "s#(renfield/frontend:)[A-Za-z0-9._-]+#\1${FRONTEND_TAG}#g")"
+  fi
+  [[ "$after" == "$before" ]] && continue
+
+  if [[ $DRY_RUN == 1 ]]; then
     changed+=("$f")
-    [[ $DRY_RUN == 0 ]] && printf '%s\n' "$after" > "$f"
+    continue
+  fi
+  # 🛑 ERST SCHREIBEN, DANN MELDEN. Vorher wurde die Datei gezaehlt, BEVOR der
+  # Schreibvorgang lief — eine schreibgeschuetzte Datei erzeugte "Permission
+  # denied" auf stderr und stand danach trotzdem in der Erfolgsliste. Im Deploy
+  # liest der Betreiber dann "5 Manifeste geschrieben", waehrend nichts
+  # geschrieben wurde. Ein Werkzeug, das Fehlschlaege als Erfolg meldet, ist
+  # schlimmer als eines, das gar nichts tut.
+  if printf '%s\n' "$after" > "$f"; then
+    changed+=("$f")
+  else
+    fehlgeschlagen+=("$f")
   fi
 done < <(find "$DIR" -maxdepth 1 -name '*.yaml' -print0 | sort -z)
 
-if [[ ${#changed[@]} -eq 0 ]]; then
+# 🛑 Erst berichten, was GELUNGEN ist, dann was fehlschlug. Bei einem
+# Teilerfolg braucht der Betreiber beide Haelften: welche Manifeste schon
+# stimmen und welche er von Hand nachziehen muss.
+if [[ ${#changed[@]} -eq 0 && ${#fehlgeschlagen[@]} -eq 0 ]]; then
   echo "  Bildmarken schon auf dem Live-Stand — nichts zu tun."
   exit 0
 fi
 
-printf '  %s %d Manifest(e) in %s:\n' "$([[ $DRY_RUN == 1 ]] && echo '[dry-run] wuerde schreiben:' || echo 'geschrieben:')" "${#changed[@]}" "$DIR"
-for f in "${changed[@]}"; do printf '    %s\n' "$f"; done
+if [[ ${#changed[@]} -gt 0 ]]; then
+  if [[ $DRY_RUN == 1 ]]; then was='[dry-run] wuerde schreiben:'; else was='geschrieben:'; fi
+  printf '  %s %d Manifest(e) in %s:\n' "$was" "${#changed[@]}" "$DIR"
+  for f in "${changed[@]}"; do printf '    %s\n' "$f"; done
+fi
+
+if [[ ${#fehlgeschlagen[@]} -gt 0 ]]; then
+  printf 'ERROR: %d Manifest(e) NICHT geschrieben — von Hand nachziehen:\n' \
+    "${#fehlgeschlagen[@]}" >&2
+  for f in "${fehlgeschlagen[@]}"; do printf '    %s\n' "$f" >&2; done
+  exit 1
+fi
 
 # Der Hinweis nennt das RICHTIGE Repo — die Manifeste einer privaten Instanz
 # liegen nicht in dem Repo, aus dem deployt wurde.

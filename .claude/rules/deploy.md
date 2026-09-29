@@ -59,3 +59,6 @@ richtige). Vorher war das Handarbeit nach jedem Deploy, und dreimal in Folge hie
 „Bildmarken auf den Live-Stand".
 🛑 Ersetzt wird **nur die Marke hinter `renfield/<bild>:`**, nie der Registry-Name: das öffentliche Repo
 trägt dort absichtlich den Platzhalter `your-registry.example`.
+🛑 Ein fehlgeschlagener Schreibvorgang (schreibgeschützte Datei) wird **gemeldet und beendet mit 1** — er
+zählte vorher als Erfolg, und der Betreiber las „5 Manifeste geschrieben", während nichts geschrieben war.
+Bei Teilerfolg nennt die Ausgabe beide Hälften: was steht und was von Hand nachzuziehen ist.

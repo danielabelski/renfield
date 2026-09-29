@@ -237,10 +237,13 @@ fi
 # Live-Stand". Committet wird hier NICHTS — das Skript sagt nur, was anliegt.
 if [[ -n "$MANIFESTS_DIR" ]]; then
   log "Bildmarken in die Manifeste schreiben (ohne Commit)"
+  # Explizite `if`-Bloecke statt `[[ … ]] && cmd`: unter `set -e` ist der
+  # Rueckgabewert einer solchen Kette der des fehlgeschlagenen Tests, und ob das
+  # abbricht, haengt am Kontext. In einem Deploy-Skript will man das nicht raten.
   tag_args=(--dir "$MANIFESTS_DIR")
-  [[ -n "$BACKEND_TAG"  ]] && tag_args+=(--backend-tag "$BACKEND_TAG")
-  [[ -n "$FRONTEND_TAG" ]] && tag_args+=(--frontend-tag "$FRONTEND_TAG")
-  [[ $DRY_RUN == 1      ]] && tag_args+=(--dry-run)
+  if [[ -n "$BACKEND_TAG"  ]]; then tag_args+=(--backend-tag "$BACKEND_TAG"); fi
+  if [[ -n "$FRONTEND_TAG" ]]; then tag_args+=(--frontend-tag "$FRONTEND_TAG"); fi
+  if [[ $DRY_RUN == 1      ]]; then tag_args+=(--dry-run); fi
   "$REPO_ROOT/bin/k8s-write-image-tags.sh" "${tag_args[@]}" \
     || echo "WARNING: Bildmarken konnten nicht geschrieben werden — von Hand nachziehen" >&2
 fi
