@@ -94,6 +94,7 @@
     "fristen": "Deadlines",
     "federationAudit": "Federation log",
     "circles": "Circles",
+    "account": "My account",
     "intents": "Intents",
     "routingDashboard": "Routing Dashboard",
     "maintenance": "Maintenance",
@@ -2487,5 +2488,24 @@
     "preparing": "Preparing proposal…",
     "successTitle": "Transferred",
     "success": "\"{{filename}}\" was transferred to the tax accountant."
+  },
+  "account": {
+    "title": "My account",
+    "subtitle": "Settings that belong to you",
+    "voiceTitle": "Voice as a second sign-in factor",
+    "voiceExplain": "After signing in with your password, you additionally speak a short sentence, checked against your speaker profile. You decide this for yourself — nobody else can switch it on for you.",
+    "voiceStateOn": "Armed — your sign-in requires your voice",
+    "voiceStateOff": "Off — your password is enough",
+    "voiceStateResting": "Consented, but resting (voice path off on this instance)",
+    "voiceNoFallback": "There is deliberately no fallback to the password alone. If your microphone fails, an administrator can switch the requirement off.",
+    "voiceArm": "Require my voice",
+    "voiceDisarm": "Stop requiring it",
+    "voiceArmConfirm": "From now on your password alone is not enough: after signing in you speak a short sentence, checked against your speaker profile. There is deliberately no fallback to the password alone.",
+    "voiceDisarmConfirmSelf": "Your sign-in will then need only the password again.",
+    "voiceArmed": "Your voice is now a second sign-in factor.",
+    "voiceDisarmed": "Second sign-in factor switched off.",
+    "voiceFailed": "The setting could not be changed.",
+    "voicePasswordLabel": "Password to confirm",
+    "voicePasswordWhy": "Only for switching off: a session older than your consent should not be able to withdraw it on its own."
   }
 }

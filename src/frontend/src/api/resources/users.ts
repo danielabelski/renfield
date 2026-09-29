@@ -194,11 +194,14 @@ export function useResetUserPassword() {
 }
 
 async function setVoiceSecondFactorRequest(
-  args: { id: number; enabled: boolean },
+  args: { id: number; enabled: boolean; currentPassword?: string },
 ): Promise<AdminUser> {
   const response = await apiClient.post<AdminUser>(
     `/api/users/${args.id}/voice-second-factor`,
-    { enabled: args.enabled },
+    // 🛑 Das Passwort verlangt der Server NUR beim Abschalten des EIGENEN
+    // Faktors: ein Token von vor der Einwilligung überlebt sie und dürfte sie
+    // sonst zurücknehmen. Für ein fremdes Konto steht `admin` als Schutz.
+    { enabled: args.enabled, current_password: args.currentPassword ?? null },
   );
   return response.data;
 }

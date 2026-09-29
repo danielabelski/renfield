@@ -28,6 +28,7 @@ import {
   Inbox,
   CalendarClock,
   CircleDashed,
+  UserCircle,
   MapPin,
   Wrench,
   FileSearch,
@@ -112,6 +113,8 @@ const adminNavigationConfig: NavItemConfig[] = [
   { nameKey: 'nav.paperlessAudit', href: '/admin/paperless-audit', icon: FileSearch, permission: ['admin'] },
   { nameKey: 'nav.maintenance', href: '/admin/maintenance', icon: Wrench, permission: ['admin'] },
   { nameKey: 'nav.settings', href: '/admin/settings', icon: Settings, permission: ['admin'] },
+  // Ohne `permission`: jede angemeldete Person erreicht ihr eigenes Konto.
+  { nameKey: 'nav.account', href: '/settings/account', icon: UserCircle },
   { nameKey: 'nav.circles', href: '/settings/circles', icon: CircleDashed },
   // Self-Learning admin console (v2.10).
   { nameKey: 'nav.adminSkills', href: '/admin/skills', icon: Sparkles, permission: ['admin'] },

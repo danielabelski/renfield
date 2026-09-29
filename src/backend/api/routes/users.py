@@ -32,12 +32,14 @@ from services.auth_service import (
     active_admin_ids,
     get_password_hash,
     get_role_by_id,
+    get_user_or_default,
     require_permission,
     validate_password,
 )
 from services.database import get_db
 from services.login_lockout import LockoutStoreUnavailable, login_lockout
 from services.voice_factor_preconditions import voice_factor_lock_id
+from utils.config import settings
 from utils.hooks import run_hooks
 
 router = APIRouter()
@@ -163,6 +165,10 @@ class LinkSpeakerRequest(BaseModel):
 class VoiceSecondFactorRequest(BaseModel):
     """Ein- oder Ausschalten der Stimme als zweiter Anmeldefaktor."""
     enabled: bool
+    # 🛑 Nur beim SELBST-Abschalten verlangt. Grund im Docstring der Route:
+    # ein Token von VOR der Einwilligung ueberlebt sie (der Epoch-Sprung
+    # unterbleibt bewusst) und duerfte sie sonst zurueknehmen.
+    current_password: str | None = None
 
 
 # =============================================================================
@@ -885,7 +891,7 @@ async def set_voice_second_factor(
     user_id: int,
     request: VoiceSecondFactorRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_permission(Permission.USERS_MANAGE))
+    current_user: User = Depends(get_user_or_default)
 ):
     """Die Stimme als zweiten Anmeldefaktor ein- oder ausschalten.
 
@@ -895,10 +901,25 @@ async def set_voice_second_factor(
     ANMELDUNG ihn verlangt, ist eine Einwilligung — und eine Einwilligung kann
     niemand fuer jemanden anderen geben. Deshalb:
 
-    * **Einschalten nur fuer sich selbst.** Auch eine Administratorin darf es
-      einem fremden Konto nicht auferlegen. Das waere keine Verwaltung, das waere
-      eine erzwungene biometrische Erfassung.
-    * **Ausschalten fuer sich selbst** mit `users.manage`; **fuer ein fremdes
+    * **Einschalten nur fuer sich selbst** — und dafuer genuegt, ANGEMELDET zu
+      sein. Auch eine Administratorin darf es einem fremden Konto nicht
+      auferlegen; das waere keine Verwaltung, sondern eine erzwungene
+      biometrische Erfassung.
+
+      🛑 Die Route verlangt darum NICHT mehr `users.manage`. Vorher stand das
+      vor BEIDEN Richtungen, und damit war die Einwilligung ausgerechnet fuer
+      die Person unerreichbar, um deren Stimme es geht: ein Haushaltsmitglied
+      ohne Verwaltungsrecht konnte weder einwilligen noch seinen Zustand sehen.
+      Eine Einwilligung nach Art. 9 DSGVO, die nur ein Dritter erteilen kann,
+      ist keine. Den eigenen Faktor scharf zu stellen fuegt eine ZUSAETZLICHE
+      Huerde am eigenen Konto hinzu — keine Rechteausweitung.
+
+      🛑 BERICHTIGUNG: hier stand, das Zuruecknehmen setze voraus, den Faktor
+      bestanden zu haben. Das war FALSCH. Das Einschalten hebt `token_epoch`
+      nicht an, also ueberlebt ein Token von VOR der Einwilligung sie und
+      erneuert sich ueber `/auth/refresh` (das den Faktor nicht prueft). Darum
+      verlangt das Selbst-Abschalten jetzt das Passwort — s. unten.
+    * **Ausschalten fuer sich selbst** (angemeldet genuegt); **fuer ein fremdes
       Konto nur mit `admin`.** Das NIMMT eine Anforderung weg, und genau das ist
       der dokumentierte Wiederherstellungsweg, wenn ein Mikrofon defekt ist oder
       jemand heiser: es gibt bewusst keinen Rueckfall auf Passwort allein
@@ -912,7 +933,7 @@ async def set_voice_second_factor(
       zweiten Faktor nicht vorbei). `users.manage` ist ein delegierbares Recht
       ohne `admin` (`models/permissions.py`), und dieselbe Datei verteidigt
       diesen Prinzipal an anderer Stelle ausdruecklich gegen Rechteausweitung.
-      Fuer das EIGENE Konto bleibt es bei `users.manage`: den eigenen Faktor
+      Fuer das EIGENE Konto genuegt angemeldet zu sein: den eigenen Faktor
       zurueckzunehmen ist niemandes Rechteausweitung.
 
     Diese Route existiert getrennt vom allgemeinen `PATCH /{id}`, weil dort beide
@@ -927,8 +948,79 @@ async def set_voice_second_factor(
     der Weg heraus waere wieder diese Route. Deshalb wird hier gepruft, nicht
     dort repariert.
 
-    Requires: users.manage permission (und fuer das Einschalten: das eigene Konto)
+    Requires: angemeldet. Eigenes Konto beide Richtungen; ein FREMDES Konto
+    abschalten verlangt `admin`, ein fremdes einschalten ist immer 403.
     """
+    # 🛑 OHNE AUFRUFER KEINE ENTSCHEIDUNG — und zwar in BEIDE Richtungen.
+    #
+    # `get_user_or_default` liefert immer einen Nutzer (bei abgeschalteter Auth
+    # den Administrator), hier kann `None` also nicht ankommen. Der Riegel steht
+    # trotzdem, weil die frueheren `is not None`-Zusaetze UNSYMMETRISCH fielen:
+    # beim Einschalten schloss `None` zu (nicht ich -> 403), beim Ausschalten
+    # riss es auf (die ganze `elif`-Bedingung wurde False, der Schreibvorgang
+    # lief durch — jeder haette jedem den Faktor nehmen koennen). Eine
+    # Fehlertoleranz, die auf einer Seite zu- und auf der anderen aufgeht, ist
+    # schlimmer als keine: sie sieht nach Absicherung aus.
+    if current_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+        )
+
+    # 🛑 OHNE AUTHENTIFIZIERUNG GIBT ES KEIN „SELBST", ALSO AUCH KEINE EINWILLIGUNG.
+    #
+    # Bei `AUTH_ENABLED=false` loest `get_user_or_default` JEDEN Aufrufer auf das
+    # Administratorkonto auf. `is_self` waere damit wahr, und wer den Port
+    # erreicht, koennte dem Administrator den zweiten Faktor auferlegen — die
+    # Einschaltrichtung prueft `voice_auth_enabled` bewusst NICHT (s. unten), der
+    # Schreibvorgang ginge also auch auf einer Instanz mit ruhendem Sprachweg
+    # durch und wuerde scharf, sobald jemand `AUTH_ENABLED=true` setzt.
+    #
+    # Das ist eine REGRESSION dieser Lockerung: vorher lieferte
+    # `require_permission` in diesem Modus `None`, `is_self` war falsch, und das
+    # Einschalten endete immer mit 403. Eine Einwilligung nach Art. 9 DSGVO
+    # verlangt eine Person; „irgendwer am Port, aufgeloest auf admin" ist keine.
+    if not settings.auth_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=(
+                "Consent needs an authenticated person — this instance runs with "
+                "authentication disabled."
+            ),
+        )
+
+    # 🛑 BERECHTIGUNG VOR DATENBANK. Die Entscheidung "darf dieser Aufrufer das
+    # ueberhaupt" haengt nur an `user_id` und am Aufrufer — nicht am geladenen
+    # Konto. Stand die Abfrage davor, unterschied die Antwort fuer einen
+    # Unberechtigten 404 (gibt es nicht) von 403 (gibt es, nicht deins): ein
+    # Aufzaehlungsorakel ueber den gesamten Id-Raum, das jedem angemeldeten
+    # Mitglied offenstand. Vorher verwehrte `require_permission(USERS_MANAGE)`
+    # den Zutritt vor der Abfrage; mit der Lockerung faellt dieser Schutz weg,
+    # also muss die Reihenfolge ihn ersetzen.
+    is_self = user_id == current_user.id
+    actor = current_user.username
+
+    if request.enabled and not is_self:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Voice as a second factor can only be enabled by the account "
+                "holder — a voiceprint requirement is a consent, not a setting."
+            ),
+        )
+    if not request.enabled and not is_self and not has_permission(
+        current_user.get_permissions(), Permission.ADMIN
+    ):
+        # Fremden Faktor abschalten ist der Rueckweg UND ein Angriffsweg: er
+        # senkt ein fremdes Konto still auf Passwort allein.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Switching off someone else's second factor requires admin — it "
+                "lowers that account to password-only."
+            ),
+        )
+
     result = await db.execute(
         select(User)
         .options(selectinload(User.role), selectinload(User.speaker))
@@ -941,24 +1033,45 @@ async def set_voice_second_factor(
             detail="User not found"
         )
 
-    # 🛑 `current_user` ist `None`, wenn `AUTH_ENABLED=false` ist
-    # (`require_permission` reicht das Ergebnis von `get_current_user` dann
-    # ungeprueft durch). Elf Geschwisterstellen in dieser Datei fangen das ab;
-    # diese beiden taten es nicht — der Ausschaltpfad haette nach dem COMMIT
-    # eine AttributeError geworfen, also 500 gemeldet und trotzdem geschrieben.
-    # Genau der Zustand, in dem jemand von Hand an der Datenbank landet.
-    is_self = current_user is not None and user.id == current_user.id
-    actor = current_user.username if current_user else "system"
+    # 🛑 SELBST-ABSCHALTEN VERLANGT DAS PASSWORT ERNEUT.
+    #
+    # Das Einschalten hebt `token_epoch` NICHT an (ein Epoch-Sprung wuerde die
+    # Person im Moment des Einwilligens abmelden — auf einer Ein-Admin-Instanz
+    # mit klemmendem Sprachweg eine sofortige Aussperrung). Folge: ein Token von
+    # VOR der Einwilligung ueberlebt sie, erneuert sich ueber `/auth/refresh`
+    # (das den Faktor nicht prueft) und duerfte den Faktor sonst dauerhaft
+    # entfernen — genau das, wogegen er schuetzt. Vorher verlangte das
+    # `users.manage`; mit der Lockerung faellt dieser Schutz weg.
+    #
+    # Das Passwort ersetzt ihn: wer nur ein Token erbeutet hat, kommt nicht
+    # durch. Wer auch das Passwort hat, war ohnehin nur noch durch die Stimme
+    # getrennt — der Faktor verliert also nichts, was er vorher hatte.
+    #
+    # 🛑 Eine STIMMprobe zu verlangen waere zirkulaer: genau wer nicht sprechen
+    # kann, braucht diesen Weg. Fuer ein FREMDES Konto entfaellt die Frage — dort
+    # steht `admin`, und eine Administratorin kennt das fremde Passwort nicht.
+    if not request.enabled and is_self and user.voice_second_factor_enabled:
+        from services.auth_service import verify_password
+
+        if not request.current_password or not verify_password(
+            request.current_password, user.password_hash
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Current password is required to remove your own second factor",
+            )
 
     if request.enabled:
-        if not is_self:
+        # Ein Geraetekonto spricht nicht. Es meldet sich auch nicht ueber
+        # `/auth/login` an, die Huerde traefe es also nie — aber ein Konto mit
+        # gesetzter Einwilligung, das niemals einloesen kann, ist ein Zustand,
+        # den niemand gebrauchen kann. Lieber hier sagen als spaeter raten.
+        if user.is_device_account:
             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=(
-                    "Voice as a second factor can only be enabled by the account "
-                    "holder — a voiceprint requirement is a consent, not a setting."
-                ),
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A device account has no voice — it cannot carry a second factor.",
             )
+
         # Derselbe Pruefer wie in `/auth/login` und `/auth/voice`: eine scharfe
         # Einwilligung, die nicht eingeloest werden kann, ist keine Sicherheit,
         # sondern eine Falle. `voice_auth_enabled` wird hier bewusst NICHT
@@ -991,19 +1104,6 @@ async def set_voice_second_factor(
                     "voice sample first."
                 )),
             )
-    elif current_user is not None and not is_self and not has_permission(
-        current_user.get_permissions(), Permission.ADMIN
-    ):
-        # Siehe Docstring: fremden Faktor abschalten ist der Rueckweg UND ein
-        # Angriffsweg. Den eigenen zurueckzunehmen bleibt `users.manage`.
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                "Switching off someone else's second factor requires admin — it "
-                "lowers that account to password-only."
-            ),
-        )
-
     user.voice_second_factor_enabled = bool(request.enabled)
     await db.commit()
     # KEIN blankes `db.refresh(user)`: das verfaellt AUCH `role` und `speaker`,
@@ -1013,10 +1113,18 @@ async def set_voice_second_factor(
 
     # Protokoll, weil es eine Einwilligung ist: wer hat sie wann fuer welches
     # Konto gesetzt oder zurueckgenommen.
-    logger.info(
-        f"Voice second factor {'enabled' if request.enabled else 'disabled'} "
-        f"for user {user.id} by {actor}"
-    )
+    # 🛑 Das ENTFERNEN einer Einwilligung wiegt schwerer als das Erteilen: es
+    # senkt ein Konto auf Passwort allein. Derselbe Subsystem-Pruefer schreibt
+    # bereits WARNING, wenn die Huerde von SELBST ruht
+    # (`voice_factor_preconditions`) — dass ein Mensch sie wegnimmt, darf nicht
+    # leiser protokolliert werden als dass sie von allein einschlaeft.
+    if request.enabled:
+        logger.info(f"Voice second factor enabled for user {user.id} by {actor}")
+    else:
+        logger.warning(
+            f"Voice second factor REMOVED for user {user.id} by {actor} — "
+            f"that account is back to password-only"
+        )
     return UserResponse(
         id=user.id,
         username=user.username,

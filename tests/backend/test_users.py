@@ -650,6 +650,20 @@ class TestDeleteRefusesToTakeKnowledgeWithIt:
 
 
 
+
+async def _with_password(db_session, user, passwort: str = "testpassword123"):
+    """Ein ECHTES Passwort setzen.
+
+    🛑 `sample_user_data` traegt einen gefaelschten bcrypt-Hash (Kommentar dort:
+    „Fake hash"). `verify_password` schlaegt dagegen immer fehl — ein Test, der
+    das Passwort vorlegen muss, pruefte sonst nur, dass die Ablehnung feuert.
+    """
+    from services.auth_service import get_password_hash
+
+    user.password_hash = get_password_hash(passwort)
+    await db_session.commit()
+    return passwort
+
 def _admin(user_id: int):
     """Ein Konto MIT `admin` — seit dem Review verlangt das Abschalten eines
     FREMDEN Faktors mehr als `users.manage`."""
@@ -685,6 +699,24 @@ class TestVoiceSecondFactorConsent:
     („ein Administrator schaltet es ab") reine Theorie: der Zustand haette
     keine API und keine Oberflaeche.
     """
+
+    @pytest.fixture(autouse=True)
+    def _auth_on(self, monkeypatch):
+        """🛑 Der zweite Faktor ergibt nur mit eingeschalteter Auth einen Sinn.
+
+        `settings.auth_enabled` ist im Prüfstand standardmäßig `False`, und die
+        Route verweigert in diesem Modus BEIDE Richtungen mit 401: bei
+        abgeschalteter Auth löst `get_user_or_default` jeden Aufrufer auf das
+        Administratorkonto auf, es gäbe also kein „Selbst", mit dem man
+        einwilligen könnte (Befund F4 des adversarialen Durchgangs).
+
+        Die Tests hier prüfen die Berechtigungslogik einer auth-ON-Instanz —
+        also muss der Prüfstand das auch sein. Ohne diese Fixture prüften sie
+        nur noch, dass der 401 feuert.
+        """
+        from utils.config import settings
+        monkeypatch.setattr(settings, "auth_enabled", True)
+
 
     @staticmethod
     async def _with_voice(db_session: AsyncSession, user: User, embeddings: int = 1):
@@ -907,39 +939,54 @@ class TestVoiceSecondFactorConsent:
         from api.routes import users as users_routes
 
         test_user.voice_second_factor_enabled = True
-        await db_session.commit()
+        await _with_password(db_session, test_user)
 
         body = await users_routes.set_voice_second_factor(
             user_id=test_user.id,
-            request=users_routes.VoiceSecondFactorRequest(enabled=False),
+            request=users_routes.VoiceSecondFactorRequest(
+                enabled=False, current_password="testpassword123"
+            ),
             db=db_session,
             current_user=_user_manager(test_user.id),
         )
         assert body.voice_second_factor_enabled is False
 
     @pytest.mark.database
-    async def test_it_does_not_crash_when_auth_is_off(
+    async def test_without_a_caller_nothing_is_decided(
         self, db_session: AsyncSession, test_user: User
     ):
-        """🛑 `current_user` ist `None`, wenn `AUTH_ENABLED=false` ist.
+        """🛑 Dieser Test stand vorher auf dem Kopf — er verlangte, dass ein
+        Aufruf OHNE Aufrufer den Faktor eines fremden Kontos abschaltet, und
+        war gruen.
 
-        Der Ausschaltpfad warf danach eine AttributeError — NACH dem Commit.
-        Die Aenderung war geschrieben, der Aufrufer bekam 500 und schloss auf
-        einen Fehlschlag. Genau der Zustand, in dem jemand von Hand an die
-        Produktionsdatenbank geht, was diese Route verhindern soll.
+        Grund: die `is not None`-Zusaetze fielen unsymmetrisch. Beim Einschalten
+        schloss `None` zu (nicht ich -> 403), beim Ausschalten riss es auf — die
+        ganze `elif`-Bedingung wurde False und der Schreibvorgang lief durch.
+        Jeder haette jedem den zweiten Faktor nehmen koennen, und ein gruener
+        Test hat das festgeschrieben.
+
+        Heute unerreichbar (`get_user_or_default` liefert immer einen Nutzer,
+        bei abgeschalteter Auth den Administrator) — aber genau deshalb muss der
+        Riegel stehen und dieser Test ihn belegen: eine Fehlertoleranz, die auf
+        einer Seite zu- und auf der anderen aufgeht, sieht nach Absicherung aus.
         """
+        from fastapi import HTTPException
+
         from api.routes import users as users_routes
 
         test_user.voice_second_factor_enabled = True
         await db_session.commit()
 
-        body = await users_routes.set_voice_second_factor(
-            user_id=test_user.id,
-            request=users_routes.VoiceSecondFactorRequest(enabled=False),
-            db=db_session,
-            current_user=None,
-        )
-        assert body.voice_second_factor_enabled is False
+        with pytest.raises(HTTPException) as exc:
+            await users_routes.set_voice_second_factor(
+                user_id=test_user.id,
+                request=users_routes.VoiceSecondFactorRequest(enabled=False),
+                db=db_session,
+                current_user=None,
+            )
+        assert exc.value.status_code == 401
+        await db_session.refresh(test_user)
+        assert test_user.voice_second_factor_enabled is True, "nichts darf geschrieben sein"
 
     @pytest.mark.database
     async def test_arming_is_refused_while_recognition_is_off(
@@ -1068,3 +1115,345 @@ class TestTheUnlockButtonSeesBothCounters:
             current_user=MagicMock(username="admin", id=1),
         )
         assert body.locked_out is False
+
+
+def _plain_member(user_id: int):
+    """Ein Haushaltsmitglied: KEIN `users.manage`, KEIN `admin`. Genau die
+    Person, für die die Einwilligung gedacht ist — und die sie bis zum
+    2026-09-28 nicht erteilen konnte."""
+    return MagicMock(
+        username="familie", id=user_id,
+        get_permissions=lambda: ["chat.own", "kb.shared"],
+    )
+
+
+class TestTheConsentBelongsToThePerson:
+    """🛑 Die Einwilligung ist höchstpersönlich — also muss die Person sie
+    erteilen können, nicht nur eine Administratorin.
+
+    Vor dem 2026-09-28 stand `require_permission(USERS_MANAGE)` vor BEIDEN
+    Richtungen. Damit war die Einwilligung in die Verarbeitung biometrischer
+    Daten (Art. 9 DSGVO) ausgerechnet für die Person unerreichbar, um deren
+    Stimme es geht: ein Haushaltsmitglied konnte weder einwilligen noch seinen
+    Zustand sehen. Eine Einwilligung, die nur ein Dritter erteilen kann, ist
+    keine.
+
+    Sicherheitslage dabei unverändert: den eigenen Faktor scharf zu stellen
+    fügt eine ZUSÄTZLICHE Hürde am eigenen Konto hinzu, und ihn zurückzunehmen
+    setzt voraus, angemeldet zu sein — was bei scharfem Faktor bereits bedeutet,
+    ihn bestanden zu haben.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _auth_on(self, monkeypatch):
+        """🛑 Der zweite Faktor ergibt nur mit eingeschalteter Auth einen Sinn.
+
+        `settings.auth_enabled` ist im Prüfstand standardmäßig `False`, und die
+        Route verweigert in diesem Modus BEIDE Richtungen mit 401: bei
+        abgeschalteter Auth löst `get_user_or_default` jeden Aufrufer auf das
+        Administratorkonto auf, es gäbe also kein „Selbst", mit dem man
+        einwilligen könnte (Befund F4 des adversarialen Durchgangs).
+
+        Die Tests hier prüfen die Berechtigungslogik einer auth-ON-Instanz —
+        also muss der Prüfstand das auch sein. Ohne diese Fixture prüften sie
+        nur noch, dass der 401 feuert.
+        """
+        from utils.config import settings
+        monkeypatch.setattr(settings, "auth_enabled", True)
+
+
+    @pytest.mark.database
+    async def test_a_plain_member_may_arm_their_own(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        from api.routes import users as users_routes
+
+        await TestVoiceSecondFactorConsent._with_voice(db_session, test_user)
+        body = await users_routes.set_voice_second_factor(
+            user_id=test_user.id,
+            request=users_routes.VoiceSecondFactorRequest(enabled=True),
+            db=db_session,
+            current_user=_plain_member(test_user.id),
+        )
+        assert body.voice_second_factor_enabled is True
+
+    @pytest.mark.database
+    async def test_a_plain_member_may_withdraw_their_own(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        from api.routes import users as users_routes
+
+        test_user.voice_second_factor_enabled = True
+        await _with_password(db_session, test_user)
+        body = await users_routes.set_voice_second_factor(
+            user_id=test_user.id,
+            request=users_routes.VoiceSecondFactorRequest(
+                enabled=False, current_password="testpassword123"
+            ),
+            db=db_session,
+            current_user=_plain_member(test_user.id),
+        )
+        assert body.voice_second_factor_enabled is False
+
+    @pytest.mark.database
+    async def test_a_plain_member_still_cannot_touch_a_stranger(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        """🛑 Die Gegenkontrolle zur Lockerung: die Berechtigung fällt NUR für
+        das eigene Konto. Ein fremdes abzuschalten verlangt weiter `admin` —
+        sonst wäre der Rückweg ein Angriffsweg für jedermann."""
+        from fastapi import HTTPException
+
+        from api.routes import users as users_routes
+
+        test_user.voice_second_factor_enabled = True
+        await db_session.commit()
+
+        with pytest.raises(HTTPException) as exc:
+            await users_routes.set_voice_second_factor(
+                user_id=test_user.id,
+                request=users_routes.VoiceSecondFactorRequest(enabled=False),
+                db=db_session,
+                current_user=_plain_member(test_user.id + 1000),
+            )
+        assert exc.value.status_code == 403
+        await db_session.refresh(test_user)
+        assert test_user.voice_second_factor_enabled is True
+
+    @pytest.mark.database
+    async def test_a_device_account_has_no_voice(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        """Ein Gerätekonto spricht nicht und meldet sich nicht über
+        `/auth/login` an. Eine Einwilligung, die es nie einlösen kann, ist ein
+        Zustand, den niemand gebrauchen kann — lieber hier sagen als später
+        raten."""
+        from fastapi import HTTPException
+
+        from api.routes import users as users_routes
+
+        await TestVoiceSecondFactorConsent._with_voice(db_session, test_user)
+        test_user.is_device_account = True
+        await db_session.commit()
+
+        with pytest.raises(HTTPException) as exc:
+            await users_routes.set_voice_second_factor(
+                user_id=test_user.id,
+                request=users_routes.VoiceSecondFactorRequest(enabled=True),
+                db=db_session,
+                current_user=_plain_member(test_user.id),
+            )
+        assert exc.value.status_code == 409
+
+    def test_the_route_no_longer_demands_users_manage(self):
+        """Strukturprüfung gegen das Zurückrutschen: kehrt
+        `require_permission(USERS_MANAGE)` an diese Route zurück, ist die
+        Einwilligung wieder fremdbestimmt — und das Verhalten oben fiele mit
+        einem 403 aus, dessen Ursache man in der Route suchen müsste."""
+        import inspect
+
+        from api.routes import users as users_routes
+
+        src = inspect.getsource(users_routes.set_voice_second_factor)
+        sig = src[: src.index('"""')]
+        assert "get_user_or_default" in sig
+        assert "USERS_MANAGE" not in sig
+
+
+    @pytest.mark.database
+    async def test_it_does_not_leak_which_user_ids_exist(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        """🛑 Aufzählungsorakel, entstanden durch die Lockerung selbst.
+
+        Das 404 stand VOR jeder Berechtigungsprüfung. Für einen Unberechtigten
+        unterschied die Antwort damit „gibt es nicht" (404) von „gibt es, nicht
+        deins" (403) — über den gesamten Id-Raum, und offen für jedes
+        angemeldete Mitglied. Vorher verwehrte `require_permission(USERS_MANAGE)`
+        den Zutritt vor der Abfrage; mit der Lockerung fällt dieser Schutz weg,
+        also muss die Reihenfolge ihn ersetzen.
+
+        Beide Fälle müssen für einen Unberechtigten gleich aussehen.
+        """
+        from fastapi import HTTPException
+
+        from api.routes import users as users_routes
+
+        fremder = _plain_member(test_user.id + 1000)
+
+        with pytest.raises(HTTPException) as vorhanden:
+            await users_routes.set_voice_second_factor(
+                user_id=test_user.id,
+                request=users_routes.VoiceSecondFactorRequest(enabled=True),
+                db=db_session, current_user=fremder,
+            )
+        with pytest.raises(HTTPException) as gibtsnicht:
+            await users_routes.set_voice_second_factor(
+                user_id=987654,
+                request=users_routes.VoiceSecondFactorRequest(enabled=True),
+                db=db_session, current_user=fremder,
+            )
+        assert vorhanden.value.status_code == gibtsnicht.value.status_code == 403, (
+            "existierend und nicht existierend muessen fuer einen Unberechtigten "
+            "ununterscheidbar sein"
+        )
+
+
+    @pytest.mark.database
+    async def test_with_auth_off_there_is_no_self_to_consent_with(
+        self, db_session: AsyncSession, test_user: User, monkeypatch
+    ):
+        """🛑 Regression dieser Lockerung, gefunden im adversarialen Durchgang.
+
+        Bei `AUTH_ENABLED=false` löst `get_user_or_default` JEDEN Aufrufer auf
+        das Administratorkonto auf. `is_self` wäre damit wahr, und wer den Port
+        erreicht, könnte dem Administrator den zweiten Faktor auferlegen. Die
+        Einschaltrichtung prüft `voice_auth_enabled` bewusst nicht — der
+        Schreibvorgang ginge also auch bei ruhendem Sprachweg durch und würde
+        scharf, sobald jemand `AUTH_ENABLED=true` setzt.
+
+        Vorher lieferte `require_permission` in diesem Modus `None`, `is_self`
+        war falsch, und das Einschalten endete immer mit 403. Eine Einwilligung
+        nach Art. 9 DSGVO verlangt eine Person; „irgendwer am Port, aufgelöst
+        auf admin" ist keine.
+        """
+        from fastapi import HTTPException
+
+        from api.routes import users as users_routes
+        from utils.config import settings
+
+        # Ueberschreibt die `_auth_on`-Fixture dieser Klasse: DIESER Test will
+        # gerade den auth-off-Fall.
+        monkeypatch.setattr(settings, "auth_enabled", False)
+        await TestVoiceSecondFactorConsent._with_voice(db_session, test_user)
+
+        for enabled in (True, False):
+            with pytest.raises(HTTPException) as exc:
+                await users_routes.set_voice_second_factor(
+                    user_id=test_user.id,
+                    request=users_routes.VoiceSecondFactorRequest(enabled=enabled),
+                    db=db_session,
+                    current_user=_plain_member(test_user.id),
+                )
+            assert exc.value.status_code == 401, f"enabled={enabled}"
+        await db_session.refresh(test_user)
+        assert test_user.voice_second_factor_enabled is False
+
+    @pytest.mark.database
+    async def test_removing_a_consent_is_logged_louder_than_granting_one(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        """🛑 Das Entfernen wiegt schwerer als das Erteilen: es senkt ein Konto
+        auf Passwort allein.
+
+        Derselbe Subsystem-Prüfer schreibt bereits WARNING, wenn die Hürde von
+        SELBST ruht (`voice_factor_preconditions`). Dass ein Mensch sie
+        wegnimmt, darf nicht leiser protokolliert werden als dass sie von allein
+        einschläft — sonst ist der lauteste Eintrag der harmloseste Vorgang.
+        """
+        from loguru import logger as loguru_logger
+
+        from api.routes import users as users_routes
+
+        await TestVoiceSecondFactorConsent._with_voice(db_session, test_user)
+        await _with_password(db_session, test_user)
+        ich = _plain_member(test_user.id)
+
+        gesehen: list[tuple[str, str]] = []
+        sink = loguru_logger.add(
+            lambda m: gesehen.append((m.record["level"].name, m.record["message"])),
+            level="INFO",
+        )
+        try:
+            await users_routes.set_voice_second_factor(
+                user_id=test_user.id, db=db_session, current_user=ich,
+                request=users_routes.VoiceSecondFactorRequest(enabled=True),
+            )
+            await users_routes.set_voice_second_factor(
+                user_id=test_user.id, db=db_session, current_user=ich,
+                request=users_routes.VoiceSecondFactorRequest(
+                    enabled=False, current_password="testpassword123"
+                ),
+            )
+        finally:
+            loguru_logger.remove(sink)
+
+        ein = [m for lvl, m in gesehen if "enabled for user" in m]
+        weg = [(lvl, m) for lvl, m in gesehen if "REMOVED" in m]
+        assert ein, "das Erteilen muss protokolliert sein"
+        assert weg, "das Entfernen muss protokolliert sein"
+        assert weg[0][0] == "WARNING", f"Entfernen war nur {weg[0][0]}"
+
+    @pytest.mark.database
+    async def test_removing_your_own_factor_needs_the_password(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        """🛑 Befund 7 des adversarialen Durchgangs, hier festgenagelt.
+
+        Das Einschalten hebt `token_epoch` NICHT an (ein Epoch-Sprung würde die
+        Person im Moment des Einwilligens abmelden — auf einer Ein-Admin-Instanz
+        mit klemmendem Sprachweg eine sofortige Aussperrung). Folge: ein Token
+        von VOR der Einwilligung überlebt sie, erneuert sich über
+        `/auth/refresh` (das den Faktor nicht prüft) und dürfte ihn sonst
+        dauerhaft entfernen — genau das, wogegen er schützt. Vorher verlangte
+        das `users.manage`; mit der Lockerung fällt dieser Schutz weg.
+
+        Das Passwort ersetzt ihn: wer nur ein Token erbeutet hat, kommt nicht
+        durch.
+        """
+        from fastapi import HTTPException
+
+        from api.routes import users as users_routes
+
+        test_user.voice_second_factor_enabled = True
+        await _with_password(db_session, test_user)
+        ich = _plain_member(test_user.id)
+
+        for falsch in (None, "", "das-falsche-passwort"):
+            with pytest.raises(HTTPException) as exc:
+                await users_routes.set_voice_second_factor(
+                    user_id=test_user.id,
+                    request=users_routes.VoiceSecondFactorRequest(
+                        enabled=False, current_password=falsch
+                    ),
+                    db=db_session, current_user=ich,
+                )
+            assert exc.value.status_code == 400, f"bei {falsch!r}"
+            await db_session.refresh(test_user)
+            assert test_user.voice_second_factor_enabled is True, "nichts darf geschrieben sein"
+
+    @pytest.mark.database
+    async def test_an_admin_needs_no_password_for_a_stranger(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        """Gegenkontrolle: der Riegel gilt nur fürs EIGENE Konto. Eine
+        Administratorin kennt das fremde Passwort nicht — dort steht `admin` als
+        Schutz, und der Wiederherstellungsweg darf daran nicht scheitern."""
+        from api.routes import users as users_routes
+
+        test_user.voice_second_factor_enabled = True
+        await db_session.commit()
+
+        body = await users_routes.set_voice_second_factor(
+            user_id=test_user.id,
+            request=users_routes.VoiceSecondFactorRequest(enabled=False),
+            db=db_session,
+            current_user=_admin(test_user.id + 1000),
+        )
+        assert body.voice_second_factor_enabled is False
+
+    @pytest.mark.database
+    async def test_arming_needs_no_password(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        """Nur das ENTFERNEN ist der Angriffsweg. Beim Erteilen die Eingabe zu
+        verlangen wäre Reibung ohne Gewinn."""
+        from api.routes import users as users_routes
+
+        await TestVoiceSecondFactorConsent._with_voice(db_session, test_user)
+        body = await users_routes.set_voice_second_factor(
+            user_id=test_user.id,
+            request=users_routes.VoiceSecondFactorRequest(enabled=True),
+            db=db_session, current_user=_plain_member(test_user.id),
+        )
+        assert body.voice_second_factor_enabled is True
