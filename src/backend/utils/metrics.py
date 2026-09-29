@@ -110,7 +110,9 @@ def _init_metrics():
 
         _agent_steps_total = Histogram(
             "renfield_agent_steps_total",
-            "Number of steps per agent invocation",
+            # Unit spelled out where dashboards show it: one observation per
+            # AgentService.run(), so an orchestrated turn adds one PER SUB-AGENT.
+            "Steps per agent run (orchestrated turns: one observation per sub-agent)",
             buckets=(1, 2, 3, 5, 8, 12, 20),
         )
 
@@ -159,7 +161,8 @@ def _init_metrics():
 
         _agent_outcome_total = Counter(
             "renfield_agent_outcome_total",
-            "Agent loop outcomes",
+            "Agent run outcomes, one per AgentService.run() — an orchestrated "
+            "turn counts once per sub-agent, so this is NOT a request count",
             ["outcome"],
         )
 
