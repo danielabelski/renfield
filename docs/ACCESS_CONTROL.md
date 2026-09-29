@@ -526,12 +526,19 @@ laufen zu lassen. Beide Richtungen werden protokolliert (wer, wann, für welches
 Konto** (sonst 403; der Grund nennt eine Eigenschaft des Sprecherprofils einer Person
 und gehört ihr). `blocker` trägt einen der vier maschinenlesbaren Codes —
 `voice_path_off`, `recognition_off`, `no_profile`, `no_embeddings` — oder `null`.
+Ein fünfter, `device_account`, kommt **nur** aus der 409-Antwort: ein Gerätekonto
+meldet sich nicht an und liest seinen Zustand nie selbst.
 
-🛑 **Der Code geht heraus, nicht der Satz.** Dieselben Codes liefert die 409-Antwort
-des Einschaltens; übersetzt werden sie in der Oberfläche. Vorher schickte der Server
-drei hartkodierte **englische** Sätze, und das war zugleich die einzige Stelle, an der
-die Person den Grund überhaupt erfuhr — ein deutschsprachiges Haushaltsmitglied las
-also Englisch.
+🛑 **Der Code geht heraus, nicht der Satz** — aus **jeder** 409 dieser Route.
+Übersetzt wird in der Oberfläche, auf „Mein Konto" wie in der Benutzerverwaltung.
+Vorher schickte der Server hartkodierte **englische** Sätze, und das war zugleich die
+einzige Stelle, an der die Person den Grund überhaupt erfuhr.
+
+🛑 **Der erste Anlauf traf nur die benannten Fälle.** Ersetzt wurden die drei Sätze
+aus dem Befund; die Gerätekonto-Absage vier Zeilen darüber, in derselben Funktion,
+blieb englisch stehen und wurde erst in der Abnahme gefunden. Deshalb steht jetzt ein
+**Strukturtest** daneben, der die Quelle liest und `detail="…"` in jedem 409-Zweig
+verbietet: ein Verhaltenstest deckt nur die Fälle ab, an die jemand gedacht hat.
 
 🛑 **Der Grund gilt unabhängig von der Einwilligung.** `/settings/account` zeigte ihn
 zuvor nur im Zustand „scharf" — also nie für jemanden, der gerade überlegt

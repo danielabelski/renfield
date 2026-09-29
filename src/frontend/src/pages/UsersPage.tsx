@@ -32,6 +32,7 @@ import {
   useUnlinkSpeaker,
   useUnlockUser,
   useSetVoiceSecondFactor,
+  isVoiceFactorBlocker,
   type AdminUser,
   type PersonalityStyle,
   type SpeakerSummary,
@@ -328,7 +329,16 @@ export default function UsersPage() {
       await setVoiceSecondFactor.mutateAsync({ id: user.id, enabled: enabling });
       setSuccess(enabling ? t('users.voiceFactorArmed') : t('users.voiceFactorDisarmed'));
     } catch (err) {
-      setError(extractApiError(err, t('users.failedToSave')));
+      // 🛑 Dieselbe Übersetzung wie unter „Mein Konto": die 409-Antwort trägt
+      // den CODE, nicht den Satz. Hier ist der Fall `device_account` überhaupt
+      // erst erreichbar — ein Gerätekonto meldet sich nirgends selbst an.
+      const detail = (err as { response?: { data?: { detail?: unknown } } })
+        ?.response?.data?.detail;
+      setError(
+        isVoiceFactorBlocker(detail)
+          ? t(`account.voiceBlocker.${detail}`)
+          : extractApiError(err, t('users.failedToSave')),
+      );
     }
   };
 

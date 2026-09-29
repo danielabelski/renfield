@@ -218,13 +218,19 @@ export type VoiceFactorBlocker =
   | 'voice_path_off'
   | 'recognition_off'
   | 'no_profile'
-  | 'no_embeddings';
+  | 'no_embeddings'
+  // 🛑 Kommt NUR aus der 409-Antwort, nie aus der Leseroute: ein Geraetekonto
+  // meldet sich nicht an und liest seinen Zustand nie selbst. Der Code gehoert
+  // trotzdem hierher — beim Umbau vom 2026-09-29 blieb er als hartkodierter
+  // englischer Satz stehen, vier Zeilen neben den dreien, die ersetzt wurden.
+  | 'device_account';
 
 export const VOICE_FACTOR_BLOCKERS: readonly VoiceFactorBlocker[] = [
   'voice_path_off',
   'recognition_off',
   'no_profile',
   'no_embeddings',
+  'device_account',
 ] as const;
 
 export function isVoiceFactorBlocker(value: unknown): value is VoiceFactorBlocker {

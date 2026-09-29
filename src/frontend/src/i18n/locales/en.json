@@ -2512,7 +2512,8 @@
       "voice_path_off": "The voice path is currently switched off on this instance. You can consent now — the requirement takes effect once it is switched on.",
       "recognition_off": "Speaker recognition is switched off on this instance. Without it your voice could never be checked.",
       "no_profile": "No speaker profile is linked to your account yet. Without one there would be nothing to check your voice against.",
-      "no_embeddings": "Your speaker profile holds no voice sample yet. Record one first."
+      "no_embeddings": "Your speaker profile holds no voice sample yet. Record one first.",
+      "device_account": "This is a device account, not a person. It has no voice and therefore cannot carry the second factor."
     }
   }
 }

@@ -121,6 +121,26 @@ describe('UsersPage — Stimme als zweiter Faktor', () => {
   });
   afterEach(() => vi.clearAllMocks());
 
+  it('🛑 übersetzt die Gerätekonto-Absage, statt den Code roh zu zeigen', async () => {
+    // Der EINZIGE Ort, an dem `device_account` auftritt: ein Gerätekonto meldet
+    // sich nirgends selbst an, die Absage ist also nur von hier erreichbar.
+    // Beim Umbau vom 2026-09-29 blieb sie als hartkodierter ENGLISCHER Satz
+    // stehen — vier Zeilen neben den dreien, die ersetzt wurden.
+    listing([row({ id: SELF, username: 'admin', role_name: 'Admin', role_id: 1 })]);
+    server.use(
+      http.post(`${BASE_URL}/api/users/:id/voice-second-factor`, () =>
+        HttpResponse.json({ detail: 'device_account' }, { status: 409 }),
+      ),
+    );
+
+    renderWithProviders(<UsersPage />);
+    await userEvent.click(await screen.findByTitle('Stimme als zweiten Faktor einschalten'));
+
+    expect(await screen.findByText(/Gerätekonto, kein Mensch/)).toBeInTheDocument();
+    expect(screen.queryByText('device_account')).not.toBeInTheDocument();
+    expect(screen.queryByText(/device account has no voice/)).not.toBeInTheDocument();
+  });
+
   it('bietet das Einschalten für das eigene Konto an und meldet es dem Server', async () => {
     listing([row({ id: SELF, username: 'admin', role_name: 'Admin', role_id: 1 })]);
     const { calls } = captureToggle();

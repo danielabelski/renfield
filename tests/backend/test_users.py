@@ -19,6 +19,7 @@ from sqlalchemy.orm import selectinload
 
 from models.database import Role, Speaker, User
 from services.voice_factor_preconditions import (
+    DEVICE_ACCOUNT,
     NO_EMBEDDINGS,
     NO_PROFILE,
     PATH_OFF,
@@ -1396,6 +1397,39 @@ class TestTheConsentBelongsToThePerson:
                 current_user=_plain_member(test_user.id),
             )
         assert exc.value.status_code == 409
+        # 🛑 AUCH HIER DER CODE, NICHT DER SATZ.
+        #
+        # Beim Umbau vom 2026-09-29 wurden die drei benannten englischen Saetze
+        # durch Codes ersetzt — und dieser vierte, VIER ZEILEN darueber in
+        # derselben Funktion, blieb stehen. Gefunden hat ihn erst die Abnahme.
+        # Der Test haelt den Geschwisterfall fest, damit die naechste Reparatur
+        # nicht wieder nur die benannte Instanz trifft.
+        assert exc.value.detail == DEVICE_ACCOUNT
+
+    def test_every_409_of_this_route_speaks_in_codes(self):
+        """Strukturpruefung gegen genau diesen Rueckfall: KEIN 409 dieser Route
+        darf einen Satz herausgeben.
+
+        Ein Satz aus dem Server kommt unuebersetzt in der Oberflaeche an — die
+        i18n-Regel gilt auch fuer Fehlertexte. Der Test liest die Quelle, weil
+        ein Verhaltenstest nur die Faelle abdeckt, an die jemand gedacht hat;
+        genau daran ist es beim ersten Mal gescheitert.
+        """
+        import inspect
+        import re
+
+        from api.routes import users as users_routes
+
+        quelle = inspect.getsource(users_routes.set_voice_second_factor)
+        # Jedes `detail=` im 409-Zweig muss ein Bezeichner sein (ein Code), kein
+        # String-Literal. `detail="..."` ist der Rueckfall, den wir verbieten.
+        blockweise = quelle.split("HTTP_409_CONFLICT")
+        for block in blockweise[1:]:
+            kopf = block[:200]
+            assert not re.search(r'detail\s*=\s*["\']', kopf), (
+                "Ein 409 dieser Route gibt einen SATZ heraus statt eines Codes:\n"
+                + kopf
+            )
 
     def test_the_route_no_longer_demands_users_manage(self):
         """Strukturprüfung gegen das Zurückrutschen: kehrt

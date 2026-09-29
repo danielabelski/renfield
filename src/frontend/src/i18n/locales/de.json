@@ -2512,7 +2512,8 @@
       "voice_path_off": "Der Sprachweg ist auf dieser Instanz derzeit abgeschaltet. Sie können jetzt einwilligen — die Anforderung greift, sobald er eingeschaltet wird.",
       "recognition_off": "Die Sprecherkennung ist auf dieser Instanz abgeschaltet. Ohne sie könnte die Stimme nie geprüft werden.",
       "no_profile": "Mit Ihrem Konto ist noch kein Sprecherprofil verknüpft. Ohne Profil gäbe es nichts, wogegen Ihre Stimme geprüft werden könnte.",
-      "no_embeddings": "Ihr Sprecherprofil enthält noch keine Stimmprobe. Nehmen Sie zuerst eine auf."
+      "no_embeddings": "Ihr Sprecherprofil enthält noch keine Stimmprobe. Nehmen Sie zuerst eine auf.",
+      "device_account": "Dies ist ein Gerätekonto, kein Mensch. Es hat keine Stimme und kann den zweiten Faktor deshalb nicht tragen."
     }
   }
 }
