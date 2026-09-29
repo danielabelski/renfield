@@ -388,7 +388,28 @@ Nach `CLAUDE.md`: TDD, Läufe auf `.159`, echtes Postgres wo Migrationen berühr
 | 4 | Stufe 3: eigene Queue oder Konsolidierung? | **Zurückgestellt** bis Stufe 2 ansteht — §10 |
 | 5 | Reihenfolge gegen #874 | Keine Entscheidung nötig: #874 ist gemergt (PR #1196), die Zählung in §6 gilt für den heutigen Stand (am 2026-09-13 erneut gegen `main` geprüft) |
 
-Offen bleibt allein das **Go für Stufe 1**.
+## 12.1 Go für Stufe 1 (2026-09-29)
+
+**Der Eigentümer hat das Go für Stufe 1 erteilt.** Damit ist die letzte offene Frage aus
+§12 beantwortet; die fünf Entscheidungen vom 2026-09-13 gelten unverändert.
+
+**Stufe 2 bleibt gesperrt** und braucht ein eigenes, ausdrückliches Go — so wie §13 es
+empfiehlt. Stufe 1 ist mechanisch und byte-identisch prüfbar; Stufe 2 trifft
+Löschentscheidungen auf Basis eines LLM-Urteils.
+
+**Stufe 3** (`/brain/review`) bleibt zurückgestellt (§12, Entscheidung 4).
+
+🛑 Beim Bau gilt aus diesem Dokument ohne weitere Rückfrage:
+- `valid_from` / `valid_to` (§5) — **nicht** `valid_at`/`invalid_at`; der Issue-Titel trug
+  die alten Namen bis zum 2026-09-29 und hatte damit bereits einen Leser fehlgeleitet.
+- **Kein Backfill aus `created_at`** (§5). Bestandskanten bekommen `valid_from = NULL`.
+  Der Zeitpunkt der Extraktion ist nicht der Zeitpunkt, ab dem ein Fakt galt — diese
+  Unterscheidung IST das Vorhaben und darf nicht in der Migration verwischt werden.
+- Start-Allowlist als Prädikat**gruppen** `residence` + `employer` (§7.1), zweisprachig.
+- Flag aus = byte-identisch, Kreis-Filter auf jedem Pfad, TDD auf `.159`.
+
+Die Zahl, die §13 nennt — wie oft Widersprüche überhaupt auftreten — ist nach Stufe 1 mit
+einer reinen Leseabfrage zu haben und die Grundlage für die Entscheidung über Stufe 2.
 
 ## 13. Empfehlung
 
