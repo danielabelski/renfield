@@ -983,6 +983,23 @@ def use_openai_for_tier(tier: str) -> bool:
     return bool(agent)
 
 
+def default_agent_model() -> str:
+    """The agent model a role WITHOUT its own model override runs on.
+
+    When the agent tier rides an OpenAI-compat endpoint, the last-resort
+    default must be that endpoint's model — falling back to the local Ollama
+    model name sends e.g. "llama3.2:3b" to an external API that validates
+    model IDs (400). Affects roles without a model override (notably the
+    built-in `general` fallback role).
+
+    Shared by the agent loop and by metric priming, so the zero series
+    exported at startup carry the same `model` label the loop records under.
+    """
+    if use_openai_for_tier("agent"):
+        return settings.agent_model or settings.llm_openai_model
+    return settings.agent_model or settings.ollama_model
+
+
 def effective_agent_num_ctx() -> int:
     """Context window the agent tier can actually fill.
 

@@ -24,6 +24,7 @@ from services.prompt_manager import prompt_manager
 from utils.circuit_breaker import agent_circuit_breaker
 from utils.config import settings
 from utils.llm_client import (
+    default_agent_model,
     effective_agent_num_ctx,
     extract_response_content,
     get_agent_client,
@@ -161,6 +162,11 @@ class AgentContext:
 
     # Extracted context variables from tool results (for follow-up queries)
     extracted_vars: dict[str, Any] = field(default_factory=dict)
+
+    # How the loop ended, for renfield_agent_outcome_total. Set by the exit
+    # paths that are NOT a plain final_answer (summary triggers, LLM-error
+    # fallback, unparsable final step); run() records it once per turn.
+    outcome: str | None = None
 
     # Adaptive tool result budget (set by _enforce_token_budget, 0=unlimited)
     tool_result_budget_chars: int = 0
@@ -516,7 +522,15 @@ def _with_required_companions(selected_names: list[str]) -> list[str]:
 
 # Option sets whose completion the token budget reserves room for, and which
 # therefore must not carry an output cap below that reservation.
-_BUDGETED_OPTION_KEYS = frozenset({"llm_options", "llm_options_retry"})
+#
+# `llm_options_summary` belongs here: `_build_summary_answer` is not a short
+# recap but the USER'S ANSWER whenever the loop ends without a clean
+# final_answer (max steps, loop/same-tool guards, timeouts, a final_answer
+# that failed to parse — nine call sites). Its prompt asks for concrete
+# numbers, names and links. Excluding it (as #1106 did, on the assumption it
+# was meant to be brief) capped exactly the long list answers at 1500 tokens,
+# and downstream plugins had to patch the loaded YAML to get around it.
+_BUDGETED_OPTION_KEYS = frozenset({"llm_options", "llm_options_retry", "llm_options_summary"})
 
 # Minimum per-result char budget for the ADVISORY soft-target pass to be worth
 # applying — below this the agent can't meaningfully read its own tool results
@@ -573,9 +587,9 @@ def _llm_options_or_default(prompt_key: str, fallback: dict) -> dict:
     # for the answer-producing calls so one knob governs both.
     #
     # max(): a YAML value ABOVE the setting still wins — this raises a stale
-    # floor, it never lowers a deliberately generous cap. The summary and
-    # tool-preselect options are excluded on purpose: they are meant to be
-    # short, and their small caps are the point.
+    # floor, it never lowers a deliberately generous cap. Tool pre-selection
+    # stays excluded on purpose: it returns a short JSON list of tool names,
+    # and its small cap is the point.
     if prompt_key in _BUDGETED_OPTION_KEYS:
         opts["num_predict"] = max(
             int(opts.get("num_predict") or 0), settings.agent_default_num_predict
@@ -824,6 +838,40 @@ def _parse_agent_json(raw: str) -> dict | None:
                 pass
 
     return None
+
+
+def _record_agent_turn_metrics(context: AgentContext, last_step: AgentStep | None) -> None:
+    """Export how many steps an agent run took and how it ended.
+
+    Once per `AgentService.run()` — an orchestrated turn therefore counts once
+    PER SUB-AGENT, not once per user message.
+
+    `record_agent_steps` / `record_agent_outcome` existed with their metrics
+    registered but had no caller, so renfield_agent_steps_total and
+    renfield_agent_outcome_total stayed at 0 forever — and how often a turn
+    ended in the summary fallback (the path whose answers were being capped)
+    was not measurable at all.
+
+    Outcome: whatever an exit path set on the context (run() overrides it with
+    `cancelled` / `error` when the run did not finish), else `final_answer`
+    when the run produced one, else `aborted` (the consumer closed the
+    generator before any answer).
+    """
+    try:
+        from utils.metrics import record_agent_outcome, record_agent_steps
+
+        if last_step is not None:
+            record_agent_steps(last_step.step_number)
+        if context.outcome:
+            outcome = context.outcome
+        elif last_step is not None and last_step.step_type == "final_answer":
+            outcome = "final_answer"
+        else:
+            outcome = "aborted"
+        record_agent_outcome(outcome)
+    except Exception as e:
+        # Metrics must never break the agent loop.
+        logger.warning(f"⚠️ Could not record agent turn metrics: {e!r}")
 
 
 class AgentService:
@@ -1554,6 +1602,7 @@ class AgentService:
         token_usage_info.set(None)
 
         context = AgentContext(original_message=message)
+        last_step: AgentStep | None = None
         try:
             async for step in self._run_impl(
                 context,
@@ -1586,8 +1635,26 @@ class AgentService:
                 # ~10 yield sites inside _run_impl.
                 if step.step_type == "final_answer":
                     context.steps.append(step)
+                last_step = step
                 yield step
+        except GeneratorExit:
+            # The CONSUMER closed the generator (e.g. it stopped reading after
+            # the answer) — not a failure of the turn; keep its outcome.
+            raise
+        except asyncio.CancelledError:
+            # Cancelled mid-turn (client disconnect cancels orchestrator
+            # sub-agents). Overrides an outcome an exit path set BEFORE its
+            # own await — _build_summary_answer tags the context first and then
+            # calls the LLM, so without this a cancelled summary counted as a
+            # completed one.
+            context.outcome = "cancelled"
+            raise
+        except Exception:
+            context.outcome = "error"
+            raise
         finally:
+            _record_agent_turn_metrics(context, last_step)
+
             # Publish real token counts from the AgentContext — fires on every
             # exit path including timeouts, circuit-breaker trips, and
             # infinite-loop aborts.
@@ -1691,18 +1758,11 @@ class AgentService:
 
         start_time = time.monotonic()
 
-        # Per-role model/URL override > global agent settings > default.
-        # When the agent tier rides an OpenAI-compat endpoint, the last-resort
-        # default must be that endpoint's model — falling back to the local
-        # Ollama model name sends e.g. "llama3.2:3b" to an external API that
-        # validates model IDs (400). Affects roles without a model override
-        # (notably the built-in `general` fallback role).
+        # Per-role model/URL override > global agent settings > default
+        # (endpoint-aware, see default_agent_model).
         role_model = self.role.model if self.role else None
         role_url = self.role.ollama_url if self.role else None
-        if use_openai_for_tier("agent"):
-            agent_model = role_model or settings.agent_model or settings.llm_openai_model
-        else:
-            agent_model = role_model or settings.agent_model or settings.ollama_model
+        agent_model = role_model or default_agent_model()
 
         # Use separate Ollama instance for agent if configured
         agent_client, resolved_url = get_agent_client(role_url, settings.agent_ollama_url)
@@ -1754,7 +1814,7 @@ class AgentService:
             elapsed = time.monotonic() - start_time
             if elapsed > self.total_timeout:
                 logger.warning(f"⏰ Agent total timeout after {elapsed:.1f}s at step {step_num}")
-                summary_step = await self._build_summary_answer(context, step_num, message, ollama, agent_model, lang=lang, agent_client=agent_client)
+                summary_step = await self._build_summary_answer(context, step_num, message, ollama, agent_model, lang=lang, agent_client=agent_client, trigger="timeout_total")
                 yield summary_step
                 return
 
@@ -1782,7 +1842,7 @@ class AgentService:
                     step_type="error",
                     content=prompt_manager.get("agent", "error_circuit_open", lang=lang),
                 )
-                summary_step = await self._build_summary_answer(context, step_num, message, ollama, agent_model, lang=lang, agent_client=agent_client)
+                summary_step = await self._build_summary_answer(context, step_num, message, ollama, agent_model, lang=lang, agent_client=agent_client, trigger="circuit_open")
                 yield summary_step
                 return
 
@@ -1826,7 +1886,7 @@ class AgentService:
                     step_type="error",
                     content=prompt_manager.get("agent", "error_timeout", lang=lang, step=step_num),
                 )
-                summary_step = await self._build_summary_answer(context, step_num, message, ollama, agent_model, lang=lang, agent_client=agent_client)
+                summary_step = await self._build_summary_answer(context, step_num, message, ollama, agent_model, lang=lang, agent_client=agent_client, trigger="timeout_step")
                 yield summary_step
                 return
             except Exception as e:
@@ -1891,14 +1951,26 @@ class AgentService:
                 parsed = _recover_send_email(response_text, context)
 
             if not parsed:
-                logger.warning(f"⚠️ Agent step {step_num}: JSON parse failed (len={len(response_text)}): {response_text[:500]}")
+                # Head AND tail: the head is always a well-formed '{"action": …'
+                # prefix, while the defect (an unescaped quote, a missing
+                # closing brace, trailing prose) sits at the END. Logging only
+                # the first 500 chars made every such failure undiagnosable.
+                _tail = (
+                    f" … {response_text[max(500, len(response_text) - 300):]}"
+                    if len(response_text) > 500 else ""
+                )
+                logger.warning(
+                    f"⚠️ Agent step {step_num}: JSON parse failed (len={len(response_text)}): "
+                    f"{response_text[:500]}{_tail}"
+                )
                 # If we have collected tool results, summarize them via LLM
                 has_results = any(s.step_type == "tool_result" and s.success for s in context.steps)
                 if has_results:
                     logger.info(f"📝 Agent step {step_num}: Summarizing collected results via LLM...")
-                    summary_step = await self._build_summary_answer(context, step_num, message, ollama, agent_model, lang=lang, agent_client=agent_client)
+                    summary_step = await self._build_summary_answer(context, step_num, message, ollama, agent_model, lang=lang, agent_client=agent_client, trigger="parse_failed")
                     yield summary_step
                 elif response_text.strip():
+                    context.outcome = "parse_failed_no_results"
                     # No tool results but LLM gave some text — use it as answer
                     # Guard: don't leak truncated/malformed JSON as user-facing text
                     raw = response_text.strip()
@@ -1919,6 +1991,7 @@ class AgentService:
                             reason=reason_text,
                         )
                 else:
+                    context.outcome = "empty_response"
                     reason_text = "Empty LLM response" if lang == "en" else "Leere LLM-Antwort"
                     yield AgentStep(
                         step_number=step_num,
@@ -2111,6 +2184,7 @@ class AgentService:
                     summary_step = await self._build_summary_answer(
                         context, step_num, message, ollama, agent_model,
                         lang=lang, agent_client=agent_client,
+                        trigger="invalid_tools",
                     )
                     yield summary_step
                     return
@@ -2309,7 +2383,7 @@ class AgentService:
                         content=prompt_manager.get("agent", "error_empty_results", lang=lang, tool=action),
                         tool=action,
                     )
-                    summary_step = await self._build_summary_answer(context, step_num, message, ollama, agent_model, lang=lang, agent_client=agent_client)
+                    summary_step = await self._build_summary_answer(context, step_num, message, ollama, agent_model, lang=lang, agent_client=agent_client, trigger="repeated_empty")
                     yield summary_step
                     return
 
@@ -2322,7 +2396,7 @@ class AgentService:
                     content=prompt_manager.get("agent", "error_loop_detected", lang=lang, tool=action),
                     tool=action,
                 )
-                summary_step = await self._build_summary_answer(context, step_num, message, ollama, agent_model, lang=lang, agent_client=agent_client)
+                summary_step = await self._build_summary_answer(context, step_num, message, ollama, agent_model, lang=lang, agent_client=agent_client, trigger="loop_detected")
                 yield summary_step
                 return
 
@@ -2340,13 +2414,13 @@ class AgentService:
                     content=prompt_manager.get("agent", "error_loop_detected", lang=lang, tool=action),
                     tool=action,
                 )
-                summary_step = await self._build_summary_answer(context, step_num, message, ollama, agent_model, lang=lang, agent_client=agent_client)
+                summary_step = await self._build_summary_answer(context, step_num, message, ollama, agent_model, lang=lang, agent_client=agent_client, trigger="same_tool")
                 yield summary_step
                 return
 
         # Max steps reached — summarize collected results via LLM
         logger.warning(f"⚠️ Agent reached max steps ({self.max_steps})")
-        summary_step = await self._build_summary_answer(context, self.max_steps, message, ollama, agent_model, lang=lang, agent_client=agent_client)
+        summary_step = await self._build_summary_answer(context, self.max_steps, message, ollama, agent_model, lang=lang, agent_client=agent_client, trigger="max_steps")
         yield summary_step
 
     async def _build_summary_answer(
@@ -2358,12 +2432,20 @@ class AgentService:
         agent_model: str,
         lang: str = "de",
         agent_client=None,
+        *,
+        trigger: str,
     ) -> AgentStep:
         """
         Summarize collected tool results into a natural-language answer via LLM.
 
         Falls back to a static message if the LLM call fails.
+
+        `trigger` names the exit path that aborted into this summary (max_steps,
+        loop_detected, parse_failed, …). It is keyword-only and required so a new
+        call site cannot forget it; run() exports it as
+        renfield_agent_outcome_total{outcome="summary_<trigger>"}.
         """
+        context.outcome = f"summary_{trigger}"
         collected = []
         for step in context.steps:
             if step.step_type == "tool_result" and step.success:
@@ -2442,6 +2524,7 @@ class AgentService:
 
     def _build_fallback_answer(self, context: AgentContext, step_num: int, error: str, lang: str = "de") -> AgentStep:
         """Build a fallback answer when an error occurs."""
+        context.outcome = "llm_error"
         if lang == "en":
             content = f"Sorry, an error occurred while processing: {error}"
             reason = "Error fallback"
