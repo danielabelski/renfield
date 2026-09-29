@@ -56,6 +56,15 @@ RECOGNITION_OFF = "recognition_off"
 NO_PROFILE = "no_profile"
 NO_EMBEDDINGS = "no_embeddings"
 
+# 🛑 NUR fuer die 409-Antwort des Einschaltens, nie aus `voice_factor_blocker()`:
+# ein Geraetekonto meldet sich nicht ueber `/auth/login` an, kann seinen eigenen
+# Zustand also gar nicht lesen. Der Code steht trotzdem HIER, weil er dieselbe
+# Frage beantwortet — „warum kann dieses Konto den Faktor nicht tragen" — und
+# weil er sonst wieder als Prosa herausgeht. Genau das war er: beim Umbau vom
+# 2026-09-29 wurden die drei benannten englischen Saetze ersetzt und dieser
+# vierte, VIER ZEILEN darueber in derselben Funktion, stehen gelassen.
+DEVICE_ACCOUNT = "device_account"
+
 
 def voice_path_blocker() -> str | None:
     """Was den Einlöseweg für ALLE Konten versperrt, oder ``None``.

@@ -38,9 +38,12 @@ Hier nur die Invarianten und die Fallen.
   ausgerechnet die Person, um deren Stimme es geht, nicht einwilligen), ein FREMDES abschalten verlangt `admin`,
   ein fremdes einschalten ist immer 403. Einschalten ohne einlösbares Profil → 409, Gerätekonto → 409.
   Selbstbedienung unter `/settings/account`; `GET /auth/me` führt das Feld, damit die Person ihren Zustand sieht.
-- 🛑 **Der Grund geht als CODE heraus, nie als Satz**, aus der 409-Antwort wie aus
-  `GET /users/{id}/voice-second-factor` (nur das EIGENE Konto, sonst 403); die Oberfläche übersetzt ihn. Vorher
-  drei hartkodierte **englische** Sätze — ein deutschsprachiges Mitglied las sie unübersetzt.
+- 🛑 **Der Grund geht als CODE heraus, nie als Satz**, aus **jeder** 409 dieser Route wie aus
+  `GET /users/{id}/voice-second-factor` (nur das EIGENE Konto, sonst 403); die Oberfläche übersetzt ihn — auch die
+  Verwaltungsseite, wo `device_account` als einziger Ort auftritt. Ein Strukturtest liest die Quelle und verbietet
+  `detail="…"` in jedem 409-Zweig. 🛑 Beim ersten Anlauf wurden die drei **benannten** englischen Sätze ersetzt und
+  der vierte, vier Zeilen darüber in derselben Funktion, stehen gelassen — Klasse statt Instanz, gefunden erst in
+  der Abnahme.
 - 🛑 **Der Grund gilt UNABHÄNGIG von der Einwilligung.** `/settings/account` zeigte ihn nur im Zustand „scharf" und
   kannte nur die instanzweite Hälfte; gemessen 2026-09-29 war bei **6 von 7 Konten** `no_profile` der Blocker — sie
   sahen „Aus" und eine Schaltfläche, die fehlschlagen musste. `voice_factor_blocker()` liefert beide Hälften,

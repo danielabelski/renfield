@@ -1135,9 +1135,11 @@ async def set_voice_second_factor(
         # gesetzter Einwilligung, das niemals einloesen kann, ist ein Zustand,
         # den niemand gebrauchen kann. Lieber hier sagen als spaeter raten.
         if user.is_device_account:
+            from services.voice_factor_preconditions import DEVICE_ACCOUNT
+
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="A device account has no voice — it cannot carry a second factor.",
+                detail=DEVICE_ACCOUNT,
             )
 
         # Derselbe Pruefer wie in `/auth/login` und `/auth/voice`: eine scharfe
