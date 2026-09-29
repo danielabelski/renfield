@@ -2506,6 +2506,13 @@
     "voiceDisarmed": "Second sign-in factor switched off.",
     "voiceFailed": "The setting could not be changed.",
     "voicePasswordLabel": "Password to confirm",
-    "voicePasswordWhy": "Only for switching off: a session older than your consent should not be able to withdraw it on its own."
+    "voicePasswordWhy": "Only for switching off: a session older than your consent should not be able to withdraw it on its own.",
+    "voiceStateFailed": "Could not load the state of the second factor",
+    "voiceBlocker": {
+      "voice_path_off": "The voice path is currently switched off on this instance. You can consent now — the requirement takes effect once it is switched on.",
+      "recognition_off": "Speaker recognition is switched off on this instance. Without it your voice could never be checked.",
+      "no_profile": "No speaker profile is linked to your account yet. Without one there would be nothing to check your voice against.",
+      "no_embeddings": "Your speaker profile holds no voice sample yet. Record one first."
+    }
   }
 }

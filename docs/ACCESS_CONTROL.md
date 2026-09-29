@@ -498,9 +498,10 @@ Nebengewinn: der voice-server misst die Aufnahme selbst. `audio_duration_s` wird
 
 ### Wo die Spalte geschaltet wird — und warum getrennt von `PATCH /users/{id}`
 
-`POST /api/users/{id}/voice-second-factor` (`{"enabled": true|false}`, Berechtigung
-`users.manage`), in der Oberfläche die Schild-Schaltfläche je Zeile unter
-**Verwaltung → Benutzer**. Die Route ist bewusst **nicht** Teil des allgemeinen
+`POST /api/users/{id}/voice-second-factor` (`{"enabled": true|false}`), in der
+Oberfläche die Schild-Schaltfläche je Zeile unter **Verwaltung → Benutzer** — und für
+das eigene Konto unter **Mein Konto** (`/settings/account`, ohne Verwaltungsrecht
+erreichbar). Die Route ist bewusst **nicht** Teil des allgemeinen
 `PATCH /users/{id}`, weil dort beide Richtungen dieselbe Berechtigung hätten — die
 Asymmetrie wäre nicht abbildbar:
 
@@ -518,6 +519,32 @@ dann das Flag umlegen. Solange ruht die Hürde. Grund für die Sperre: `POST /au
 prüft 1:1 dagegen und verweigert fail-closed, das Konto käme also nie wieder herein.
 Die Oberfläche zeigt die Schaltfläche in diesem Fall gesperrt statt sie ins 409
 laufen zu lassen. Beide Richtungen werden protokolliert (wer, wann, für welches Konto).
+
+#### Der Grund ist lesbar, bevor jemand einwilligt
+
+`GET /api/users/{id}/voice-second-factor` → `{enabled, blocker}`, **nur für das eigene
+Konto** (sonst 403; der Grund nennt eine Eigenschaft des Sprecherprofils einer Person
+und gehört ihr). `blocker` trägt einen der vier maschinenlesbaren Codes —
+`voice_path_off`, `recognition_off`, `no_profile`, `no_embeddings` — oder `null`.
+
+🛑 **Der Code geht heraus, nicht der Satz.** Dieselben Codes liefert die 409-Antwort
+des Einschaltens; übersetzt werden sie in der Oberfläche. Vorher schickte der Server
+drei hartkodierte **englische** Sätze, und das war zugleich die einzige Stelle, an der
+die Person den Grund überhaupt erfuhr — ein deutschsprachiges Haushaltsmitglied las
+also Englisch.
+
+🛑 **Der Grund gilt unabhängig von der Einwilligung.** `/settings/account` zeigte ihn
+zuvor nur im Zustand „scharf" — also nie für jemanden, der gerade überlegt
+einzuwilligen — und kannte ausserdem nur die instanzweite Hälfte der Vorbedingungen
+(aus den Feature-Flags). Gemessen im Haushalt am 2026-09-29: bei **6 von 7 Konten** war
+`no_profile` der Blocker, genau die kontogebundene Hälfte. Sie sahen ein blankes „Aus"
+und eine Schaltfläche, die fehlschlagen musste.
+
+`voice_factor_blocker()` in `services/voice_factor_preconditions` liefert beide
+Hälften, die **instanzweite zuerst**: ein abgeschalteter Sprachweg ist die dominante
+Wahrheit. Für das EINSCHALTEN bleibt `voice_path_off` folgenlos (Cutover-Reihenfolge),
+die drei anderen sperren die Schaltfläche. Das Abschalten hängt an **keiner**
+Vorbedingung — es ist der Rückweg.
 
 🛑 **Was die Stimme weiterhin nicht kann:** eine Aufnahme kann sie täuschen, es gibt
 keine Lebendigkeitsprüfung. Als *erster* Faktor war das die ganze Tür; als

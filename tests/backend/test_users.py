@@ -18,6 +18,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from models.database import Role, Speaker, User
+from services.voice_factor_preconditions import (
+    NO_EMBEDDINGS,
+    NO_PROFILE,
+    PATH_OFF,
+    RECOGNITION_OFF,
+)
 
 # ============================================================================
 # Fixtures
@@ -717,6 +723,22 @@ class TestVoiceSecondFactorConsent:
         from utils.config import settings
         monkeypatch.setattr(settings, "auth_enabled", True)
 
+    @staticmethod
+    def _path_on():
+        """Die instanzweite Haelfte oeffnen.
+
+        🛑 Der Pruefstand faehrt `voice_auth_enabled=False`. Die ANZEIGE meldet
+        die instanzweite Haelfte zuerst — voellig richtig, denn ein
+        abgeschalteter Sprachweg ist die dominante Wahrheit. Wer die
+        kontogebundene Haelfte pruefen will, muss die instanzweite also
+        oeffnen; sonst prueft er `voice_path_off` und glaubt, er pruefe das
+        Profil. Genau darauf sind diese Tests beim ersten Lauf hereingefallen.
+        """
+        from utils.config import settings
+        return patch.multiple(
+            settings, voice_auth_enabled=True, speaker_recognition_enabled=True,
+        )
+
 
     @staticmethod
     async def _with_voice(db_session: AsyncSession, user: User, embeddings: int = 1):
@@ -795,6 +817,129 @@ class TestVoiceSecondFactorConsent:
         await db_session.refresh(test_user)
         assert test_user.voice_second_factor_enabled is False
 
+    # ------------------------------------------------------------------
+    # GET /{id}/voice-second-factor — der Grund, den die Seite vorher nie sah
+    # ------------------------------------------------------------------
+
+    @pytest.mark.database
+    async def test_the_reason_is_readable_BEFORE_consenting(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        """🛑 Der Kern des Befundes vom 2026-09-29.
+
+        Die Seite „Mein Konto" zeigte einen Grund nur im Zustand „scharf" — also
+        nie fuer jemanden, der gerade ueberlegt einzuwilligen. Gemessen im
+        Haushalt: bei 6 von 7 Konten war `no_profile` der Blocker, und genau die
+        sahen ein blankes „Aus" mit einer Schaltflaeche, die fehlschlagen musste.
+        Der Grund muss also OHNE Einwilligung lesbar sein.
+        """
+        from api.routes import users as users_routes
+
+        assert test_user.voice_second_factor_enabled is False
+        assert test_user.speaker_id is None
+
+        with self._path_on():
+            state = await users_routes.get_voice_second_factor(
+                user_id=test_user.id,
+                db=db_session,
+                current_user=test_user,
+            )
+        assert state.enabled is False
+        assert state.blocker == NO_PROFILE
+
+    @pytest.mark.database
+    async def test_no_blocker_once_the_profile_carries_a_sample(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        """Gegenprobe: ohne sie waere der Test oben auch dann gruen, wenn die
+        Route IMMER `no_profile` meldete."""
+        from api.routes import users as users_routes
+
+        await self._with_voice(db_session, test_user, embeddings=1)
+        with self._path_on():
+            state = await users_routes.get_voice_second_factor(
+                user_id=test_user.id, db=db_session, current_user=test_user,
+            )
+        assert state.blocker is None
+
+    @pytest.mark.database
+    async def test_a_profile_without_samples_reads_as_such(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        """Die vier Gruende muessen UNTERSCHEIDBAR herauskommen — sonst kann die
+        Oberflaeche sie nicht verschieden uebersetzen."""
+        from api.routes import users as users_routes
+
+        await self._with_voice(db_session, test_user, embeddings=0)
+        with self._path_on():
+            state = await users_routes.get_voice_second_factor(
+                user_id=test_user.id, db=db_session, current_user=test_user,
+            )
+        assert state.blocker == NO_EMBEDDINGS
+
+    @pytest.mark.database
+    async def test_the_instance_half_is_reported_too(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        """`voice_path_off` gehoert zum ANZEIGEN dazu, obwohl es das Einschalten
+        bewusst nicht blockiert — sonst kann die Seite ein Ruhen nicht benennen.
+        """
+        from api.routes import users as users_routes
+        from utils.config import settings
+
+        await self._with_voice(db_session, test_user, embeddings=1)
+        with patch.object(settings, "voice_auth_enabled", False):
+            state = await users_routes.get_voice_second_factor(
+                user_id=test_user.id, db=db_session, current_user=test_user,
+            )
+        assert state.blocker == PATH_OFF
+
+        # 🛑 Der Sprachweg muss dafuer AN sein, sonst gewinnt `PATH_OFF` und der
+        # Test behauptete etwas ueber die Erkennung, ohne sie zu beruehren.
+        with patch.multiple(
+            settings, voice_auth_enabled=True, speaker_recognition_enabled=False,
+        ):
+            state = await users_routes.get_voice_second_factor(
+                user_id=test_user.id, db=db_session, current_user=test_user,
+            )
+        assert state.blocker == RECOGNITION_OFF
+
+    @pytest.mark.database
+    async def test_reading_someone_elses_state_is_refused(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        """Der Grund nennt eine Eigenschaft des Sprecherprofils einer Person —
+        er gehoert ihr. Auch `admin` liest ihn hier nicht."""
+        from fastapi import HTTPException
+
+        from api.routes import users as users_routes
+
+        with pytest.raises(HTTPException) as exc:
+            await users_routes.get_voice_second_factor(
+                user_id=test_user.id,
+                db=db_session,
+                current_user=_admin(test_user.id + 1000),
+            )
+        assert exc.value.status_code == 403
+
+    @pytest.mark.database
+    async def test_reading_needs_an_authenticated_instance(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        """Dieselbe Regel wie beim Schreiben: ohne Authentifizierung gibt es kein
+        „selbst", also auch nichts eigenes zu lesen."""
+        from fastapi import HTTPException
+
+        from api.routes import users as users_routes
+        from utils.config import settings
+
+        with patch.object(settings, "auth_enabled", False):
+            with pytest.raises(HTTPException) as exc:
+                await users_routes.get_voice_second_factor(
+                    user_id=test_user.id, db=db_session, current_user=test_user,
+                )
+        assert exc.value.status_code == 401
+
     @pytest.mark.database
     async def test_arming_without_a_speaker_profile_is_refused(
         self, db_session: AsyncSession, test_user: User
@@ -815,6 +960,12 @@ class TestVoiceSecondFactorConsent:
                 current_user=MagicMock(username=test_user.username, id=test_user.id),
             )
         assert exc.value.status_code == 409
+        # 🛑 Der CODE ist der Vertrag, nicht der Satz. Hier standen drei
+        # hartkodierte englische Saetze, und sie waren die einzige Stelle, an
+        # der die Person den Grund erfuhr — ein deutschsprachiges Mitglied las
+        # Englisch. Die Oberflaeche uebersetzt jetzt diesen Code; pruefte der
+        # Test nur den Statuscode, koennte er unbemerkt wieder zu Prosa werden.
+        assert exc.value.detail == NO_PROFILE
         await db_session.refresh(test_user)
         assert test_user.voice_second_factor_enabled is False
 
@@ -837,6 +988,7 @@ class TestVoiceSecondFactorConsent:
                 current_user=MagicMock(username=test_user.username, id=test_user.id),
             )
         assert exc.value.status_code == 409
+        assert exc.value.detail == NO_EMBEDDINGS
 
     @pytest.mark.database
     async def test_disarming_needs_no_profile_at_all(

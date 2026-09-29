@@ -38,6 +38,15 @@ Hier nur die Invarianten und die Fallen.
   ausgerechnet die Person, um deren Stimme es geht, nicht einwilligen), ein FREMDES abschalten verlangt `admin`,
   ein fremdes einschalten ist immer 403. Einschalten ohne einlösbares Profil → 409, Gerätekonto → 409.
   Selbstbedienung unter `/settings/account`; `GET /auth/me` führt das Feld, damit die Person ihren Zustand sieht.
+- 🛑 **Der Grund geht als CODE heraus, nie als Satz**, aus der 409-Antwort wie aus
+  `GET /users/{id}/voice-second-factor` (nur das EIGENE Konto, sonst 403); die Oberfläche übersetzt ihn. Vorher
+  drei hartkodierte **englische** Sätze — ein deutschsprachiges Mitglied las sie unübersetzt.
+- 🛑 **Der Grund gilt UNABHÄNGIG von der Einwilligung.** `/settings/account` zeigte ihn nur im Zustand „scharf" und
+  kannte nur die instanzweite Hälfte; gemessen 2026-09-29 war bei **6 von 7 Konten** `no_profile` der Blocker — sie
+  sahen „Aus" und eine Schaltfläche, die fehlschlagen musste. `voice_factor_blocker()` liefert beide Hälften,
+  **instanzweite zuerst**. Wer die kontogebundene testen will, muss die instanzweite öffnen (Prüfstand: Flag aus).
+- 🛑 **`voice_path_off` blockiert das EINSCHALTEN nicht** (Cutover-Reihenfolge), die drei anderen schon.
+  Abschalten hängt an **keiner** Vorbedingung — es ist der Rückweg.
   🛑 Bei `AUTH_ENABLED=false` **401 in beiden Richtungen** (`get_user_or_default` löst dort jeden auf `admin` auf —
   es gäbe kein „selbst"). 🛑 Die Berechtigungsentscheidung steht **vor** der DB-Abfrage, sonst trennt 404 von 403
   und das ist ein Aufzählungsorakel. Entfernen = WARNING, Erteilen = INFO.

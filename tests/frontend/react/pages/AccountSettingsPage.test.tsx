@@ -35,10 +35,18 @@ vi.mock('../../../../src/frontend/src/components/ConfirmDialog', () => {
   return { useConfirmDialog: (): UseConfirmDialogResult => result };
 });
 
-function flags(over: { voice_auth_enabled?: boolean; speaker_recognition_enabled?: boolean } = {}) {
+/**
+ * Der GRUND kommt seit dem 2026-09-29 vom Server, nicht aus den Feature-Flags.
+ *
+ * 🛑 Vorher las die Seite nur die instanzweite Hälfte (die Flags) und zeigte
+ * einen Grund ausserdem nur im Zustand „scharf". Wer noch nicht eingewilligt
+ * hatte, sah ein blankes „Aus" — gemessen im Haushalt bei 6 von 7 Konten, denn
+ * deren Blocker war `no_profile`, die kontogebundene Hälfte.
+ */
+function state(blocker: string | null = null, enabled = false) {
   server.use(
-    http.get(`${BASE_URL}/api/config/features`, () =>
-      HttpResponse.json({ voice_auth_enabled: true, speaker_recognition_enabled: true, ...over }),
+    http.get(`${BASE_URL}/api/users/:id/voice-second-factor`, () =>
+      HttpResponse.json({ enabled, blocker }),
     ),
   );
 }
@@ -71,7 +79,7 @@ function captureToggle() {
 }
 
 describe('AccountSettingsPage', () => {
-  beforeEach(() => { server.resetHandlers(); flags(); });
+  beforeEach(() => { server.resetHandlers(); state(); });
   afterEach(() => vi.clearAllMocks());
 
   it('zeigt den eigenen Zustand — ohne Verwaltungsrecht', async () => {
@@ -122,11 +130,58 @@ describe('AccountSettingsPage', () => {
 
   it('unterscheidet „scharf\" von „ruht\", wenn der Sprachweg aus ist', async () => {
     asUser(true);
-    flags({ voice_auth_enabled: false });
+    state('voice_path_off', true);
     renderWithProviders(<AccountSettingsPage />);
     expect(
       await screen.findByText('Eingewilligt, ruht aber (Sprachweg auf dieser Instanz aus)'),
     ).toBeInTheDocument();
+  });
+
+  it('🛑 nennt den Grund AUCH ohne Einwilligung', async () => {
+    // Der eigentliche Befund vom 2026-09-29: im Zustand „Aus" schwieg die
+    // Seite vollstaendig, ganz gleich wie viele Vorbedingungen fehlten.
+    asUser(false);
+    state('no_profile');
+    renderWithProviders(<AccountSettingsPage />);
+    expect(await screen.findByText('Aus — Ihr Passwort genügt')).toBeInTheDocument();
+    expect(await screen.findByText(/noch kein Sprecherprofil verknüpft/)).toBeInTheDocument();
+  });
+
+  it('🛑 bietet kein Einschalten an, das der Server ablehnen MUSS', async () => {
+    asUser(false);
+    state('no_profile');
+    renderWithProviders(<AccountSettingsPage />);
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Stimme verlangen' })).toBeDisabled(),
+    );
+  });
+
+  it('🛑 `voice_path_off` blockiert das Einschalten NICHT', async () => {
+    // Sonst waere die Reihenfolge des Cutovers nicht durchfuehrbar: erst
+    // Einwilligung sammeln, dann das Flag umlegen.
+    asUser(false);
+    state('voice_path_off');
+    renderWithProviders(<AccountSettingsPage />);
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Stimme verlangen' })).toBeEnabled(),
+    );
+  });
+
+  it('🛑 uebersetzt den 409-Code, statt ihn roh anzuzeigen', async () => {
+    // Der Server schickt seit dem 2026-09-29 den CODE. Ohne Uebersetzung
+    // stuende „no_embeddings" in der Oberflaeche — vorher stand dort ein
+    // hartkodierter ENGLISCHER Satz.
+    asUser(false);
+    state(null);
+    server.use(
+      http.post(`${BASE_URL}/api/users/:id/voice-second-factor`, () =>
+        HttpResponse.json({ detail: 'no_embeddings' }, { status: 409 }),
+      ),
+    );
+    renderWithProviders(<AccountSettingsPage />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Stimme verlangen' }));
+    expect(await screen.findByText(/noch keine Stimmprobe/)).toBeInTheDocument();
+    expect(screen.queryByText('no_embeddings')).not.toBeInTheDocument();
   });
 
   it('nennt bei scharfem Faktor, dass es keinen Rueckfall gibt', async () => {
