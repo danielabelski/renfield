@@ -2,6 +2,8 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 
 class TestMetricsDisabled:
     """Tests when metrics are disabled (default)."""
@@ -371,3 +373,60 @@ class TestRoutingAndEmbeddingCounters:
                 assert metrics_module._embedding_errors_total is not None
             finally:
                 metrics_module._metrics_initialized = False
+
+
+
+class TestTruncationSeriesPriming:
+    """A labelled counter emits nothing until first use — prime the agent's."""
+
+    def test_prime_exports_zero_series_for_every_call_type(self, monkeypatch):
+        import utils.metrics as metrics_module
+
+        mock_counter = MagicMock()
+        monkeypatch.setattr(metrics_module, "_llm_response_truncated_total", mock_counter)
+        monkeypatch.setattr("utils.llm_client.default_agent_model", lambda: "qwen3.6")
+
+        metrics_module._prime_llm_response_truncated()
+
+        calls = [c.kwargs for c in mock_counter.labels.call_args_list]
+        assert calls == [
+            {"model": "qwen3.6", "call_type": ct}
+            for ct in metrics_module.LLM_TRUNCATION_CALL_TYPES
+        ]
+        # .labels() alone — never .inc(): a primed series must read 0.
+        mock_counter.labels.return_value.inc.assert_not_called()
+
+    def test_prime_without_a_model_is_a_noop(self, monkeypatch):
+        import utils.metrics as metrics_module
+
+        mock_counter = MagicMock()
+        monkeypatch.setattr(metrics_module, "_llm_response_truncated_total", mock_counter)
+        monkeypatch.setattr("utils.llm_client.default_agent_model", lambda: "")
+
+        metrics_module._prime_llm_response_truncated()
+        mock_counter.labels.assert_not_called()
+
+    def test_call_types_match_the_agent_call_sites(self):
+        """Priming a call type the loop never records (or missing one it does)
+        leaves exactly the blind spot this exists to close."""
+        import re
+        from pathlib import Path
+
+        import utils.metrics as metrics_module
+
+        src = (Path(__file__).resolve().parents[2] / "src/backend/services/agent_service.py").read_text()
+        recorded = set(re.findall(r'_warn_if_truncated\([^)]*"(agent_[a-z]+)"', src))
+        assert recorded == set(metrics_module.LLM_TRUNCATION_CALL_TYPES)
+
+    def test_prime_real_counter_reads_zero(self):
+        """End to end against prometheus_client: the series exists at 0."""
+        prometheus_client = pytest.importorskip("prometheus_client")
+
+        registry = prometheus_client.CollectorRegistry()
+        counter = prometheus_client.Counter(
+            "t_truncated_total", "t", ["model", "call_type"], registry=registry
+        )
+        counter.labels(model="m", call_type="agent_summary")
+        assert registry.get_sample_value(
+            "t_truncated_total", {"model": "m", "call_type": "agent_summary"}
+        ) == 0.0

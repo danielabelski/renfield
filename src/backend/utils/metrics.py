@@ -503,6 +503,37 @@ def record_output_guard_violation(violation: str):
     _output_guard_violations_total.labels(violation=violation).inc()
 
 
+# The call types the agent loop records truncation for (see
+# agent_service._warn_if_truncated call sites). Primed at startup below.
+LLM_TRUNCATION_CALL_TYPES = ("agent_step", "agent_retry", "agent_summary")
+
+
+def _prime_llm_response_truncated() -> None:
+    """Export a 0 sample for the agent model's truncation series at startup.
+
+    A labelled Counter emits no series until a label set is first used
+    ("Metrics with labels are not initialized when declared … It is
+    recommended to initialize the label values by calling the .labels()
+    method alone" — prometheus client_python, Labels). So the first cut of a
+    process created its series AT 1, and `increase()` over a window cannot
+    see a 0→1 step it never sampled: RevaAnswerTruncated
+    (`increase(...[30m]) > 0`) was blind to the first truncation of every
+    pod. Measured in Reva prod on 2026-09-28 — a logged agent_summary cut
+    showed up as an increase of 0.
+
+    Only the DEFAULT agent model is primed; a role with its own model still
+    creates its series on first use. That leaves the gap for those roles, but
+    priming guesses would export series for models that never run.
+    """
+    from utils.llm_client import default_agent_model
+
+    model = default_agent_model()
+    if not model:
+        return
+    for call_type in LLM_TRUNCATION_CALL_TYPES:
+        _llm_response_truncated_total.labels(model=model, call_type=call_type)
+
+
 def record_llm_response_truncated(model: str, call_type: str):
     """Record a completion that hit the output-token cap (finish_reason=length)."""
     if not _metrics_initialized:
@@ -567,6 +598,13 @@ def setup_metrics(app: "FastAPI"):
 
     if not _metrics_initialized:
         return
+
+    try:
+        _prime_llm_response_truncated()
+    except Exception as e:
+        # Priming must never block startup. WARNING, not debug: a silently
+        # unprimed counter is exactly the blind spot the priming exists to close.
+        logger.warning(f"Could not prime renfield_llm_response_truncated_total: {e!r}")
 
     from starlette.middleware.base import BaseHTTPMiddleware
     from starlette.requests import Request

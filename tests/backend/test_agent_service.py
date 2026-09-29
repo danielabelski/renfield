@@ -80,6 +80,19 @@ async def collect_steps(agent, **kwargs) -> list:
     return steps
 
 
+@pytest.fixture
+def recorded_outcomes(monkeypatch):
+    """Outcomes run() reported to renfield_agent_outcome_total this test.
+
+    The loop tests below drive the REAL exit branches; asserting the label
+    there is what catches two swapped `trigger=` literals, which the unit
+    tests on _build_summary_answer alone cannot.
+    """
+    seen: list[str] = []
+    monkeypatch.setattr("utils.metrics.record_agent_outcome", seen.append)
+    return seen
+
+
 # ============================================================================
 # Test _parse_agent_json
 # ============================================================================
@@ -785,7 +798,7 @@ class TestAgentServiceRun:
         assert "Antwort nicht" in final.content or len(final.content) > 0
 
     @pytest.mark.unit
-    async def test_max_steps_reached(self):
+    async def test_max_steps_reached(self, recorded_outcomes):
         """When max steps are exhausted, LLM summarizes collected results."""
         registry = self._make_registry()
 
@@ -823,6 +836,7 @@ class TestAgentServiceRun:
         # Should end with a final_answer from LLM summary
         assert steps[-1].step_type == "final_answer"
         assert "22°C" in steps[-1].content
+        assert recorded_outcomes == ["summary_max_steps"]
 
     @pytest.mark.unit
     async def test_tool_execution_error(self):
@@ -874,7 +888,7 @@ class TestAgentServiceRun:
         assert "Fehler" in steps[-1].content
 
     @pytest.mark.unit
-    async def test_step_timeout(self):
+    async def test_step_timeout(self, recorded_outcomes):
         """Per-step timeout — should yield error + summary answer."""
         registry = self._make_registry()
         ollama = MagicMock()
@@ -914,6 +928,7 @@ class TestAgentServiceRun:
         step_types = [s.step_type for s in steps]
         assert "error" in step_types
         assert "final_answer" in step_types
+        assert recorded_outcomes == ["summary_timeout_step"]
 
     @pytest.mark.unit
     async def test_conversation_history_excluded_from_agent(self):
@@ -1069,7 +1084,7 @@ class TestAgentServiceRun:
 class TestAgentServiceSafety:
 
     @pytest.mark.unit
-    async def test_total_timeout(self):
+    async def test_total_timeout(self, recorded_outcomes):
         """Total timeout should stop the agent even if steps are within per-step limit."""
         registry = AgentToolRegistry(mcp_manager=_make_mock_mcp_manager(), _init_only=True)
         ollama = MagicMock()
@@ -1113,6 +1128,7 @@ class TestAgentServiceSafety:
         # Should have been stopped early
         assert steps[-1].step_type == "final_answer"
         assert call_count < 100  # Didn't exhaust all steps
+        assert recorded_outcomes == ["summary_timeout_total"]
 
     @pytest.mark.unit
     async def test_build_summary_answer_with_results(self):
@@ -1143,7 +1159,7 @@ class TestAgentServiceSafety:
         ollama.client.chat = mock_chat
         _shared_agent_client.chat = mock_chat
 
-        answer = await agent._build_summary_answer(ctx, 3, "Wie ist das Wetter?", ollama, "test-model")
+        answer = await agent._build_summary_answer(ctx, 3, "Wie ist das Wetter?", ollama, "test-model", trigger="max_steps")
         assert answer.step_type == "final_answer"
         assert "15°C" in answer.content
         # Should be natural language, not raw tool output
@@ -1158,7 +1174,7 @@ class TestAgentServiceSafety:
         ctx = AgentContext(original_message="test")
         ollama = MagicMock()
 
-        answer = await agent._build_summary_answer(ctx, 1, "test", ollama, "test-model")
+        answer = await agent._build_summary_answer(ctx, 1, "test", ollama, "test-model", trigger="max_steps")
         assert "nicht vollständig" in answer.content or "Entschuldigung" in answer.content
 
     @pytest.mark.unit
@@ -1182,9 +1198,23 @@ class TestAgentServiceSafety:
         ollama.client.chat = failing_chat
         _shared_agent_client.chat = failing_chat
 
-        answer = await agent._build_summary_answer(ctx, 2, "test", ollama, "test-model")
+        answer = await agent._build_summary_answer(ctx, 2, "test", ollama, "test-model", trigger="max_steps")
         assert answer.step_type == "final_answer"
         assert "Entschuldigung" in answer.content or "zusammenfassen" in answer.content
+
+    @pytest.mark.unit
+    async def test_build_summary_answer_requires_and_records_trigger(self):
+        """The trigger is keyword-only and required, and lands on the context."""
+        registry = AgentToolRegistry(mcp_manager=_make_mock_mcp_manager(), _init_only=True)
+        agent = AgentService(registry)
+        ctx = AgentContext(original_message="test")
+        ollama = MagicMock()
+
+        with pytest.raises(TypeError):
+            await agent._build_summary_answer(ctx, 1, "test", ollama, "test-model")
+
+        await agent._build_summary_answer(ctx, 1, "test", ollama, "test-model", trigger="same_tool")
+        assert ctx.outcome == "summary_same_tool"
 
     @pytest.mark.unit
     def test_build_fallback_answer(self):
@@ -1196,6 +1226,7 @@ class TestAgentServiceSafety:
         answer = agent._build_fallback_answer(ctx, 1, "Model crashed")
         assert "Model crashed" in answer.content
         assert answer.step_type == "final_answer"
+        assert ctx.outcome == "llm_error"
 
 
 # ============================================================================
@@ -1442,7 +1473,7 @@ class TestAgentInfiniteLoopDetection:
         return executor
 
     @pytest.mark.unit
-    async def test_infinite_loop_breaks_after_detection(self):
+    async def test_infinite_loop_breaks_after_detection(self, recorded_outcomes):
         """Agent should break out when same tool is called 3+ times identically."""
         registry = self._make_registry()
         ollama = MagicMock()
@@ -1488,6 +1519,7 @@ class TestAgentInfiniteLoopDetection:
 # ============================================================================
 # Test Circuit Breaker Integration
 # ============================================================================
+        assert recorded_outcomes == ["summary_loop_detected"]
 
 class TestAgentCircuitBreakerIntegration:
     """Test circuit breaker integration in agent service."""
@@ -1910,7 +1942,7 @@ class TestAgentBreaksOnRepeatedEmptyResults:
         return AgentToolRegistry(mcp_manager=_make_mock_mcp_manager(), _init_only=True)
 
     @pytest.mark.unit
-    async def test_agent_breaks_after_repeated_empty_results(self):
+    async def test_agent_breaks_after_repeated_empty_results(self, recorded_outcomes):
         """Agent should break out when the same tool returns empty results 2+ times."""
         registry = self._make_registry()
         ollama = MagicMock()
@@ -1967,6 +1999,7 @@ class TestAgentBreaksOnRepeatedEmptyResults:
 # ============================================================================
 # Plugin-observable ContextVars: token_budget_info, token_usage_info
 # ============================================================================
+        assert recorded_outcomes == ["summary_repeated_empty"]
 
 
 class TestTokenContextVars:
@@ -2540,9 +2573,9 @@ class TestBudgetedLlmOptions:
         assert agent_service._llm_options_or_default("llm_options", {})["num_ctx"] == 32768
 
     @pytest.mark.unit
-    def test_short_by_design_option_sets_are_left_alone(self, monkeypatch):
-        """Summary and pre-selection are meant to be brief — their small caps
-        are the point, so the reservation must not inflate them."""
+    def test_tool_preselect_cap_is_left_alone(self, monkeypatch):
+        """Pre-selection returns a short JSON list of tool names — its small
+        cap is the point, so the reservation must not inflate it."""
         from services import agent_service
 
         monkeypatch.setattr(
@@ -2553,9 +2586,22 @@ class TestBudgetedLlmOptions:
         assert agent_service._llm_options_or_default(
             "llm_options_tool_preselect", {}
         )["num_predict"] == 512
+
+    @pytest.mark.unit
+    def test_summary_cap_follows_the_answer_budget(self, monkeypatch):
+        """The summary IS the user's answer whenever the loop aborts (max steps,
+        loop guards, an unparsable final_answer). A 1500 literal cut long list
+        answers mid-sentence while AGENT_DEFAULT_NUM_PREDICT said 8000."""
+        from services import agent_service
+
+        monkeypatch.setattr(
+            agent_service.prompt_manager, "get_config", lambda *a, **k: {"num_predict": 1500}
+        )
+        monkeypatch.setattr(agent_service.settings, "agent_default_num_predict", 8000, raising=False)
+
         assert agent_service._llm_options_or_default(
             "llm_options_summary", {}
-        )["num_predict"] == 512
+        )["num_predict"] == 8000
 
     @pytest.mark.unit
     def test_missing_yaml_still_falls_back(self, monkeypatch):
@@ -2621,3 +2667,69 @@ class TestWarnIfTruncated:
         assert agent_service._warn_if_truncated(
             SimpleNamespace(done_reason="length"), "m", "agent_step", 1
         ) is True
+
+
+
+class TestAgentTurnMetrics:
+    """renfield_agent_steps_total / renfield_agent_outcome_total had no caller."""
+
+    @staticmethod
+    def _capture(monkeypatch):
+        seen = {"steps": [], "outcome": []}
+        monkeypatch.setattr("utils.metrics.record_agent_steps", lambda n: seen["steps"].append(n))
+        monkeypatch.setattr("utils.metrics.record_agent_outcome", lambda o: seen["outcome"].append(o))
+        return seen
+
+    @pytest.mark.unit
+    def test_plain_final_answer(self, monkeypatch):
+        from services.agent_service import _record_agent_turn_metrics
+
+        seen = self._capture(monkeypatch)
+        ctx = AgentContext(original_message="x")
+        _record_agent_turn_metrics(ctx, AgentStep(step_number=2, step_type="final_answer", content="ok"))
+        assert seen == {"steps": [2], "outcome": ["final_answer"]}
+
+    @pytest.mark.unit
+    def test_exit_path_outcome_wins_over_final_answer(self, monkeypatch):
+        """A summary is also a final_answer step — the trigger must not be lost."""
+        from services.agent_service import _record_agent_turn_metrics
+
+        seen = self._capture(monkeypatch)
+        ctx = AgentContext(original_message="x")
+        ctx.outcome = "summary_parse_failed"
+        _record_agent_turn_metrics(ctx, AgentStep(step_number=2, step_type="final_answer", content="ok"))
+        assert seen["outcome"] == ["summary_parse_failed"]
+
+    @pytest.mark.unit
+    def test_no_final_answer_counts_as_aborted(self, monkeypatch):
+        from services.agent_service import _record_agent_turn_metrics
+
+        seen = self._capture(monkeypatch)
+        _record_agent_turn_metrics(AgentContext(original_message="x"), None)
+        assert seen == {"steps": [], "outcome": ["aborted"]}
+
+    @pytest.mark.unit
+    def test_metric_failure_never_raises(self, monkeypatch):
+        from services.agent_service import _record_agent_turn_metrics
+
+        def boom(_):
+            raise RuntimeError("registry gone")
+
+        monkeypatch.setattr("utils.metrics.record_agent_outcome", boom)
+        _record_agent_turn_metrics(AgentContext(original_message="x"), None)  # must not raise
+
+    @pytest.mark.unit
+    async def test_run_records_once_per_turn(self, monkeypatch):
+        """run() records in its finally — once, with the last step's number."""
+        registry = AgentToolRegistry(mcp_manager=_make_mock_mcp_manager(), _init_only=True)
+        agent = AgentService(registry)
+        seen = self._capture(monkeypatch)
+
+        async def fake_impl(context, **kwargs):
+            yield AgentStep(step_number=1, step_type="tool_call", content="c")
+            yield AgentStep(step_number=3, step_type="final_answer", content="done")
+
+        monkeypatch.setattr(agent, "_run_impl", fake_impl)
+        steps = [s async for s in agent.run("hi", MagicMock(), MagicMock())]
+        assert [s.step_type for s in steps] == ["tool_call", "final_answer"]
+        assert seen == {"steps": [3], "outcome": ["final_answer"]}
