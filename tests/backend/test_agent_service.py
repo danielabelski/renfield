@@ -2733,3 +2733,60 @@ class TestAgentTurnMetrics:
         steps = [s async for s in agent.run("hi", MagicMock(), MagicMock())]
         assert [s.step_type for s in steps] == ["tool_call", "final_answer"]
         assert seen == {"steps": [3], "outcome": ["final_answer"]}
+
+    @pytest.mark.unit
+    async def test_exception_after_summary_tag_counts_as_error(self, monkeypatch):
+        """An exit path tags the context BEFORE its await; if the run then dies,
+        the tag must not survive as if the summary had been delivered."""
+        registry = AgentToolRegistry(mcp_manager=_make_mock_mcp_manager(), _init_only=True)
+        agent = AgentService(registry)
+        seen = self._capture(monkeypatch)
+
+        async def dying_impl(context, **kwargs):
+            yield AgentStep(step_number=1, step_type="tool_call", content="c")
+            context.outcome = "summary_max_steps"
+            raise RuntimeError("summary LLM exploded")
+
+        monkeypatch.setattr(agent, "_run_impl", dying_impl)
+        with pytest.raises(RuntimeError):
+            async for _ in agent.run("hi", MagicMock(), MagicMock()):
+                pass
+        assert seen == {"steps": [1], "outcome": ["error"]}
+
+    @pytest.mark.unit
+    async def test_cancellation_after_summary_tag_counts_as_cancelled(self, monkeypatch):
+        import asyncio
+
+        registry = AgentToolRegistry(mcp_manager=_make_mock_mcp_manager(), _init_only=True)
+        agent = AgentService(registry)
+        seen = self._capture(monkeypatch)
+
+        async def cancelled_impl(context, **kwargs):
+            yield AgentStep(step_number=2, step_type="tool_call", content="c")
+            context.outcome = "summary_loop_detected"
+            raise asyncio.CancelledError
+
+        monkeypatch.setattr(agent, "_run_impl", cancelled_impl)
+        with pytest.raises(asyncio.CancelledError):
+            async for _ in agent.run("hi", MagicMock(), MagicMock()):
+                pass
+        assert seen["outcome"] == ["cancelled"]
+
+    @pytest.mark.unit
+    async def test_consumer_closing_after_answer_keeps_final_answer(self, monkeypatch):
+        """Closing the generator (GeneratorExit) is the consumer's choice, not a
+        failed run — it must not be booked as error/cancelled."""
+        registry = AgentToolRegistry(mcp_manager=_make_mock_mcp_manager(), _init_only=True)
+        agent = AgentService(registry)
+        seen = self._capture(monkeypatch)
+
+        async def long_impl(context, **kwargs):
+            yield AgentStep(step_number=1, step_type="final_answer", content="done")
+            yield AgentStep(step_number=1, step_type="card", content="")
+
+        monkeypatch.setattr(agent, "_run_impl", long_impl)
+        gen = agent.run("hi", MagicMock(), MagicMock())
+        first = await gen.__anext__()
+        assert first.step_type == "final_answer"
+        await gen.aclose()
+        assert seen == {"steps": [1], "outcome": ["final_answer"]}

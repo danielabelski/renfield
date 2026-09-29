@@ -841,7 +841,10 @@ def _parse_agent_json(raw: str) -> dict | None:
 
 
 def _record_agent_turn_metrics(context: AgentContext, last_step: AgentStep | None) -> None:
-    """Export how many steps a turn took and how it ended.
+    """Export how many steps an agent run took and how it ended.
+
+    Once per `AgentService.run()` — an orchestrated turn therefore counts once
+    PER SUB-AGENT, not once per user message.
 
     `record_agent_steps` / `record_agent_outcome` existed with their metrics
     registered but had no caller, so renfield_agent_steps_total and
@@ -849,9 +852,10 @@ def _record_agent_turn_metrics(context: AgentContext, last_step: AgentStep | Non
     ended in the summary fallback (the path whose answers were being capped)
     was not measurable at all.
 
-    Outcome: whatever an exit path set on the context, else `final_answer`
-    when the turn produced one, else `aborted` (the consumer stopped the
-    generator, or an exception escaped).
+    Outcome: whatever an exit path set on the context (run() overrides it with
+    `cancelled` / `error` when the run did not finish), else `final_answer`
+    when the run produced one, else `aborted` (the consumer closed the
+    generator before any answer).
     """
     try:
         from utils.metrics import record_agent_outcome, record_agent_steps
@@ -1633,6 +1637,21 @@ class AgentService:
                     context.steps.append(step)
                 last_step = step
                 yield step
+        except GeneratorExit:
+            # The CONSUMER closed the generator (e.g. it stopped reading after
+            # the answer) — not a failure of the turn; keep its outcome.
+            raise
+        except asyncio.CancelledError:
+            # Cancelled mid-turn (client disconnect cancels orchestrator
+            # sub-agents). Overrides an outcome an exit path set BEFORE its
+            # own await — _build_summary_answer tags the context first and then
+            # calls the LLM, so without this a cancelled summary counted as a
+            # completed one.
+            context.outcome = "cancelled"
+            raise
+        except Exception:
+            context.outcome = "error"
+            raise
         finally:
             _record_agent_turn_metrics(context, last_step)
 
