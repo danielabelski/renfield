@@ -32,6 +32,7 @@ export const keys = {
     all: ['users'] as const,
     list: () => ['users', 'list'] as const,
     detail: (id: number) => ['users', 'detail', id] as const,
+    voiceFactor: (id: number) => ['users', 'voiceFactor', id] as const,
   },
   roles: {
     all: ['roles'] as const,

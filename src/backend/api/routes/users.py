@@ -162,6 +162,18 @@ class LinkSpeakerRequest(BaseModel):
     speaker_id: int
 
 
+class VoiceSecondFactorState(BaseModel):
+    """Zustand des zweiten Faktors am EIGENEN Konto — Einwilligung plus Grund.
+
+    `blocker` traegt einen der maschinenlesbaren Codes aus
+    `services/voice_factor_preconditions` (`voice_path_off`, `recognition_off`,
+    `no_profile`, `no_embeddings`) oder `None`. Die Oberflaeche uebersetzt ihn;
+    hier geht bewusst KEIN Satz heraus (s. den Riegel an der 409-Antwort).
+    """
+    enabled: bool
+    blocker: str | None = None
+
+
 class VoiceSecondFactorRequest(BaseModel):
     """Ein- oder Ausschalten der Stimme als zweiter Anmeldefaktor."""
     enabled: bool
@@ -886,6 +898,62 @@ async def unlink_speaker(
     )
 
 
+@router.get("/{user_id}/voice-second-factor", response_model=VoiceSecondFactorState)
+async def get_voice_second_factor(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_user_or_default)
+):
+    """Einwilligung und GRUND am eigenen Konto lesen.
+
+    🛑 WARUM ES DIESE ROUTE GIBT
+    ----------------------------
+    Die Seite „Mein Konto" kannte nur die instanzweite Haelfte der
+    Vorbedingungen (ueber die Feature-Flags) und zeigte einen Grund ausserdem
+    nur, wenn die Einwilligung bereits vorlag. Wer noch nicht eingewilligt
+    hatte — also jede Person im Ausgangszustand — sah ein blankes „Aus", ganz
+    gleich, wie viele Vorbedingungen fehlten, und die Schaltfuehrung bot ein
+    Einschalten an, das mit 409 fehlschlagen musste. Gemessen im Haushalt am
+    2026-09-29: bei 6 von 7 Konten war die kontogebundene Haelfte der Blocker,
+    genau die, die die Seite nicht sehen konnte.
+
+    🛑 NUR DAS EIGENE KONTO. Der Grund nennt eine Eigenschaft des Sprecherprofils
+    einer Person; er gehoert ihr. Die Verwaltung sieht den Zustand ohnehin ueber
+    die Nutzerliste und leitet ihr Ruhen aus Flags und Sprecherliste ab — eine
+    Leseroute auf FREMDE Konten waere neue Angriffsflaeche ohne neuen Nutzen.
+
+    Requires: angemeldet, und `user_id` ist das eigene Konto.
+    """
+    # Dieselbe Reihenfolge wie beim Schreiben: erst Aufrufer, dann Instanzmodus,
+    # dann Berechtigung — und die Berechtigung VOR der Datenbank, damit die
+    # Antwort nicht verraet, welche Ids existieren.
+    if current_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+        )
+    if not settings.auth_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=(
+                "Consent needs an authenticated person — this instance runs with "
+                "authentication disabled."
+            ),
+        )
+    if user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only read the second-factor state of your own account.",
+        )
+
+    from services.voice_factor_preconditions import voice_factor_blocker
+
+    return VoiceSecondFactorState(
+        enabled=bool(current_user.voice_second_factor_enabled),
+        blocker=await voice_factor_blocker(db, current_user),
+    )
+
+
 @router.post("/{user_id}/voice-second-factor", response_model=UserResponse)
 async def set_voice_second_factor(
     user_id: int,
@@ -1078,7 +1146,6 @@ async def set_voice_second_factor(
         # geprueft — sonst waere die Reihenfolge des Cutovers (erst Einwilligung,
         # dann Flag) nicht durchfuehrbar; das Ruhen ist dort dokumentiert.
         from services.voice_factor_preconditions import (
-            NO_PROFILE,
             RECOGNITION_OFF,
             voice_path_blocker,
             voice_profile_blocker,
@@ -1088,21 +1155,19 @@ async def set_voice_second_factor(
         if blocker is None and voice_path_blocker() == RECOGNITION_OFF:
             blocker = RECOGNITION_OFF
         if blocker is not None:
+            # 🛑 DER CODE GEHT HERAUS, NICHT DER SATZ.
+            #
+            # Hier standen drei hartkodierte ENGLISCHE Saetze, und sie waren die
+            # einzige Stelle, an der die Person den Grund ueberhaupt erfuhr —
+            # ein deutschsprachiges Haushaltsmitglied las also Englisch. Das
+            # verstoesst gegen die i18n-Regel, und die Wurzel war die Bauweise:
+            # die maschinenlesbaren Codes existierten bereits und dienten nur
+            # als Schluessel, um Prosa nachzuschlagen. Jetzt geht der Code
+            # heraus und die Oberflaeche uebersetzt ihn — dieselben Codes, die
+            # `GET /{id}/voice-second-factor` liefert, also EIN Vokabular.
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    NO_PROFILE: (
-                        "Link a speaker profile first — without one the account "
-                        "could never complete the second factor."
-                    ),
-                    RECOGNITION_OFF: (
-                        "Speaker recognition is switched off on this instance — "
-                        "the second factor could never be redeemed."
-                    ),
-                }.get(blocker, (
-                    "The linked speaker profile has no embeddings yet — enroll a "
-                    "voice sample first."
-                )),
+                detail=blocker,
             )
     user.voice_second_factor_enabled = bool(request.enabled)
     await db.commit()

@@ -206,12 +206,63 @@ async function setVoiceSecondFactorRequest(
   return response.data;
 }
 
+/**
+ * Die vier maschinenlesbaren Gruende aus
+ * `services/voice_factor_preconditions` im Backend. Sie kommen als Code
+ * heraus — aus `GET /{id}/voice-second-factor` wie aus der 409-Antwort des
+ * Einschaltens — und werden HIER uebersetzt. Vorher schickte der Server drei
+ * hartkodierte englische Saetze, die ein deutschsprachiges Haushaltsmitglied
+ * unuebersetzt zu lesen bekam.
+ */
+export type VoiceFactorBlocker =
+  | 'voice_path_off'
+  | 'recognition_off'
+  | 'no_profile'
+  | 'no_embeddings';
+
+export const VOICE_FACTOR_BLOCKERS: readonly VoiceFactorBlocker[] = [
+  'voice_path_off',
+  'recognition_off',
+  'no_profile',
+  'no_embeddings',
+] as const;
+
+export function isVoiceFactorBlocker(value: unknown): value is VoiceFactorBlocker {
+  return typeof value === 'string'
+    && (VOICE_FACTOR_BLOCKERS as readonly string[]).includes(value);
+}
+
+export interface VoiceSecondFactorState {
+  enabled: boolean;
+  /** `null` = nichts steht im Weg. */
+  blocker: VoiceFactorBlocker | null;
+}
+
+export function useVoiceSecondFactorState(userId: number | undefined) {
+  return useApiQuery<VoiceSecondFactorState>(
+    {
+      queryKey: keys.users.voiceFactor(userId ?? 0),
+      queryFn: async () => {
+        const response = await apiClient.get<VoiceSecondFactorState>(
+          `/api/users/${userId}/voice-second-factor`,
+        );
+        return response.data;
+      },
+      enabled: userId !== undefined,
+      staleTime: STALE.DEFAULT,
+    },
+    'account.voiceStateFailed',
+  );
+}
+
 export function useSetVoiceSecondFactor() {
   const queryClient = useQueryClient();
   return useApiMutation(
     {
       mutationFn: setVoiceSecondFactorRequest,
       onSuccess: () => {
+        // `keys.users.all` deckt auch `voiceFactor` ab (gleiches Praefix) — der
+        // Grund kann sich mit dem Umschalten geaendert haben.
         queryClient.invalidateQueries({ queryKey: keys.users.all });
       },
     },

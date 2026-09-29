@@ -19,8 +19,11 @@ import { ShieldCheck, Shield, Mic, Loader, UserCircle } from 'lucide-react';
 
 import { useAuth } from '../context/AuthContext';
 import { useConfirmDialog } from '../components/ConfirmDialog';
-import { useFeatureFlags } from '../api/resources/brain';
-import { useSetVoiceSecondFactor } from '../api/resources/users';
+import {
+  isVoiceFactorBlocker,
+  useSetVoiceSecondFactor,
+  useVoiceSecondFactorState,
+} from '../api/resources/users';
 import { extractApiError } from '../utils/axios';
 import Alert from '../components/Alert';
 import PageHeader from '../components/PageHeader';
@@ -29,7 +32,7 @@ export default function AccountSettingsPage() {
   const { t } = useTranslation();
   const { user, fetchUser } = useAuth();
   const { confirm, ConfirmDialogComponent } = useConfirmDialog();
-  const featureFlags = useFeatureFlags();
+  const voiceState = useVoiceSecondFactorState(user?.id);
   const setVoiceSecondFactor = useSetVoiceSecondFactor();
 
   const [error, setError] = useState<string | null>(null);
@@ -42,16 +45,29 @@ export default function AccountSettingsPage() {
   const armed = !!user?.voice_second_factor_enabled;
 
   /**
-   * Ruht der Faktor trotz Einwilligung? Spiegelt `restingReason` in der
-   * Verwaltung und damit `services/voice_factor_preconditions` im Backend.
-   * Hier zählt nur die instanzweite Hälfte — ob das eigene Sprecherprofil
-   * taugt, weiss diese Seite nicht (die Sprecherliste ist Verwaltungsstoff).
-   * Solange die Schalter laden, wird NICHT auf „ruht" geschlossen: eine
-   * unbekannte Antwort ist kein Beweis.
+   * 🛑 DER GRUND KOMMT VOM SERVER, UND ER GILT UNABHÄNGIG VON DER EINWILLIGUNG.
+   *
+   * Vorher las diese Seite nur die Feature-Flags — also die INSTANZWEITE Hälfte
+   * der Vorbedingungen — und zeigte einen Grund ausserdem nur im Zustand
+   * „scharf". Wer noch nicht eingewilligt hatte, sah ein blankes „Aus", ganz
+   * gleich wie viele Vorbedingungen fehlten, und bekam eine Schaltfläche
+   * angeboten, die mit 409 fehlschlagen musste. Gemessen im Haushalt am
+   * 2026-09-29: bei 6 von 7 Konten war `no_profile` der Blocker — genau die
+   * kontogebundene Hälfte, die diese Seite nicht sehen konnte.
+   *
+   * Solange die Antwort aussteht, wird NICHTS geschlossen: eine unbekannte
+   * Antwort ist kein Beweis, weder für noch gegen einen Blocker.
    */
-  const flags = featureFlags.data;
-  const pathOff =
-    flags?.voice_auth_enabled === false || flags?.speaker_recognition_enabled === false;
+  const blocker = voiceState.data?.blocker ?? null;
+  const blockerText = blocker ? t(`account.voiceBlocker.${blocker}`) : null;
+
+  /**
+   * Was das EINSCHALTEN verhindert — nicht dasselbe wie „etwas steht im Weg".
+   * `voice_path_off` blockiert es bewusst NICHT: die Reihenfolge des Cutovers
+   * ist erst Einwilligung sammeln, dann das Flag umlegen. Der Server sieht das
+   * genauso (`POST …/voice-second-factor` prüft `voice_auth_enabled` nicht).
+   */
+  const armingBlocked = blocker !== null && blocker !== 'voice_path_off';
 
   const handleToggle = async () => {
     if (!user) return;
@@ -85,7 +101,16 @@ export default function AccountSettingsPage() {
       await fetchUser();
       setSuccess(enabling ? t('account.voiceArmed') : t('account.voiceDisarmed'));
     } catch (err) {
-      setError(extractApiError(err, t('account.voiceFailed')));
+      // 🛑 Die 409-Antwort trägt den CODE, nicht den Satz — sonst stünde hier
+      // roher Text wie „no_profile" in der Oberfläche. Übersetzt wird er hier,
+      // aus demselben Vokabular wie der Zustand oben.
+      const detail = (err as { response?: { data?: { detail?: unknown } } })
+        ?.response?.data?.detail;
+      setError(
+        isVoiceFactorBlocker(detail)
+          ? t(`account.voiceBlocker.${detail}`)
+          : extractApiError(err, t('account.voiceFailed')),
+      );
     }
   };
 
@@ -110,7 +135,7 @@ export default function AccountSettingsPage() {
             {/* Symbol UND Text — die Farbe ist nie das einzige Signal (DESIGN.md). */}
             <p
               className={`mt-3 flex items-center gap-2 text-sm font-medium ${
-                armed && !pathOff
+                armed && !blocker
                   ? 'text-amber-600 dark:text-amber-400'
                   : 'text-gray-500 dark:text-gray-400'
               }`}
@@ -123,10 +148,19 @@ export default function AccountSettingsPage() {
               )}
               {!armed
                 ? t('account.voiceStateOff')
-                : pathOff
+                : blocker
                   ? t('account.voiceStateResting')
                   : t('account.voiceStateOn')}
             </p>
+
+            {/* 🛑 Der GRUND, und zwar in BEIDEN Zuständen. Er ist der einzige
+                Hinweis darauf, warum ein Einschalten fehlschlagen würde — vorher
+                erfuhr ihn die Person erst nach dem Drücken, und auf Englisch. */}
+            {blockerText && (
+              <p className="mt-2 text-xs text-gray-600 dark:text-gray-300">
+                {blockerText}
+              </p>
+            )}
 
             {armed && (
               <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
@@ -160,8 +194,16 @@ export default function AccountSettingsPage() {
           <button
             onClick={handleToggle}
             disabled={
-              setVoiceSecondFactor.isPending || !user || (askPassword && !password)
+              setVoiceSecondFactor.isPending
+              || !user
+              || (askPassword && !password)
+              // Einschalten, das der Server mit 409 ablehnen MUSS, wird gar
+              // nicht erst angeboten. Abschalten bleibt immer möglich — das ist
+              // der dokumentierte Rückweg und darf an keiner Vorbedingung
+              // hängen (es gibt bewusst keinen Rückfall auf Passwort allein).
+              || (!armed && armingBlocked)
             }
+            title={!armed && armingBlocked && blockerText ? blockerText : undefined}
             className={armed ? 'btn-secondary min-h-11' : 'btn-primary min-h-11'}
           >
             {setVoiceSecondFactor.isPending && (

@@ -96,6 +96,13 @@ const mainNavigationConfig: NavItemConfig[] = [
   { nameKey: 'nav.tasks', href: '/tasks', icon: CheckSquare, feature: 'tasks' },
   { nameKey: 'nav.connections', href: '/connections', icon: Plug },
   { nameKey: 'nav.cameras', href: '/camera', icon: Camera, permission: ['cam.view', 'cam.full'], feature: 'cameras' },
+  // 🛑 GEHÖRT NICHT UNTER „Admin". Der Eintrag stand dort — ohne `permission`,
+  // also für jeden erreichbar, aber in einer standardmässig ZUGEKLAPPTEN
+  // Schublade namens „Admin". Die persönlichste Einstellung der Anwendung, die
+  // Einwilligung nach Art. 9 DSGVO, lag damit ausgerechnet für die Person, für
+  // die sie gebaut wurde, am unwahrscheinlichsten Ort. Erreichbarkeit und
+  // Auffindbarkeit sind nicht dasselbe.
+  { nameKey: 'nav.account', href: '/settings/account', icon: UserCircle },
 ];
 
 const adminNavigationConfig: NavItemConfig[] = [
@@ -113,8 +120,6 @@ const adminNavigationConfig: NavItemConfig[] = [
   { nameKey: 'nav.paperlessAudit', href: '/admin/paperless-audit', icon: FileSearch, permission: ['admin'] },
   { nameKey: 'nav.maintenance', href: '/admin/maintenance', icon: Wrench, permission: ['admin'] },
   { nameKey: 'nav.settings', href: '/admin/settings', icon: Settings, permission: ['admin'] },
-  // Ohne `permission`: jede angemeldete Person erreicht ihr eigenes Konto.
-  { nameKey: 'nav.account', href: '/settings/account', icon: UserCircle },
   { nameKey: 'nav.circles', href: '/settings/circles', icon: CircleDashed },
   // Self-Learning admin console (v2.10).
   { nameKey: 'nav.adminSkills', href: '/admin/skills', icon: Sparkles, permission: ['admin'] },

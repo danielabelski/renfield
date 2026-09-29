@@ -2200,6 +2200,13 @@
     "voiceDisarmed": "Secondo fattore di accesso disattivato.",
     "voiceFailed": "Impossibile modificare l'impostazione.",
     "voicePasswordLabel": "Password per confermare",
-    "voicePasswordWhy": "Solo per disattivare: una sessione più vecchia del tuo consenso non deve poterlo ritirare da sola."
+    "voicePasswordWhy": "Solo per disattivare: una sessione più vecchia del tuo consenso non deve poterlo ritirare da sola.",
+    "voiceStateFailed": "Impossibile caricare lo stato del secondo fattore",
+    "voiceBlocker": {
+      "voice_path_off": "Il percorso vocale è attualmente disattivato su questa istanza. Può acconsentire ora: il requisito avrà effetto non appena verrà attivato.",
+      "recognition_off": "Il riconoscimento del parlante è disattivato su questa istanza. Senza di esso la sua voce non potrebbe mai essere verificata.",
+      "no_profile": "Nessun profilo vocale è ancora collegato al suo account. Senza un profilo non ci sarebbe nulla con cui confrontare la sua voce.",
+      "no_embeddings": "Il suo profilo vocale non contiene ancora alcun campione vocale. Ne registri prima uno."
+    }
   }
 }

@@ -89,6 +89,26 @@ async def voice_profile_blocker(db: AsyncSession, user: User) -> str | None:
     return None if count else NO_EMBEDDINGS
 
 
+async def voice_factor_blocker(db: AsyncSession, user: User) -> str | None:
+    """Was den zweiten Faktor für DIESES Konto heute versperrt, oder ``None``.
+
+    Die volle Wahrheit: erst die Schalter der Instanz, dann das Profil. Getrennt
+    von der EINSCHALT-Prüfung in `POST /users/{id}/voice-second-factor`, und das
+    ist Absicht — dort darf `PATH_OFF` nicht blockieren, sonst wäre die
+    Reihenfolge des Cutovers (erst Einwilligung sammeln, dann Flag umlegen)
+    nicht durchführbar. Zum ANZEIGEN dagegen zählt `PATH_OFF` mit: eine Hürde,
+    die ruht, weil der Sprachweg aus ist, soll die Person auch so genannt
+    bekommen.
+
+    🛑 Der Grund ist UNABHÄNGIG von der Einwilligung. Die Seite „Mein Konto"
+    zeigte ihn vorher nur im Zustand „scharf" — also nie für jemanden, der
+    gerade überlegt einzuwilligen. Gemessen am 2026-09-29 im Haushalt: bei
+    6 von 7 Konten greift `NO_PROFILE`, und genau die sahen ein blankes „Aus"
+    mit einer Schaltfläche, die fehlschlagen musste.
+    """
+    return voice_path_blocker() or await voice_profile_blocker(db, user)
+
+
 async def second_factor_applies(db: AsyncSession, user: User) -> bool:
     """Darf `/auth/login` diesem Konto die Token vorenthalten?
 
@@ -99,7 +119,7 @@ async def second_factor_applies(db: AsyncSession, user: User) -> bool:
     if not user.voice_second_factor_enabled:
         return False
 
-    blocker = voice_path_blocker() or await voice_profile_blocker(db, user)
+    blocker = await voice_factor_blocker(db, user)
     if blocker is None:
         return True
 
