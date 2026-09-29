@@ -292,8 +292,12 @@
 }
 
 @utility merge-notice {
-  /* Attention notice on a merge surface — warning semantic (DESIGN: warm =
-     attention). Symbol + text so color is never the only signal.
+  /* Attention notice on a merge surface. Symbol + text so color is never the
+     only signal.
+     🛑 Faerbung noch nach der ALTEN Warn-Semantik (Karmin auf Creme). DESIGN.md
+     hat die Warn-Achse am 2026-09-28 auf Bernstein umgestellt; diese Klasse ist
+     bewusst NICHT mitgezogen worden, weil das eine sichtbare Aenderung ohne
+     Abnahme waere. Wer sie anfasst, zieht sie auf amber nach.
      TWO uses, which is why the name no longer says "visibility": the
      cross-tier visibility-change notice on a proposal card, and the refusal
      of a whole cluster fold. The old name described the first and lied about

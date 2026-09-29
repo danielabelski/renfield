@@ -131,6 +131,7 @@ Each rule loads by itself when you read a file of that subsystem. For a question
 | `chat-ui.md` | provenance/follow-up chips, palette, role hint, message search, typed artifacts, `device_action` |
 | `chat-branching.md` | the conversation tree, active-path CTE, memory re-activation |
 | `auth.md` | the single auth flag, provider registry, SSO code+PKCE, HttpOnly cookie + CSRF, `SECRET_KEY` |
+| `voice-second-factor.md` | die Stimme als ZWEITER Faktor: Vorbedingungen an einer Stelle, Einbettung vom voice-server, Einwilligung je Person, Notausgang, Stimmabdruck-Datenschutz |
 | `circles.md` | the 5-rung tier ladder, the 4-branch SQL filter, pass `user_id`, ownership-gated writes |
 | `documents-facts.md` | Schicht-A facts, generated titles, document date, document search, per-fact tier override, KB dedupe |
 | `obligations.md` | deadline notifier, weekly digest, calendar sync |
