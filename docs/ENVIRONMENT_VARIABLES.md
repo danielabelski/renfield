@@ -297,7 +297,9 @@ AGENT_RESPONSE_TRUNCATION=2000
 # erhöhen verschob nur die Reservierung, und längere Antworten wurden weiter
 # bei 2048 Tokens mitten im Satz gekappt. Anheben, wenn Antworten lange Listen
 # aufzählen sollen; ein Erreichen der Grenze loggt jetzt eine WARNING und
-# zählt renfield_llm_response_truncated_total.
+# zählt renfield_llm_response_truncated_total. Gilt seit #1360 auch für die
+# Summary-Antwort (Abbruch nach max_steps, Loop-Guards, unparsebarem
+# final_answer …) — vorher hing die an einem eigenen 1500er-Literal.
 AGENT_DEFAULT_NUM_PREDICT=2048
 
 # Agent Router Timeout (Sekunden)
