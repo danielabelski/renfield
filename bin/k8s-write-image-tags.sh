@@ -16,6 +16,15 @@
 # hinter `renfield/<bild>:` und laesst alles davor unberuehrt — egal ob dort der
 # Platzhalter oder die echte Adresse steht.
 #
+# 🛑 `:latest` BLEIBT `:latest`. Es ist ein gleitender Zeiger, kein
+# festgeschriebener Stand. Die oeffentlichen Manifeste tragen ihn absichtlich:
+# ein frisch aufgesetzter Cluster (`kubectl apply -k overlays/private/`) holt
+# damit das aktuelle Bild. Schriebe dieses Skript den Datums-Tag hinein, bekaeme
+# so ein Cluster fuer immer das Bild des Tages, an dem zuletzt jemand deployt hat.
+# Aufgefallen beim ERSTEN echten Lauf: sieben oeffentliche Manifeste wurden von
+# `latest` auf die Tagesmarke umgeschrieben. Geprueft hatte ich nur gegen x-ren
+# (dort stehen ueberall konkrete Marken) — den Fall, der taeglich vorkommt, nie.
+#
 # 🛑 COMMITTET UND PUSHT NICHT. Das Skript sagt, was zu committen ist; die
 # Entscheidung bleibt beim Menschen. Das gilt besonders, weil die Manifeste einer
 # privaten Instanz in einem ZWEITEN Repo liegen.
@@ -32,7 +41,7 @@ while [[ $# -gt 0 ]]; do
     --backend-tag)   BACKEND_TAG="$2"; shift 2 ;;
     --frontend-tag)  FRONTEND_TAG="$2"; shift 2 ;;
     --dry-run)       DRY_RUN=1; shift ;;
-    -h|--help)       sed -n '2,26p' "$0"; exit 0 ;;
+    -h|--help)       sed -n '2,35p' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
@@ -47,6 +56,18 @@ for t in "$BACKEND_TAG" "$FRONTEND_TAG"; do
   [[ "$t" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "ERROR: unplausible tag: $t" >&2; exit 2; }
 done
 
+# Ersetzt die Marke hinter `renfield/<bild>:` — ausser sie lautet `latest`.
+# sed kennt keine negative Vorschau, deshalb wird `latest` vorher aus dem
+# Zugriffsbereich genommen: `@` gehoert nicht zum erlaubten Markenzeichensatz und
+# der Ausdruck verlangt ein `:`, also kann `renfield/<bild>@@LATEST@@` nicht mehr
+# treffen. Die Grenze `([^A-Za-z0-9._-]|$)` sorgt dafuer, dass nur die Marke
+# `latest` geschuetzt wird und nicht etwa `latest-rc`.
+marke_setzen() {  # $1 = Bildname, $2 = neue Marke; liest stdin, schreibt stdout
+  sed -E "s#(renfield/$1):latest([^A-Za-z0-9._-]|\$)#\1@@LATEST@@\2#g" \
+    | sed -E "s#(renfield/$1:)[A-Za-z0-9._-]+#\1$2#g" \
+    | sed -E "s#(renfield/$1)@@LATEST@@#\1:latest#g"
+}
+
 changed=() fehlgeschlagen=()
 while IFS= read -r -d '' f; do
   before="$(cat "$f")"
@@ -54,10 +75,10 @@ while IFS= read -r -d '' f; do
   # Nur der Teil HINTER `renfield/<bild>:` wird ersetzt. Der Praefix — und damit
   # der Registry-Name, echt oder Platzhalter — bleibt unangetastet.
   if [[ -n "$BACKEND_TAG" ]]; then
-    after="$(printf '%s' "$after" | sed -E "s#(renfield/backend:)[A-Za-z0-9._-]+#\1${BACKEND_TAG}#g")"
+    after="$(printf '%s' "$after" | marke_setzen backend "$BACKEND_TAG")"
   fi
   if [[ -n "$FRONTEND_TAG" ]]; then
-    after="$(printf '%s' "$after" | sed -E "s#(renfield/frontend:)[A-Za-z0-9._-]+#\1${FRONTEND_TAG}#g")"
+    after="$(printf '%s' "$after" | marke_setzen frontend "$FRONTEND_TAG")"
   fi
   [[ "$after" == "$before" ]] && continue
 

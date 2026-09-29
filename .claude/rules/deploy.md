@@ -59,6 +59,11 @@ richtige). Vorher war das Handarbeit nach jedem Deploy, und dreimal in Folge hie
 „Bildmarken auf den Live-Stand".
 🛑 Ersetzt wird **nur die Marke hinter `renfield/<bild>:`**, nie der Registry-Name: das öffentliche Repo
 trägt dort absichtlich den Platzhalter `your-registry.example`.
+🛑 **`:latest` bleibt `:latest`** — ein gleitender Zeiger ist kein festgeschriebener Stand. Die öffentlichen
+Manifeste tragen ihn absichtlich; ein frisch über `overlays/private/` aufgesetzter Cluster zöge sonst für
+immer das Bild des Tages, an dem zuletzt jemand deployt hat. Beim ersten echten Lauf schrieb der Schritt
+genau das in sieben öffentliche Manifeste (2026-09-29, zurückgenommen). Die private Instanz ist davon nicht
+betroffen: dort stehen überall konkrete Marken, und die werden nachgezogen wie gehabt.
 🛑 Ein fehlgeschlagener Schreibvorgang (schreibgeschützte Datei) wird **gemeldet und beendet mit 1** — er
 zählte vorher als Erfolg, und der Betreiber las „5 Manifeste geschrieben", während nichts geschrieben war.
 Bei Teilerfolg nennt die Ausgabe beide Hälften: was steht und was von Hand nachzuziehen ist.
