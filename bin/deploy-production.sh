@@ -230,6 +230,24 @@ if [[ -z "$MANIFESTS_DIR" ]]; then
   done
   [[ -n "$MANIFESTS_DIR" ]] && echo "  (manifests: $MANIFESTS_DIR — sibling repo, by convention)"
 fi
+# Die Bildmarken ZUERST nachziehen, dann pruefen: `kubectl set image` aendert die
+# LIVE-Objekte, nicht die Dateien, also driften sie nach JEDEM Deploy erneut. Die
+# Pruefung darunter hat das bisher nur gemeldet; behoben wurde es von Hand, und
+# dreimal in Folge hiess der naechste Commit in x-ren "Bildmarken auf den
+# Live-Stand". Committet wird hier NICHTS — das Skript sagt nur, was anliegt.
+if [[ -n "$MANIFESTS_DIR" ]]; then
+  log "Bildmarken in die Manifeste schreiben (ohne Commit)"
+  # Explizite `if`-Bloecke statt `[[ … ]] && cmd`: unter `set -e` ist der
+  # Rueckgabewert einer solchen Kette der des fehlgeschlagenen Tests, und ob das
+  # abbricht, haengt am Kontext. In einem Deploy-Skript will man das nicht raten.
+  tag_args=(--dir "$MANIFESTS_DIR")
+  if [[ -n "$BACKEND_TAG"  ]]; then tag_args+=(--backend-tag "$BACKEND_TAG"); fi
+  if [[ -n "$FRONTEND_TAG" ]]; then tag_args+=(--frontend-tag "$FRONTEND_TAG"); fi
+  if [[ $DRY_RUN == 1      ]]; then tag_args+=(--dry-run); fi
+  "$REPO_ROOT/bin/k8s-write-image-tags.sh" "${tag_args[@]}" \
+    || echo "WARNING: Bildmarken konnten nicht geschrieben werden — von Hand nachziehen" >&2
+fi
+
 if [[ -z "$MANIFESTS_DIR" ]]; then
   echo "  (skipped: set RENFIELD_MANIFESTS_DIR to the manifests of $NS, e.g. ../x-ren/k8s)"
 elif [[ $DRY_RUN == 1 ]]; then
